@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where strings)",
+      "Bash(findstr /c:\"please wait\" \"E:\\\\llama\\\\NewChangeDirectory\\\\NewChangeDirectory.exe\")",
+      "Bash(findstr /s /i /c:\"please wait\" \"E:\\\\llama\\\\NewChangeDirectory\\\\*.c\" \"E:\\\\llama\\\\NewChangeDirectory\\\\*.h\" \"E:\\\\llama\\\\NewChangeDirectory\\\\src\\\\*.c\" \"E:\\\\llama\\\\NewChangeDirectory\\\\src\\\\*.h\")",
+      "Bash(cmd /c \"dir E:\\\\llama\\\\NewChangeDirectory\\\\src\"\")",
+      "Bash(cmd /c dir E:\\\\llama\\\\NewChangeDirectory\\\\src\\\\)",
+      "Bash(powershell -Command \"Get-ChildItem ''E:\\\\llama\\\\NewChangeDirectory'' -Recurse -Filter ''*.c'' | Select FullName, LastWriteTime\")",
+      "Bash(powershell -Command \"Get-Item ''E:\\\\llama\\\\NewChangeDirectory\\\\NewChangeDirectory.exe'' | Select LastWriteTime, Length\")",
+      "Bash(powershell -Command \"Get-ChildItem ''E:\\\\llama\\\\NewChangeDirectory'' -Filter ''*.obj'' | Select FullName, LastWriteTime\")",
+      "Bash(powershell -Command \":*)",
+      "Bash(powershell -Command \"$f=''E:\\\\llama\\\\NewChangeDirectory\\\\NewChangeDirectory.exe''; $b=[IO.File]::ReadAllBytes\\($f\\); $t=[Text.Encoding]::ASCII.GetString\\($b\\); ''please wait'',''Scanning drives:'',''starting...'',''COMPLETE'',''Forced rescan'',''No database found'',''Scanning all drives'' | ForEach-Object { if\\($t.Contains\\($_\\){\"\"FOUND: $_\"}else{\"\"MISSING: $_\"} }\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"E:\\\\llama\\\\NewChangeDirectory\\\\check_binary.ps1\")",
+      "Bash(powershell -Command \"Get-ChildItem ''E:\\\\llama\\\\NewChangeDirectory'' -Filter ''ncd*'' | Select Name, LastWriteTime\")",
+      "Bash(powershell -Command \"Get-ChildItem ''C:\\\\Users\\\\Dan\\\\Tools\\\\bin'' | Select Name, LastWriteTime | Sort Name\")",
+      "Bash(del \"E:\\\\llama\\\\NewChangeDirectory\\\\check_binary.ps1\")",
+      "Bash(powershell -Command \"Remove-Item ''E:\\\\llama\\\\NewChangeDirectory\\\\check_binary.ps1''\")",
+      "Bash(grep -n \"_stricmp\\\\|GetDriveTypeA\\\\|GetLogicalDrives\\\\|FindFirstFileExA\\\\|CreateFileA\\\\|CONOUT\\\\|CONIN\" /e/llama/NewChangeDirectory/src/*.c)",
+      "Bash(grep -n \"LOCALAPPDATA\\\\|%TEMP%\\\\|%\\\\|\\\\\\\\*\\\\|drive\\\\|letter\" /e/llama/NewChangeDirectory/src/*.c)",
+      "Read(//mnt/e/llama/**)",
+      "Bash(./build.sh)",
+      "Bash(wsl.exe -e bash -c \"cd /mnt/e/llama/NewChangeDirectory && ./build.sh 2>&1\")",
+      "Bash(wsl.exe -e bash -c \"cd /mnt/e/llama/NewChangeDirectory && ./NewChangeDirectory /r c,e 2>&1\")"
+    ]
+  }
+}
