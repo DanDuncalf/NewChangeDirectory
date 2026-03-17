@@ -158,6 +158,45 @@ bool platform_create_dir(const char *path);
 bool platform_file_exists(const char *path);
 bool platform_dir_exists(const char *path);
 
+/* Scanner mount helpers: platform-specific implementations that are
+ * called by scanner.c to delegate platform details.
+ * 
+ * platform_get_drive_letter: derive a single-character identifier from
+ *   a mount string (Windows: 'C', 'D', etc.; Linux: mount index or letter)
+ * platform_get_mount_type: return the drive type for a mount
+ * platform_enumerate_mounts: fill the arrays with discovered mounts
+ *   Returns the number of mounts found (0 on failure).
+ */
+char platform_get_drive_letter(const char *mount);
+int  platform_get_mount_type(const char *mount);
+int  platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
+                               const char *mount_ptrs[],
+                               size_t buf_size,
+                               int max_mounts);
+
+/* Database path helpers - platform specific implementations
+ * platform_db_default_path fills buf with the path to the default
+ * database file and returns true on success.
+ * platform_db_drive_path fills buf with the per-drive database path
+ * (Windows: per-letter; Linux: per-mount hex index) and returns true
+ * on success.
+ */
+bool platform_db_default_path(char *buf, size_t buf_size);
+bool platform_db_drive_path(char letter, char *buf, size_t buf_size);
+
+/* Portable safe string copy: always NUL-terminates. Returns true if
+ * the entire source fit into the destination buffer (no truncation).
+ */
+bool platform_strncpy_s(char *dst, size_t dstsz, const char *src);
+/* Safe concatenation: append src to dst, ensuring NUL-termination.
+ * Returns true if the entire src fit (no truncation), false otherwise. */
+bool platform_strncat_s(char *dst, size_t dstsz, const char *src);
+/* Thread-safe tokenizer wrapper: behaves like strtok_r on POSIX and
+ * strtok_s on Windows. Call as:
+ *   char *ctx = NULL; char *tok = platform_strtok(buf, "\\/", &ctx);
+ */
+char *platform_strtok(char *str, const char *delim, char **saveptr);
+
 UINT platform_get_drive_type(const char *root);
 DWORD platform_get_logical_drives_mask(void);
 bool platform_get_volume_label(const char *root, char *label, size_t label_size);

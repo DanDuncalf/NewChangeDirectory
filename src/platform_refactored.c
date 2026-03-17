@@ -59,7 +59,6 @@ BOOL ncdw_FindClose(HANDLE a){return FindClose(a);}
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
-#include <ctype.h>
 
 /* fd encoding: encode as (fd+1) cast to void* so NULL == invalid */
 static inline void   *fd_enc(int fd)           { return (void *)(intptr_t)(fd + 1); }
@@ -757,19 +756,16 @@ char platform_get_drive_letter(const char *mount)
     char letter = (char)toupper((unsigned char)mount[0]);
     return (letter >= 'A' && letter <= 'Z') ? letter : '\0';
 #else
-    /* WSL /mnt/<letter> pattern - handles both /mnt/c and /mnt/c (trailing slash) */
+    /* WSL /mnt/<letter> pattern */
     if (mount[0] == '/' && mount[1] == 'm' && mount[2] == 'n' &&
-        mount[3] == 't' && mount[4] == '/') {
-        char letter = mount[5];
-        if (letter >= 'a' && letter <= 'z') {
-            /* Check for /mnt/X or /mnt/X/ or /mnt/X/subdir */
-            if (mount[6] == '\0' || mount[6] == '/') {
-                return (char)toupper((unsigned char)letter);
-            }
-        }
+        mount[3] == 't' && mount[4] == '/' && mount[6] == '\0' &&
+        mount[5] >= 'a' && mount[5] <= 'z') {
+        return (char)toupper((unsigned char)mount[5]);
     }
-    /* Non-WSL mounts: return 0 so they're only scanned when explicitly requested */
-    return '\0';
+    /* Fall back to mount index */
+    static int mount_idx = 1;
+    if (mount_idx > 25) mount_idx = 1;
+    return (char)('A' + (mount_idx++ - 1));
 #endif
 }
 
@@ -1188,4 +1184,8 @@ bool platform_find_is_reparse(const PlatformFindData *fd)
     return fd && (fd->attrs & LATTR_LINK);
 }
 
+#endif
+
+#else
+#error "Unsupported platform"
 #endif

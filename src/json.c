@@ -20,8 +20,9 @@ static void *xmalloc(size_t n)
 
 static char *xstrdup(const char *s)
 {
-    char *p = xmalloc(strlen(s) + 1);
-    strcpy(p, s);
+    size_t n = strlen(s) + 1;
+    char *p = xmalloc(n);
+    memcpy(p, s, n);
     return p;
 }
 

@@ -3,6 +3,7 @@
  */
 
 #include "matcher.h"
+#include "platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,10 +68,10 @@ static SearchParts parse_search(const char *search_str)
     memset(&sp, 0, sizeof(sp));
 
     char buf[NCD_MAX_PATH];
-    strncpy(buf, search_str, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
+    platform_strncpy_s(buf, sizeof(buf), search_str);
 
-    char *tok = strtok(buf, "\\/");
+    char *saveptr = NULL;
+    char *tok = platform_strtok(buf, "\\/", &saveptr);
     while (tok && sp.count < MAX_PARTS) {
         /* strip leading/trailing whitespace */
         while (*tok && isspace((unsigned char)*tok)) tok++;
@@ -78,11 +79,10 @@ static SearchParts parse_search(const char *search_str)
         while (end > tok && isspace((unsigned char)*end)) *end-- = '\0';
 
         if (*tok) {
-            strncpy(sp.parts[sp.count], tok, NCD_MAX_NAME - 1);
-            sp.parts[sp.count][NCD_MAX_NAME - 1] = '\0';
+            platform_strncpy_s(sp.parts[sp.count], NCD_MAX_NAME, tok);
             sp.count++;
         }
-        tok = strtok(NULL, "\\/");
+        tok = platform_strtok(NULL, "\\/", &saveptr);
     }
     return sp;
 }

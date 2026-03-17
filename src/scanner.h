@@ -1,5 +1,5 @@
 /*
- * scanner.h  --  Enumerate drives and directories into an NcdDatabase
+ * scanner.h  --  Enumerate directories into an NcdDatabase
  */
 
 #ifndef NCD_SCANNER_H
@@ -28,36 +28,44 @@ typedef struct {
 } DriveStatus;
 
 /*
- * Scan all accessible drives (fixed, removable, network) and populate db.
- *
- * Options:
- *   include_hidden  -- include directories with FILE_ATTRIBUTE_HIDDEN
- *   include_system  -- include directories with FILE_ATTRIBUTE_SYSTEM
- *
- * Progress is displayed internally by the main thread: one status line per
- * drive is rewritten every 100 ms until all worker threads complete.
- *
- * Returns number of directories added across all drives.
- */
-int scan_all_drives(NcdDatabase *db,
-                    bool         include_hidden,
-                    bool         include_system);
-
-/*
- * Progress callback type kept for scan_drive's public API.
+ * Progress callback type for scan_mount.
  */
 typedef void (*ScanProgressFn)(char drive_letter,
                                const char *current_path,
                                void       *user_data);
 
 /*
- * Re-scan a single drive; replaces the existing DriveData for that drive
- * (or adds a new one if it wasn't present).
+ * Scan a list of platform-agnostic mount strings and populate db.
  *
- * Returns number of directories found, or -1 on error.
+ * `mounts` is an array of `count` NUL-terminated mount identifiers:
+ *   Windows: "C:\\", "D:\\", etc.
+ *   Linux:   "/", "/home", "/mnt/data", etc.
+ *
+ * If `count` is zero, the implementation should enumerate all mounts
+ * (platform-specific enumeration delegated to platform_*.c).
+ *
+ * Options:
+ *   include_hidden  -- include hidden/dot directories
+ *   include_system  -- include system directories (Windows-specific)
+ *
+ * Progress is displayed internally by the main thread: one status line per
+ * mount is rewritten every 100 ms until all worker threads complete.
+ *
+ * Returns number of directories added across all scanned mounts.
  */
-int scan_drive(NcdDatabase   *db,
-               char           drive_letter,
+int scan_mounts(NcdDatabase *db,
+                const char  **mounts,
+                int           count,
+                bool          include_hidden, 
+                bool          include_system); 
+
+/*
+ * Re-scan a single mount (platform-specific full path). This is the worker
+ * function invoked by scan_mounts for each mount. Returns number of
+ * directories found, or -1 on error. Progress callback is optional.
+ */
+int scan_mount(NcdDatabase   *db,
+               const char    *mount,
                bool           include_hidden,
                bool           include_system,
                ScanProgressFn progress_fn,

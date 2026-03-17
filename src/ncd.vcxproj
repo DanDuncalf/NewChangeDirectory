@@ -136,7 +136,12 @@
     <ClInclude Include="scanner.h" />
     <ClInclude Include="ui.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="build.sh" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+

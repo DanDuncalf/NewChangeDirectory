@@ -183,8 +183,7 @@ static bool heur_get_preferred(const char *search_raw, char *out_path, size_t ou
     int idx = heur_find(&h, key);
     if (idx < 0) return false;
 
-    strncpy(out_path, h.items[idx].target, out_size - 1);
-    out_path[out_size - 1] = '\0';
+    platform_strncpy_s(out_path, out_size, h.items[idx].target);
     return out_path[0] != '\0';
 }
 
@@ -222,10 +221,8 @@ static void heur_note_choice(const char *search_raw, const char *target_path)
                 (size_t)(new_count - 1) * sizeof(NcdHeurEntry));
     h.count = new_count;
 
-    strncpy(h.items[0].search, key, sizeof(h.items[0].search) - 1);
-    h.items[0].search[sizeof(h.items[0].search) - 1] = '\0';
-    strncpy(h.items[0].target, target, sizeof(h.items[0].target) - 1);
-    h.items[0].target[sizeof(h.items[0].target) - 1] = '\0';
+    platform_strncpy_s(h.items[0].search, sizeof(h.items[0].search), key);
+    platform_strncpy_s(h.items[0].target, sizeof(h.items[0].target), target);
 
     heur_save(&h);
 }
@@ -700,13 +697,11 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                         /* /d requires a path as the next argument */
                         if (arg[j + 1] == '\0' && i + 1 < argc) {
                             i++;
-                            strncpy(opts->db_override, argv[i],
-                                    NCD_MAX_PATH - 1);
+                            platform_strncpy_s(opts->db_override, NCD_MAX_PATH, argv[i]);
                             goto next_arg;
                         } else if (arg[j + 1]) {
                             /* /d<path> (no space) */
-                            strncpy(opts->db_override, arg + j + 1,
-                                    NCD_MAX_PATH - 1);
+                            platform_strncpy_s(opts->db_override, NCD_MAX_PATH, arg + j + 1);
                             goto next_arg;
                         } else {
                             ncd_println("NCD: /d requires a path argument");
@@ -721,14 +716,10 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             /* Not an option -- must be the search string */
             if (opts->has_search) {
                 /* Append with backslash (allows: ncd scott downloads) */
-                strncat(opts->search,
-                        "\\",
-                        NCD_MAX_PATH - strlen(opts->search) - 1);
-                strncat(opts->search,
-                        arg,
-                        NCD_MAX_PATH - strlen(opts->search) - 1);
-            } else {
-                strncpy(opts->search, arg, NCD_MAX_PATH - 1);
+                platform_strncat_s(opts->search, NCD_MAX_PATH, "\\");
+                platform_strncat_s(opts->search, NCD_MAX_PATH, arg);
+                } else {
+                platform_strncpy_s(opts->search, NCD_MAX_PATH, arg);
                 opts->has_search = true;
             }
         }
@@ -739,23 +730,23 @@ next_arg:;
 
 #if NCD_PLATFORM_LINUX
 /*
- * Progress callback for the selected-drive rescan path (/r c,e etc.).
- * Since scan_drive() runs on the main thread, the callback fires every
- * ~PROGRESS_INTERVAL directories and overwrites the current console line.
+ * Check if a filesystem type is a pseudo filesystem that should be skipped.
  */
-typedef struct {
-    char letter;
-    char mnt_path[64];
-    long approx_count;
-} WslSelScanProg;
-
-static void wsl_sel_scan_progress_cb(char dl, const char *path, void *ud)
+static bool is_pseudo_fs(const char *fstype)
 {
-    (void)dl;
-    WslSelScanProg *p = (WslSelScanProg *)ud;
-    p->approx_count += 100;   /* one callback ≈ PROGRESS_INTERVAL dirs */
-    ncd_printf("\r  [%c: -> %s] %5ld scanned  %.50s\x1b[K",
-               p->letter, p->mnt_path, p->approx_count, path ? path : "");
+    static const char *pseudo_fs[] = {
+        "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
+        "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
+        "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
+        "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
+        "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
+        "fuse.portal", "fuse.gvfsd-fuse", NULL
+    };
+    for (int i = 0; pseudo_fs[i]; i++) {
+        if (strcmp(fstype, pseudo_fs[i]) == 0)
+            return true;
+    }
+    return false;
 }
 #endif
 
@@ -775,103 +766,99 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 
 static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
 {
-#if NCD_PLATFORM_LINUX
-    /*
-     * On Linux / WSL, drive letters map to /mnt/X paths.
-     * If the user specified a drive list (e.g. /r c-e or /rCE) only scan
-     * the corresponding /mnt/X mount points; otherwise scan all mounts.
-     */
-    if (opts->scan_drive_count > 0 || opts->skip_drive_count > 0) {
-        int total = 0;
-        for (int i = 0; i < 26; i++) {
-            if (opts->scan_drive_count > 0 && !opts->scan_drive_mask[i]) continue;
-            if (opts->skip_drive_mask[i]) continue;
-
-            char letter   = (char)('A' + i);
-            char mnt_path[64];
-            snprintf(mnt_path, sizeof(mnt_path), "/mnt/%c", (char)('a' + i));
-
-            if (!platform_dir_exists(mnt_path)) {
-                ncd_printf("  [%c:] %s not found, skipping\r\n", letter, mnt_path);
-                continue;
-            }
-
-            /* Pre-register the drive so scan_drive() picks up our mount path. */
-            DriveData *drv = db_add_drive(db, letter);
-            drv->type = PLATFORM_DRIVE_FIXED;
-            snprintf(drv->label, sizeof(drv->label), "%s", mnt_path);
-
-            /* Print without newline so the progress callback can overwrite
-             * this line with \r on each update.                           */
-            ncd_printf("  [%c: -> %s] (starting...)", letter, mnt_path);
-
-            WslSelScanProg prog;
-            prog.letter       = letter;
-            prog.approx_count = 0;
-            snprintf(prog.mnt_path, sizeof(prog.mnt_path), "%s", mnt_path);
-
-            int n = scan_drive(db, letter,
-                               opts->show_hidden, opts->show_system,
-                               wsl_sel_scan_progress_cb, &prog);
-            if (n >= 0) {
-                ncd_printf("\r  [%c: -> %s] COMPLETE (%d directories)\x1b[K\r\n",
-                           letter, mnt_path, n);
-                total += n;
-            } else {
-                ncd_printf("\r  [%c: -> %s] WARNING: scan failed/skipped\x1b[K\r\n",
-                           letter, mnt_path);
-            }
-        }
-        return total;
-    }
-
-    /* No drive filter -- scan all mount points. */
-    return scan_all_drives(db, opts->show_hidden, opts->show_system);
-#else
-    if (opts->scan_drive_count <= 0 && opts->skip_drive_count <= 0)
-        return scan_all_drives(db, opts->show_hidden, opts->show_system);
+    /* Build a drive list from the options. If opts->scan_drive_count>0 use
+     * those drives. If skip mask is specified, enumerate available drives
+     * and exclude the skipped ones. If neither is set, pass count==0 to
+     * scan_drives to scan all drives. */
+    char drives[26];
+    int dcount = 0;
 
     if (opts->scan_drive_count > 0) {
-        char list[160] = {0};
-        strncat(list, "  Scanning selected drives:", sizeof(list) - 1);
+        for (int i = 0; i < 26; i++) if (opts->scan_drive_mask[i] && !opts->skip_drive_mask[i]) drives[dcount++] = (char)('A' + i);
+    } else if (opts->skip_drive_count > 0) {
+#if NCD_PLATFORM_WINDOWS
+        DWORD mask = GetLogicalDrives();
         for (int i = 0; i < 26; i++) {
-            if (!opts->scan_drive_mask[i]) continue;
+            if (!(mask & (1u << i))) continue;
             if (opts->skip_drive_mask[i]) continue;
-            char tmp[5];
-            snprintf(tmp, sizeof(tmp), " %c:", (char)('A' + i));
-            strncat(list, tmp, sizeof(list) - strlen(list) - 1);
+            drives[dcount++] = (char)('A' + i);
         }
-        ncd_printf("%s\r\n", list);
+#else
+        /* On Linux enumerate mounts and include those not skipped. */
+        char mnt_points[26][MAX_PATH];
+        char mnt_letters[26];
+        int nmounts = 0;
+        FILE *mf = fopen("/proc/mounts", "r");
+        if (mf) {
+            char line[1024];
+            while (fgets(line, sizeof(line), mf) && nmounts < 26) {
+                char device[256], mountpoint[MAX_PATH], fstype[64];
+                if (sscanf(line, "%255s %4095s %63s", device, mountpoint, fstype) != 3) continue;
+                if (is_pseudo_fs(fstype)) continue;
+                if (strncmp(mountpoint, "/proc", 5) == 0) continue;
+                if (strncmp(mountpoint, "/sys", 4) == 0) continue;
+                if (strncmp(mountpoint, "/dev", 4) == 0) continue;
+                if (strncmp(mountpoint, "/run", 4) == 0) continue;
+                snprintf(mnt_points[nmounts], MAX_PATH, "%s", mountpoint);
+                char assigned = (char)(nmounts + 1);
+                if (mountpoint[0] == '/' && mountpoint[1] == 'm' && mountpoint[2] == 'n' && mountpoint[3] == 't' && mountpoint[4] == '/' && isalpha((unsigned char)mountpoint[5]) && mountpoint[6] == '\0') {
+                    assigned = (char)toupper((unsigned char)mountpoint[5]);
+                }
+                mnt_letters[nmounts] = assigned;
+                nmounts++;
+            }
+            fclose(mf);
+        }
+        for (int i = 0; i < nmounts; i++) {
+            char letter = mnt_letters[i];
+            int idx = (isalpha((unsigned char)letter) ? (letter - 'A') : -1);
+            if (idx >= 0 && idx < 26 && opts->skip_drive_mask[idx]) continue;
+            drives[dcount++] = letter;
+        }
+#endif
     } else {
-        char list[160] = {0};
-        strncat(list, "  Scanning all drives except:", sizeof(list) - 1);
-        for (int i = 0; i < 26; i++) {
-            if (!opts->skip_drive_mask[i]) continue;
-            char tmp[5];
-            snprintf(tmp, sizeof(tmp), " %c:", (char)('A' + i));
-            strncat(list, tmp, sizeof(list) - strlen(list) - 1);
-        }
-        ncd_printf("%s\r\n", list);
+        dcount = 0; /* scan_mounts will enumerate all mounts */
     }
 
-    int total = 0;
-    for (int i = 0; i < 26; i++) {
-        if (opts->scan_drive_count > 0 && !opts->scan_drive_mask[i]) continue;
-        if (opts->skip_drive_mask[i]) continue;
-        char letter = (char)('A' + i);
-        ncd_printf("  [%c:] (starting...)\r\n", letter);
-        SingleScanProgress pg = { .drive = letter };
-        int n = scan_drive(db, letter, opts->show_hidden, opts->show_system,
-                           single_scan_progress_cb, &pg);
-        if (n >= 0) {
-            ncd_printf("\r  [%c:] COMPLETE (%d directories)\r\n", letter, n);
-        } else {
-            ncd_printf("\r  [%c:] WARNING: scan failed/skipped\r\n", letter);
-        }
-        if (n > 0) total += n;
+    /* If no specific mounts requested, let scan_mounts enumerate them */
+    if (dcount == 0) {
+        return scan_mounts(db, NULL, 0, opts->show_hidden, opts->show_system);
     }
-    return total;
+
+    /* Build platform-specific mount strings from the selected drives. */
+    const char *mounts[26];
+    char mount_bufs[26][MAX_PATH];
+    int mcount = 0;
+
+#if NCD_PLATFORM_WINDOWS
+    for (int i = 0; i < dcount; i++) {
+        char letter = drives[i];
+        if (!isalpha((unsigned char)letter)) continue;
+        snprintf(mount_bufs[mcount], MAX_PATH, "%c:\\", letter);
+        mounts[mcount] = mount_bufs[mcount];
+        mcount++;
+    }
+#else
+    /* On Linux, enumerate all mounts and filter by selected letters */
+    char all_mount_bufs[26][MAX_PATH];
+    const char *all_mount_ptrs[26];
+    int all_count = platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
+                                              sizeof(all_mount_bufs[0]), 26);
+    for (int i = 0; i < all_count && mcount < 26; i++) {
+        char letter = platform_get_drive_letter(all_mount_ptrs[i]);
+        for (int j = 0; j < dcount; j++) {
+            if (letter == drives[j]) {
+                snprintf(mount_bufs[mcount], MAX_PATH, "%s", all_mount_ptrs[i]);
+                mounts[mcount] = mount_bufs[mcount];
+                mcount++;
+                break;
+            }
+        }
+    }
 #endif
+
+    if (mcount == 0) return 0;
+    return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system);
 }
 
 /* ================================================================= main   */
@@ -1024,14 +1011,12 @@ int main(int argc, char *argv[])
      */
     if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
         target_drive = (char)toupper((unsigned char)opts.search[0]);
-        strncpy(clean_search, opts.search + 2, sizeof(clean_search) - 1);
-        clean_search[sizeof(clean_search) - 1] = '\0';
+        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search + 2);
     } else {
         char cwd[MAX_PATH] = {0};
         platform_get_current_dir(cwd, sizeof(cwd));
         target_drive = (char)toupper((unsigned char)cwd[0]);
-        strncpy(clean_search, opts.search, sizeof(clean_search) - 1);
-        clean_search[sizeof(clean_search) - 1] = '\0';
+        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search);
     }
 #else
     /*
@@ -1043,11 +1028,11 @@ int main(int argc, char *argv[])
         target_drive = (char)toupper((unsigned char)opts.search[0]);
         /* opts.search+2 is always shorter than clean_search; use explicit
          * precision cap to let GCC prove no truncation occurs.            */
-        snprintf(clean_search, sizeof(clean_search), "%.*s",
-                 (int)(sizeof(clean_search) - 1), opts.search + 2);
+        /* clean_search buffer is large enough; use platform_strncpy_s */
+        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search + 2);
     } else {
         target_drive = '\x01';
-        snprintf(clean_search, sizeof(clean_search), "%s", opts.search);
+        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search);
     }
 #endif
 
@@ -1077,7 +1062,7 @@ int main(int argc, char *argv[])
 
         int n = (opts.force_rescan
                  ? run_requested_rescan(scan_db, &opts)
-                 : scan_all_drives(scan_db, opts.show_hidden, opts.show_system));
+                 : scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system));
         ncd_printf("  Scan complete: %d directories found.\r\n", n);
 
         for (int i = 0; i < scan_db->drive_count; i++) {
@@ -1100,7 +1085,7 @@ int main(int argc, char *argv[])
         scan_db->default_show_hidden = opts.show_hidden;
         scan_db->default_show_system = opts.show_system;
         scan_db->last_scan = time(NULL);
-        int n = scan_all_drives(scan_db, opts.show_hidden, opts.show_system);
+        int n = scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system);
         ncd_printf("  Rebuild complete: %d directories found.\r\n", n);
         for (int i = 0; i < scan_db->drive_count; i++) {
             char drv_path[NCD_MAX_PATH];

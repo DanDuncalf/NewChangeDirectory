@@ -52,6 +52,19 @@
 
 /* ================================================================ helpers */
 
+/* Portable compile-time assert for compilers that don't support _Static_assert
+ * MSVC historically doesn't support _Static_assert in C mode, so fall back
+ * to a typedef-sized array trick.
+ */
+#ifndef STATIC_ASSERT
+#ifdef _MSC_VER
+#define STATIC_ASSERT(cond, msg) typedef char static_assertion_at_line_##__LINE__[(cond)?1:-1]
+#else
+#define STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#endif
+#endif
+
+
 static void *xmalloc(size_t n)
 {
     void *p = malloc(n);
@@ -163,85 +176,17 @@ void db_free(NcdDatabase *db)
 
 /* ============================================================ path helper */
 
-#if NCD_PLATFORM_WINDOWS
-
 char *db_default_path(char *buf, size_t buf_size)
 {
-    char local_app[MAX_PATH];
-    if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return NULL;
-
-    int written = snprintf(buf, buf_size, "%s\\%s", local_app, NCD_DB_FILENAME);
-    if (written < 0 || (size_t)written >= buf_size) return NULL;
-    return buf;
+    if (platform_db_default_path(buf, buf_size)) return buf;
+    return NULL;
 }
 
 char *db_drive_path(char letter, char *buf, size_t buf_size)
 {
-    char local_app[MAX_PATH];
-    if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return NULL;
-
-    /* Ensure %LOCALAPPDATA%\NCD\ exists (no-op if already present). */
-    char dir[MAX_PATH];
-    snprintf(dir, sizeof(dir), "%s\\NCD", local_app);
-    platform_create_dir(dir);
-
-    int w = snprintf(buf, buf_size, "%s\\NCD\\ncd_%c.database",
-                     local_app, toupper((unsigned char)letter));
-    return (w > 0 && (size_t)w < buf_size) ? buf : NULL;
+    if (platform_db_drive_path(letter, buf, buf_size)) return buf;
+    return NULL;
 }
-
-#else /* NCD_PLATFORM_LINUX */
-
-/*
- * Return the XDG data home base directory: $XDG_DATA_HOME if set,
- * otherwise $HOME/.local/share.  Result is NUL-terminated in buf.
- */
-static bool xdg_data_home(char *buf, size_t buf_size)
-{
-    if (platform_get_env("XDG_DATA_HOME", buf, buf_size) && buf[0])
-        return true;
-    char home[MAX_PATH];
-    if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
-        return false;
-    int w = snprintf(buf, buf_size, "%s/.local/share", home);
-    return w > 0 && (size_t)w < buf_size;
-}
-
-char *db_default_path(char *buf, size_t buf_size)
-{
-    char base[MAX_PATH];
-    if (!xdg_data_home(base, sizeof(base))) return NULL;
-
-    /* Ensure ~/.local/share/ncd/ exists. */
-    char dir[MAX_PATH + 8];
-    snprintf(dir, sizeof(dir), "%s/ncd", base);
-    platform_create_dir(dir);
-
-    int w = snprintf(buf, buf_size, "%s/ncd/%s", base, NCD_DB_FILENAME);
-    if (w < 0 || (size_t)w >= buf_size) return NULL;
-    return buf;
-}
-
-/*
- * On Linux, `letter` is a mount-index byte (0x01..0x1A).
- * The per-mount database file is named  ncd_XX.database  where XX is the
- * two-digit hex value of the byte.
- */
-char *db_drive_path(char letter, char *buf, size_t buf_size)
-{
-    char base[MAX_PATH];
-    if (!xdg_data_home(base, sizeof(base))) return NULL;
-
-    char dir[MAX_PATH + 8];
-    snprintf(dir, sizeof(dir), "%s/ncd", base);
-    platform_create_dir(dir);
-
-    int w = snprintf(buf, buf_size, "%s/ncd/ncd_%02x.database",
-                     base, (unsigned char)letter);
-    return (w > 0 && (size_t)w < buf_size) ? buf : NULL;
-}
-
-#endif /* NCD_PLATFORM_WINDOWS / NCD_PLATFORM_LINUX */
 
 bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
                             const char *path)
@@ -275,7 +220,8 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     memset(&dhdr, 0, sizeof(dhdr));
     dhdr.letter    = (uint8_t)drv->letter;
     dhdr.type      = drv->type;
-    memcpy(dhdr.label, drv->label, sizeof(dhdr.label));
+    /* copy label safely via platform helper to respect platform semantics */
+    platform_strncpy_s(dhdr.label, sizeof(dhdr.label), drv->label);
     dhdr.dir_count = (uint32_t)drv->dir_count;
     dhdr.pool_size = (uint32_t)drv->name_pool_len;
     memcpy(buf + pos, &dhdr, sizeof(dhdr));
@@ -644,7 +590,7 @@ NcdDatabase *db_load(const char *path)
 
     Rdr r = { text, 0 };
     NcdDatabase *db = db_create();
-    strncpy(db->db_path, path, NCD_MAX_PATH - 1);
+    platform_strncpy_s(db->db_path, NCD_MAX_PATH, path);
 
     char key[128];
 
@@ -849,9 +795,9 @@ bool db_save(const NcdDatabase *db, const char *path)
  */
 
 /* Compile-time sanity checks on the on-disk struct sizes. */
-_Static_assert(sizeof(BinFileHdr)  == 24, "BinFileHdr size changed");
-_Static_assert(sizeof(BinDriveHdr) == 80, "BinDriveHdr size changed");
-_Static_assert(sizeof(DirEntry)    == 12, "DirEntry size changed");
+STATIC_ASSERT(sizeof(BinFileHdr)  == 24, "BinFileHdr size changed");
+STATIC_ASSERT(sizeof(BinDriveHdr) == 80, "BinDriveHdr size changed");
+STATIC_ASSERT(sizeof(DirEntry)    == 12, "DirEntry size changed");
 
 bool db_save_binary(const NcdDatabase *db, const char *path)
 {
@@ -969,7 +915,7 @@ NcdDatabase *db_load_binary(const char *path)
 
     /* ---- build NcdDatabase from the blob ---- */
     NcdDatabase *db = db_create();
-    strncpy(db->db_path, path, NCD_MAX_PATH - 1);
+    platform_strncpy_s(db->db_path, NCD_MAX_PATH, path);
     db->default_show_hidden = hdr.show_hidden != 0;
     db->default_show_system = hdr.show_system != 0;
     db->last_scan           = (time_t)hdr.last_scan;

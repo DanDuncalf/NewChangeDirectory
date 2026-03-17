@@ -769,8 +769,7 @@ static int navigate_run(const char *start_path,
     st.top_row = box_top;
     st.box_width = bw;
     st.visible_rows = max_list;
-    strncpy(st.current_path, start_path, sizeof(st.current_path) - 1);
-    st.current_path[sizeof(st.current_path) - 1] = '\0';
+    platform_strncpy_s(st.current_path, sizeof(st.current_path), start_path);
 
     if (!nav_reload_lists(&st)) {
         names_free(&st.siblings); names_free(&st.children);
@@ -783,8 +782,7 @@ static int navigate_run(const char *start_path,
     for (;;) {
         int key = read_key();
         if (key == KEY_ENTER) {
-            strncpy(out_path, st.current_path, out_path_size - 1);
-            out_path[out_path_size - 1] = '\0';
+                platform_strncpy_s(out_path, out_path_size, st.current_path);
             nav_result = NAV_RESULT_SELECT;
             break;
         }
@@ -797,16 +795,14 @@ static int navigate_run(const char *start_path,
             if (st.sibling_sel + 1 < st.siblings.count) st.sibling_sel++;
         } else if (key == KEY_LEFT) {
             if (st.has_parent) {
-                strncpy(st.current_path, st.parent_path, sizeof(st.current_path) - 1);
-                st.current_path[sizeof(st.current_path) - 1] = '\0';
+                platform_strncpy_s(st.current_path, sizeof(st.current_path), st.parent_path);
                 if (!nav_reload_lists(&st)) break;
             }
         } else if (key == KEY_RIGHT) {
             if (st.children.count > 0) {
                 char next[MAX_PATH];
                 if (path_join(next, sizeof(next), st.current_path, st.children.items[st.child_sel])) {
-                    strncpy(st.current_path, next, sizeof(st.current_path) - 1);
-                    st.current_path[sizeof(st.current_path) - 1] = '\0';
+                    platform_strncpy_s(st.current_path, sizeof(st.current_path), next);
                     if (!nav_reload_lists(&st)) break;
                 }
             }
@@ -827,8 +823,7 @@ static int navigate_run(const char *start_path,
             if (st.has_parent &&
                 path_join(candidate, sizeof(candidate), base, st.siblings.items[st.sibling_sel])) {
                 if (_stricmp(candidate, st.current_path) != 0) {
-                    strncpy(st.current_path, candidate, sizeof(st.current_path) - 1);
-                    st.current_path[sizeof(st.current_path) - 1] = '\0';
+                    platform_strncpy_s(st.current_path, sizeof(st.current_path), candidate);
                     if (!nav_reload_lists(&st)) break;
                 }
             }
@@ -918,8 +913,7 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                                               nav_out, sizeof(nav_out), true);
                 if (nav_result == NAV_RESULT_BACK) { draw_box(&st); continue; }
                 if (nav_result == NAV_RESULT_SELECT && out_path && out_path_size > 0) {
-                    strncpy(out_path, nav_out, out_path_size - 1);
-                    out_path[out_path_size - 1] = '\0';
+                platform_strncpy_s(out_path, out_path_size, nav_out);
                     result = -2;
                 } else { result = -1; }
                 goto done;
