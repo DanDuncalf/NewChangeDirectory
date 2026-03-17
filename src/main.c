@@ -484,6 +484,33 @@ static void result_ok(const char *full_path, char drive_letter)
 #endif
 }
 
+#if NCD_PLATFORM_LINUX
+/*
+ * Output a cd command to stdout for eval mode.
+ * Usage: eval $(ncd -c searchterm)
+ */
+static void output_cd_command(const char *path)
+{
+    /* Escape single quotes in path: ' -> '\'' */
+    char escaped_path[MAX_PATH * 4];
+    size_t j = 0;
+    for (size_t i = 0; path[i] && j < sizeof(escaped_path) - 5; i++) {
+        if (path[i] == '\'') {
+            escaped_path[j++] = '\'';
+            escaped_path[j++] = '\\';
+            escaped_path[j++] = '\'';
+            escaped_path[j++] = '\'';
+        } else if (path[i] == '\n' || path[i] == '\r') {
+            /* skip newlines */
+        } else {
+            escaped_path[j++] = path[i];
+        }
+    }
+    escaped_path[j] = '\0';
+    printf("cd '%s'\n", escaped_path);
+}
+#endif
+
 /* ============================================= background rescan spawner  */
 
 /*
@@ -532,6 +559,9 @@ static void print_usage(void)
         "  /a          Include all directories (hidden + system)\r\n"
         "  /d <path>   Use alternate database file\r\n"
         "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
+#if NCD_PLATFORM_LINUX
+        "  /c          Output cd command for eval (usage: eval $(ncd -c <search>))\r\n"
+#endif
         "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
         "              Special: '.' opens navigator from current directory\r\n"
         "                       'X:' or 'X:\\' opens navigator from drive root\r\n"
@@ -738,6 +768,9 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                             ncd_println("NCD: /t requires a timeout in seconds");
                             return false;
                         }
+                    case 'c':
+                        opts->cd_command = true;
+                        break;
                     default:
                         ncd_printf("NCD: unknown option /%c\r\n", flag);
                         return false;
@@ -1000,6 +1033,9 @@ int main(int argc, char *argv[])
         }
         heur_note_choice(opts.search, chosen);
         result_ok(chosen, (char)toupper((unsigned char)chosen[0]));
+#if NCD_PLATFORM_LINUX
+        if (opts.cd_command) output_cd_command(chosen);
+#endif
         con_close();
         return 0;
     }
@@ -1025,6 +1061,9 @@ int main(int argc, char *argv[])
         }
         heur_note_choice(opts.search, chosen);
         result_ok(chosen, root[0]);
+#if NCD_PLATFORM_LINUX
+        if (opts.cd_command) output_cd_command(chosen);
+#endif
         con_close();
         return 0;
     }
@@ -1264,6 +1303,9 @@ int main(int argc, char *argv[])
     /* -------------------------------------------- write success result   */
     heur_note_choice(opts.search, resolved_path);
     result_ok(resolved_path, resolved_drive);
+#if NCD_PLATFORM_LINUX
+    if (opts.cd_command) output_cd_command(resolved_path);
+#endif
 
     free(matches);
 

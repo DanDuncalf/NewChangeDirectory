@@ -219,6 +219,7 @@ typedef struct {
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
     int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
+    bool cd_command;              /* /c -- output cd command (Linux eval mode) */
 } NcdOptions;
 
 /*
