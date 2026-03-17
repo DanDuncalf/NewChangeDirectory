@@ -194,8 +194,11 @@ int scan_mounts(NcdDatabase *db,
                 const char  **mounts,
                 int           count,
                 bool          include_hidden,
-                bool          include_system)
+                bool          include_system,
+                int           timeout_seconds)
 {
+    /* Convert timeout to milliseconds, ensure reasonable minimum */
+    unsigned long timeout_ms = timeout_seconds > 0 ? (unsigned long)timeout_seconds * 1000UL : 60000UL;
     /* If no mounts specified, enumerate them via platform code. */
     if (count == 0 || !mounts) {
         char mount_bufs[26][MAX_PATH];
@@ -305,7 +308,7 @@ int scan_mounts(NcdDatabase *db,
         for (int i = 0; i < count && i < 26; i++) {
             if (statuses[i].is_done) continue;
             unsigned long inactive_ms = current_time - statuses[i].last_active_ms;
-            if (inactive_ms >= SCAN_INACTIVITY_TIMEOUT_MS) {
+            if (inactive_ms >= timeout_ms) {
                 any_timed_out = true;
                 break;
             }
@@ -320,7 +323,7 @@ int scan_mounts(NcdDatabase *db,
                              "  [%-30s] COMPLETE (%d directories)",
                              mounts[i], s->final_count);
                 } else if (!s->is_done &&
-                           (current_time - s->last_active_ms) >= SCAN_INACTIVITY_TIMEOUT_MS) {
+                           (current_time - s->last_active_ms) >= timeout_ms) {
                     snprintf(content, sizeof(content),
                              "  [%-30s] WARNING: scan timed out (inactive)",
                              mounts[i]);

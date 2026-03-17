@@ -58,7 +58,8 @@ int scan_mounts(NcdDatabase *db,
                 const char  **mounts,
                 int           count,
                 bool          include_hidden, 
-                bool          include_system); 
+                bool          include_system,
+                int           timeout_seconds); 
 
 /*
  * Re-scan a single mount (platform-specific full path). This is the worker

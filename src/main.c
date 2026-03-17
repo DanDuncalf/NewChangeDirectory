@@ -513,7 +513,7 @@ static void print_usage(void)
         "\r\n"
         "Usage:\r\n"
         "  ncd <search>\r\n"
-        "  ncd [/r|/r<drives>] [/i] [/s] [/a] [/d <dbpath>] <search>\r\n"
+        "  ncd [/r|/r<drives>] [/i] [/s] [/a] [/d <dbpath>] [/t <sec>] <search>\r\n"
         "  ncd /r|/r<drives>\r\n"
         "  ncd /f | /fc\r\n"
         "  ncd /h | /?\r\n"
@@ -531,6 +531,7 @@ static void print_usage(void)
         "  /s          Include system directories in search\r\n"
         "  /a          Include all directories (hidden + system)\r\n"
         "  /d <path>   Use alternate database file\r\n"
+        "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
         "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
         "              Special: '.' opens navigator from current directory\r\n"
         "                       'X:' or 'X:\\' opens navigator from drive root\r\n"
@@ -583,6 +584,7 @@ static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
 static bool parse_args(int argc, char *argv[], NcdOptions *opts)
 {
     memset(opts, 0, sizeof(NcdOptions));
+    opts->timeout_seconds = 300;  /* default 5 minute timeout */
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -707,6 +709,22 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                             ncd_println("NCD: /d requires a path argument");
                             return false;
                         }
+                    case 't':
+                        /* /t requires seconds as the next argument */
+                        if (arg[j + 1] == '\0' && i + 1 < argc) {
+                            i++;
+                            opts->timeout_seconds = atoi(argv[i]);
+                            if (opts->timeout_seconds <= 0) opts->timeout_seconds = 300;
+                            goto next_arg;
+                        } else if (arg[j + 1]) {
+                            /* /t<seconds> (no space) */
+                            opts->timeout_seconds = atoi(arg + j + 1);
+                            if (opts->timeout_seconds <= 0) opts->timeout_seconds = 300;
+                            goto next_arg;
+                        } else {
+                            ncd_println("NCD: /t requires a timeout in seconds");
+                            return false;
+                        }
                     default:
                         ncd_printf("NCD: unknown option /%c\r\n", flag);
                         return false;
@@ -822,7 +840,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
 
     /* If no specific mounts requested, let scan_mounts enumerate them */
     if (dcount == 0) {
-        return scan_mounts(db, NULL, 0, opts->show_hidden, opts->show_system);
+        return scan_mounts(db, NULL, 0, opts->show_hidden, opts->show_system, opts->timeout_seconds);
     }
 
     /* Build platform-specific mount strings from the selected drives. */
@@ -858,7 +876,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
 #endif
 
     if (mcount == 0) return 0;
-    return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system);
+    return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system, opts->timeout_seconds);
 }
 
 /* ================================================================= main   */
@@ -1062,7 +1080,7 @@ int main(int argc, char *argv[])
 
         int n = (opts.force_rescan
                  ? run_requested_rescan(scan_db, &opts)
-                 : scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system));
+                 : scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds));
         ncd_printf("  Scan complete: %d directories found.\r\n", n);
 
         for (int i = 0; i < scan_db->drive_count; i++) {
@@ -1085,7 +1103,7 @@ int main(int argc, char *argv[])
         scan_db->default_show_hidden = opts.show_hidden;
         scan_db->default_show_system = opts.show_system;
         scan_db->last_scan = time(NULL);
-        int n = scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system);
+        int n = scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds);
         ncd_printf("  Rebuild complete: %d directories found.\r\n", n);
         for (int i = 0; i < scan_db->drive_count; i++) {
             char drv_path[NCD_MAX_PATH];

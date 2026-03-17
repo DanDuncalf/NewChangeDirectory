@@ -218,6 +218,7 @@ typedef struct {
     char db_override[NCD_MAX_PATH]; /* /d <path>                             */
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
+    int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
 } NcdOptions;
 
 /*
