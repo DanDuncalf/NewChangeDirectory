@@ -611,18 +611,31 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
          * /r <drives> form:
          *   ncd /r e,p
          *   ncd /r e-p
+         * Only treat next arg as drive list if it looks like one (commas/hyphens).
+         * A bare letter like "c" is treated as search, not drive "C:".
          */
         if ((_stricmp(arg, "/r") == 0 || _stricmp(arg, "-r") == 0) &&
             i + 1 < argc &&
             argv[i + 1][0] != '/' && argv[i + 1][0] != '-') {
-            bool parsed = parse_drive_list_token(argv[i + 1],
-                                                 opts->scan_drive_mask,
-                                                 &opts->scan_drive_count);
-            if (parsed) {
-                opts->force_rescan = true;
-                i++;  /* consume drive-list token */
-                continue;
+            const char *next = argv[i + 1];
+            bool looks_like_drive_list = false;
+            for (int k = 0; next[k]; k++) {
+                if (next[k] == ',' || next[k] == '-') {
+                    looks_like_drive_list = true;
+                    break;
+                }
             }
+            if (looks_like_drive_list) {
+                bool parsed = parse_drive_list_token(next,
+                                                     opts->scan_drive_mask,
+                                                     &opts->scan_drive_count);
+                if (parsed) {
+                    opts->force_rescan = true;
+                    i++;  /* consume drive-list token */
+                    continue;
+                }
+            }
+            /* Not a drive list - fall through, next arg is search term */
         }
 
         /*
