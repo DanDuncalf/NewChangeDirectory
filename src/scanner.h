@@ -25,6 +25,7 @@ typedef struct {
     char          current_path[MAX_PATH]; /* last path seen (approx, racy)   */
     volatile LONG is_done;             /* set to 1 when thread completes     */
     int           final_count;         /* total dirs found, written at end   */
+    unsigned long last_active_ms;      /* timestamp of last dir_count change */
 } DriveStatus;
 
 /*

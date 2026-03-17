@@ -56,11 +56,12 @@ bool find_is_reparse(const PlatformFindData *fd)
 #define PROGRESS_INTERVAL  100
 
 /*
- * Maximum milliseconds to wait for ALL mount threads to finish.
- * 5 minutes gives large spindle media drives enough time to enumerate
- * their full directory tree without being cut off prematurely.
+ * Activity-based timeout: milliseconds of inactivity before considering
+ * a scan thread stuck. The scan only times out if no directories have
+ * been found for this duration. This allows large/slow drives to complete
+ * without being cut off prematurely.
  */
-#define SCAN_TIMEOUT_MS  300000  /* 5 minutes */
+#define SCAN_INACTIVITY_TIMEOUT_MS  60000  /* 60 seconds */
 
 /* ================================================================ context */
 
@@ -223,8 +224,10 @@ int scan_mounts(NcdDatabase *db,
 
     DriveStatus statuses[26];
     memset(statuses, 0, sizeof(statuses));
+    unsigned long now = platform_tick_ms();
     for (int i = 0; i < count && i < 26; i++) {
         statuses[i].drive_letter = platform_get_drive_letter(mounts[i]);
+        statuses[i].last_active_ms = now;  /* initialize activity timestamp */
     }
 
     PlatformHandle con = platform_console_open_out(false);
@@ -276,15 +279,37 @@ int scan_mounts(NcdDatabase *db,
             worker_thread(&td[i]);
     }
 
-    unsigned long deadline = platform_tick_ms() + SCAN_TIMEOUT_MS;
+    /* Track previous dir_count to detect activity */
+    LONG prev_dir_count[26];
+    memset(prev_dir_count, 0, sizeof(prev_dir_count));
+
     for (;;) {
         bool all_done = true;
-        for (int i = 0; i < count && i < 26; i++)
-            if (!statuses[i].is_done) {
-                all_done = false;
+        unsigned long current_time = platform_tick_ms();
+
+        for (int i = 0; i < count && i < 26; i++) {
+            if (statuses[i].is_done) continue;
+            all_done = false;
+
+            /* Check if this mount made progress since last iteration */
+            LONG current_count = statuses[i].dir_count;
+            if (current_count != prev_dir_count[i]) {
+                /* Activity detected - update last_active_ms */
+                prev_dir_count[i] = current_count;
+                statuses[i].last_active_ms = current_time;
+            }
+        }
+
+        /* Check for inactivity timeout per mount */
+        bool any_timed_out = false;
+        for (int i = 0; i < count && i < 26; i++) {
+            if (statuses[i].is_done) continue;
+            unsigned long inactive_ms = current_time - statuses[i].last_active_ms;
+            if (inactive_ms >= SCAN_INACTIVITY_TIMEOUT_MS) {
+                any_timed_out = true;
                 break;
             }
-        bool timed_out = !all_done && (platform_tick_ms() >= deadline);
+        }
 
         if (has_con) {
             for (int i = 0; i < count && i < 26; i++) {
@@ -294,9 +319,10 @@ int scan_mounts(NcdDatabase *db,
                     snprintf(content, sizeof(content),
                              "  [%-30s] COMPLETE (%d directories)",
                              mounts[i], s->final_count);
-                } else if (timed_out) {
+                } else if (!s->is_done &&
+                           (current_time - s->last_active_ms) >= SCAN_INACTIVITY_TIMEOUT_MS) {
                     snprintf(content, sizeof(content),
-                             "  [%-30s] WARNING: scan timed out",
+                             "  [%-30s] WARNING: scan timed out (inactive)",
                              mounts[i]);
                 } else {
                     snprintf(content, sizeof(content),
@@ -311,7 +337,7 @@ int scan_mounts(NcdDatabase *db,
             }
         }
 
-        if (all_done || timed_out)
+        if (all_done || any_timed_out)
             break;
         platform_sleep_ms(100);
     }
