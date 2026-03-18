@@ -293,11 +293,19 @@ int scan_mounts(NcdDatabase *db,
             con_width = cinfo.buffer_w > 2 ? cinfo.buffer_w - 2 : 79;
             if (con_width > 200) con_width = 200;
         }
-        char header[256] = "  Scanning mounts:";
+        char header[512];
+        snprintf(header, sizeof(header), "  Scanning %d mount%s:", count, count == 1 ? "" : "s");
+        int header_len = (int)strlen(header);
         for (int i = 0; i < count && i < 26; i++) {
+            /* Truncate header to fit console width */
+            if (header_len + strlen(mounts[i]) + 1 >= (size_t)con_width - 3) {
+                platform_strncat_s(header, sizeof(header), " ...");
+                break;
+            }
             char tmp[64];
             snprintf(tmp, sizeof(tmp), " %s", mounts[i]);
             platform_strncat_s(header, sizeof(header), tmp);
+            header_len = (int)strlen(header);
         }
         platform_strncat_s(header, sizeof(header), "\n");
         platform_console_write(con, header);
@@ -308,9 +316,13 @@ int scan_mounts(NcdDatabase *db,
 
         for (int i = 0; i < count && i < 26; i++) {
             char content[256];
-            snprintf(content, sizeof(content), "  [%-30.30s] (starting...)", mounts[i]);
+            /* Use shorter mount name field (12 chars instead of 30) */
+            snprintf(content, sizeof(content), "  [%-12.12s] (starting...)", mounts[i]);
             char line[512];
-            snprintf(line, sizeof(line), "%*.*s\n", con_width, con_width, content);
+            /* Truncate to console width */
+            int len = (int)strlen(content);
+            if (len > con_width) len = con_width;
+            snprintf(line, sizeof(line), "%*.*s\n", len, len, content);
             platform_console_write(con, line);
         }
     }
@@ -368,21 +380,39 @@ int scan_mounts(NcdDatabase *db,
             for (int i = 0; i < count && i < 26; i++) {
                 DriveStatus *s = &statuses[i];
                 char content[512];
+                /* Calculate available space for path */
+                char mount_label[16];
+                snprintf(mount_label, sizeof(mount_label), "%-12.12s", mounts[i]);
+                
                 if (s->is_done) {
                     snprintf(content, sizeof(content),
-                             "  [%-30s] COMPLETE (%d directories)",
-                             mounts[i], s->final_count);
+                             "  [%s] COMPLETE (%d directories)",
+                             mount_label, s->final_count);
                 } else if (!s->is_done &&
                            (current_time - s->last_active_ms) >= timeout_ms) {
                     snprintf(content, sizeof(content),
-                             "  [%-30s] WARNING: scan timed out (inactive)",
-                             mounts[i]);
+                             "  [%s] WARNING: scan timed out (inactive)",
+                             mount_label);
                 } else {
+                    /* Truncate path to fit console width */
+                    int prefix_len = 4 + 12 + 11 + 5 + 2; /* "  [" + mount + "] " + " scanned  " */
+                    int path_max = con_width - prefix_len - 1;
+                    if (path_max < 10) path_max = 10;
+                    
+                    const char *path = s->current_path[0] ? s->current_path : "(starting...)";
+                    char path_trunc[MAX_PATH];
+                    if ((int)strlen(path) > path_max) {
+                        /* Show end of path with ellipsis */
+                        snprintf(path_trunc, sizeof(path_trunc), "...%s", 
+                                 path + strlen(path) - path_max + 3);
+                        path = path_trunc;
+                    }
+                    
                     snprintf(content, sizeof(content),
-                             "  [%-30s] %5ld scanned  %s",
-                             mounts[i],
+                             "  [%s] %5ld scanned  %s",
+                             mount_label,
                              (long)s->dir_count,
-                             s->current_path[0] ? s->current_path : "(starting...)");
+                             path);
                 }
                 platform_console_fill_char(con, status_start_row + i, 0, con_width, ' ');
                 platform_console_fill_attr_default(con, status_start_row + i, 0, con_width);
