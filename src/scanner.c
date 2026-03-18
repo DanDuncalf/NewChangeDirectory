@@ -15,6 +15,10 @@
 #include <string.h>
 #include <ctype.h>
 
+#if NCD_PLATFORM_LINUX
+#include <sys/stat.h>
+#endif
+
 /* ================================================================ directory entry attribute queries */
 
 /* Platform-agnostic attribute bit constants for PlatformFindData */
@@ -167,6 +171,49 @@ int scan_mount(NcdDatabase   *db,
     DriveStatus local_status;
     memset(&local_status, 0, sizeof(local_status));
     local_status.drive_letter = drive_letter;
+
+#if NCD_PLATFORM_LINUX
+    /*
+     * On Linux/WSL, if scanning root (/), only scan specific system directories
+     * to avoid duplicates with /mnt/X drives and WSL internal mounts.
+     * We scan: /etc, /home, /usr, /var, /root, /opt
+     */
+    if (strcmp(mount, "/") == 0) {
+        static const char *root_dirs[] = {"/etc", "/home", "/usr", "/var", "/root", "/opt", NULL};
+        int total_count = 0;
+        
+        /* Add root entry first */
+        int root_id = db_add_dir(drv, "/", -1, false, false);
+        total_count++;
+        
+        for (int i = 0; root_dirs[i]; i++) {
+            struct stat st;
+            if (stat(root_dirs[i], &st) != 0 || !S_ISDIR(st.st_mode))
+                continue;
+            
+            /* Extract directory name */
+            const char *dirname = root_dirs[i] + 1; /* skip leading / */
+            
+            /* Add this system dir under root */
+            int dir_id = db_add_dir(drv, dirname, root_id, false, false);
+            total_count++;
+            
+            /* Scan its contents */
+            ScanCtx ctx = {
+                .drv            = drv,
+                .include_hidden = include_hidden,
+                .include_system = include_system,
+                .status         = &local_status,
+                .dir_count      = 0,
+            };
+            total_count += platform_scan_directory(&ctx, root_dirs[i], (int32_t)dir_id);
+        }
+        
+        local_status.final_count = total_count;
+        local_status.is_done = 1;
+        return total_count;
+    }
+#endif
 
     ScanThreadData td;
     td.db = db;

@@ -852,8 +852,6 @@ int platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
         if (strncmp(mountpoint, "/run", 4) == 0) continue;
         /* Skip WSL internal mounts to avoid duplicates and unnecessary scanning */
         if (strncmp(mountpoint, "/mnt/wsl", 8) == 0) continue;
-        /* Skip root (/). It contains /mnt/X drives and would cause duplicates */
-        if (strcmp(mountpoint, "/") == 0) continue;
         /* Skip WSL special mounts */
         if (strcmp(mountpoint, "/init") == 0) continue;
         if (strncmp(mountpoint, "/usr/lib/wsl", 12) == 0) continue;
