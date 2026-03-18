@@ -850,6 +850,8 @@ int platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
         if (strncmp(mountpoint, "/sys", 4) == 0) continue;
         if (strncmp(mountpoint, "/dev", 4) == 0) continue;
         if (strncmp(mountpoint, "/run", 4) == 0) continue;
+        /* Skip WSL internal mounts to avoid duplicates and unnecessary scanning */
+        if (strncmp(mountpoint, "/mnt/wsl", 8) == 0) continue;
 
         size_t mlen = strlen(mountpoint);
         if (mlen + 1 > buf_size) continue;

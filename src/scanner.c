@@ -201,8 +201,8 @@ int scan_mounts(NcdDatabase *db,
     unsigned long timeout_ms = timeout_seconds > 0 ? (unsigned long)timeout_seconds * 1000UL : 60000UL;
 
     /* Buffers for auto-enumerated mounts - must persist for the whole function */
-    char mount_bufs[26][MAX_PATH];
-    const char *mount_ptrs[26];
+    static char mount_bufs[26][MAX_PATH];
+    static const char *mount_ptrs[26];
 
     /* If no mounts specified, enumerate them via platform code. */
     if (count == 0 || !mounts) {
@@ -211,7 +211,7 @@ int scan_mounts(NcdDatabase *db,
                                                      sizeof(mount_ptrs) / sizeof(mount_ptrs[0]));
         if (mount_count <= 0) return 0;
 
-        mounts = (const char **)mount_ptrs;
+        mounts = mount_ptrs;
         count = mount_count;
     }
 
