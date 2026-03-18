@@ -47,8 +47,16 @@ echo "  Installing: ncd -> ${DEST_DIR}/ncd"
 ${SUDO} cp "${SCRIPT_DIR}/ncd" "${DEST_DIR}/ncd"
 ${SUDO} chmod 755 "${DEST_DIR}/ncd"
 
+# Kill any running NewChangeDirectory processes to avoid "Text file busy"
+if pgrep -x "NewChangeDirectory" > /dev/null 2>&1; then
+    echo "  Stopping running NewChangeDirectory processes..."
+    ${SUDO} pkill -x "NewChangeDirectory" 2>/dev/null || true
+    sleep 1
+fi
+
 # Copy and set permissions for the binary
 echo "  Installing: NewChangeDirectory -> ${DEST_DIR}/NewChangeDirectory"
+${SUDO} rm -f "${DEST_DIR}/NewChangeDirectory" 2>/dev/null || true
 ${SUDO} cp "${SCRIPT_DIR}/NewChangeDirectory" "${DEST_DIR}/NewChangeDirectory"
 ${SUDO} chmod 755 "${DEST_DIR}/NewChangeDirectory"
 
