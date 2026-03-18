@@ -394,25 +394,24 @@ int scan_mounts(NcdDatabase *db,
                              "  [%s] WARNING: scan timed out (inactive)",
                              mount_label);
                 } else {
-                    /* Truncate path to fit console width */
-                    int prefix_len = 4 + 12 + 11 + 5 + 2; /* "  [" + mount + "] " + " scanned  " */
-                    int path_max = con_width - prefix_len - 1;
-                    if (path_max < 10) path_max = 10;
-                    
                     const char *path = s->current_path[0] ? s->current_path : "(starting...)";
-                    char path_trunc[MAX_PATH];
-                    if ((int)strlen(path) > path_max) {
+                    char path_buf[256];
+                    
+                    /* Truncate path to fit safely in content buffer */
+                    size_t path_len = strlen(path);
+                    if (path_len > sizeof(path_buf) - 1) {
                         /* Show end of path with ellipsis */
-                        snprintf(path_trunc, sizeof(path_trunc), "...%s", 
-                                 path + strlen(path) - path_max + 3);
-                        path = path_trunc;
+                        snprintf(path_buf, sizeof(path_buf), "...%s",
+                                 path + path_len - sizeof(path_buf) + 4);
+                    } else {
+                        snprintf(path_buf, sizeof(path_buf), "%s", path);
                     }
                     
                     snprintf(content, sizeof(content),
                              "  [%s] %5ld scanned  %s",
                              mount_label,
                              (long)s->dir_count,
-                             path);
+                             path_buf);
                 }
                 platform_console_fill_char(con, status_start_row + i, 0, con_width, ' ');
                 platform_console_fill_attr_default(con, status_start_row + i, 0, con_width);
