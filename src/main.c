@@ -629,7 +629,8 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
          */
         if ((_stricmp(arg, "/r") == 0 || _stricmp(arg, "-r") == 0) &&
             i + 1 < argc &&
-            argv[i + 1][0] != '/' && argv[i + 1][0] != '-') {
+            (argv[i + 1][0] != '-' &&
+             (argv[i + 1][0] != '/' || strcmp(argv[i + 1], "/") == 0))) {
             const char *next = argv[i + 1];
 #if NCD_PLATFORM_LINUX
             /* Linux special: /r / scans only root filesystem */
