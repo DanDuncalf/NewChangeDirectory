@@ -89,6 +89,19 @@ int ui_select_drives_for_update(const char *drives,
                                 bool *selected,
                                 int max_width);
 
+/* --------------------------------------------------------- configuration  */
+
+/*
+ * Present a TUI for editing configuration options.
+ *
+ * cfg - Pointer to current configuration (will be modified)
+ *
+ * Returns:
+ *   true  - User saved changes
+ *   false - User cancelled
+ */
+bool ui_edit_config(NcdConfig *cfg);
+
 #ifdef __cplusplus
 }
 #endif

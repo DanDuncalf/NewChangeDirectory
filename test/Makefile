@@ -6,7 +6,7 @@ CFLAGS = -Wall -Wextra -g -I../src -I. -DNCD_PLATFORM_LINUX=1
 LDFLAGS = -lpthread
 
 # Source files from main project (excluding platform-dependent UI/scanner for unit tests)
-DB_SOURCES = ../src/database.c
+DB_SOURCES = ../src/database.c ../src/common.c
 MATCHER_SOURCES = ../src/matcher.c ../src/database.c
 
 # Test executables
@@ -35,6 +35,10 @@ bench_matcher: bench_matcher.c $(MATCHER_SOURCES)
 # Database corruption tests
 test_db_corruption: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Database corruption tests with debug flags (includes /test NC tests)
+test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
+	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
 test: test_database test_matcher
 	@echo "Running database tests..."
@@ -70,5 +74,7 @@ clean:
 win-test:
 	@echo "Use build.bat in parent directory for Windows builds"
 	@echo "Or compile manually with MSVC:"
-	@echo "  cl /nologo /W3 /O2 /Isrc /I. test_database.c test_framework.c src\database.c /Fe:test_database.exe"
-	@echo "  cl /nologo /W3 /O2 /Isrc /I. test_db_corruption.c test_framework.c src\database.c /Fe:test_db_corruption.exe"
+	@echo "  cl /nologo /W3 /O2 /Isrc /I. test_database.c test_framework.c src\database.c src\common.c /Fe:test_database.exe"
+	@echo "  cl /nologo /W3 /O2 /Isrc /I. test_db_corruption.c test_framework.c src\database.c src\common.c /Fe:test_db_corruption.exe"
+	@echo "For debug build with /test NC tests:"
+	@echo "  cl /nologo /W3 /O2 /DDEBUG /Isrc /I. test_db_corruption.c test_framework.c src\database.c src\common.c /Fe:test_db_corruption.exe"

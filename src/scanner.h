@@ -73,6 +73,17 @@ int scan_mount(NcdDatabase   *db,
                ScanProgressFn progress_fn,
                void          *user_data);
 
+/*
+ * Scan a subdirectory and merge it into an existing drive's database.
+ * Removes existing entries under subdir_path and adds newly scanned ones.
+ * Returns number of directories added, or -1 on error.
+ */
+int scan_subdirectory(NcdDatabase   *db,
+                      char           drive_letter,
+                      const char    *subdir_path,
+                      bool           include_hidden,
+                      bool           include_system);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,17 +2,19 @@
 
 ## Project Overview
 
-NewChangeDirectory (NCD) is a cross-platform command-line directory navigation tool inspired by the classic Norton Commander (Norton Utilities) CD command. It maintains a database of directory paths across drives/mounts and provides fast, fuzzy search-based navigation.
+NewChangeDirectory (NCD) is a cross-platform command-line directory navigation tool inspired by the classic Norton Commander CD command. It maintains a database of directory paths across drives/mounts and provides fast, fuzzy search-based navigation with an interactive TUI.
 
 **Key Features:**
 - Fast directory search using a pre-built binary database for speed
-- Interactive TUI for selecting from multiple matches (arrow keys, Enter to select)
+- Interactive TUI for selecting from multiple matches (arrow keys, Enter to select, Tab for navigator)
 - Filesystem navigator for browsing (launched with `ncd .` or `ncd C:`)
 - Cross-platform support: Windows (x64) and Linux (x64, including WSL)
 - Multi-threaded directory scanning for performance
-- Heuristics-based search result ranking (learns from user choices)
+- Heuristics-based search result ranking (learns from user choices, last 20 unique searches)
 - Per-drive/per-mount database files for incremental updates
-- Command-line history tracking (last 20 unique searches)
+- Named groups/bookmarks (e.g., `@home`) for quick directory access
+- Fuzzy matching with Damerau-Levenshtein distance (`/z` option)
+- Database version checking with update prompts
 
 **Communication Model:**
 NCD cannot directly change the parent shell's working directory (OS limitation). Instead:
@@ -25,7 +27,7 @@ NCD cannot directly change the parent shell's working directory (OS limitation).
 - **Language:** C11
 - **Platforms:** Windows x64, Linux x64 (native and WSL compatible)
 - **Threading:** Windows threads (Win32 API) / POSIX threads (pthreads)
-- **UI:** Platform-native console I/O with ANSI escape sequences
+- **UI:** Platform-native console I/O with ANSI escape sequences (Linux), Win32 console API (Windows)
 - **Build Tools:**
   - Windows: MSVC (`cl.exe`) via `build.bat`, or MinGW-w64 (`gcc`) via `Makefile`
   - Linux: GCC or Clang via `build.sh`
@@ -36,22 +38,21 @@ NCD cannot directly change the parent shell's working directory (OS limitation).
 NewChangeDirectory/
 ├── src/                       # Source code
 │   ├── ncd.h                 # Core types, constants, platform detection macros
-│   ├── main.c                # Entry point, CLI parsing, heuristics management
-│   ├── database.c/.h         # Database load/save (binary format + legacy JSON)
+│   ├── main.c                # Entry point, CLI parsing, heuristics management, orchestration
+│   ├── database.c/.h         # Database load/save (binary format + legacy JSON), groups
 │   ├── scanner.c/.h          # Multi-threaded directory enumeration
-│   ├── matcher.c/.h          # Chain-matching algorithm for partial path queries
-│   ├── ui.c/.h               # Interactive terminal UI (selector + navigator)
+│   ├── matcher.c/.h          # Chain-matching algorithm, fuzzy matching, name index
+│   ├── ui.c/.h               # Interactive terminal UI (selector + navigator + version dialog)
 │   ├── platform.c/.h         # Platform abstraction layer (Windows/Linux)
 │   ├── strbuilder.c/.h       # Dynamic string builder for JSON output
-│   ├── common.c              # Memory allocation utilities
-│   └── ncd.vcxproj           # Visual Studio project file
+│   └── common.c              # Memory allocation wrappers (exit on OOM)
 ├── ncd.bat                   # Windows wrapper script (CMD) - REQUIRED for use
 ├── ncd                       # Linux wrapper script (Bash) - REQUIRED for use
 ├── build.bat                 # Windows build script (MSVC, auto-detects VS)
 ├── build.sh                  # Linux build script (GCC/Clang)
 ├── Makefile                  # Cross-platform build (MinGW on Windows)
-├── deploy.bat                # Windows deployment script
-├── deploy.sh                 # Linux deployment script (installs to /usr/local/bin)
+├── deploy.bat                # Windows deployment script (copies to %USERPROFILE%\Tools\bin)
+├── deploy.sh                 # Linux deployment script (installs to /usr/local/bin, adds to .bashrc)
 ├── NewChangeDirectory.exe    # Built Windows binary
 ├── NewChangeDirectory        # Built Linux binary
 ├── LINUX_PORT_CHANGELIST.md  # Linux porting implementation notes
@@ -62,14 +63,14 @@ NewChangeDirectory/
 
 | Module | Purpose |
 |--------|---------|
-| `main.c` | CLI argument parsing, heuristics management, result file generation, orchestration |
-| `database.c` | Binary and JSON database formats, atomic file operations, memory management |
+| `main.c` | CLI argument parsing, heuristics management, result file generation, version checking, orchestration |
+| `database.c` | Binary and legacy JSON database formats, atomic file operations, group database, memory management |
 | `scanner.c` | Thread pool management, recursive directory scanning with progress callbacks |
-| `matcher.c` | Chain-matching algorithm for partial path queries (case-insensitive, substring-based) |
-| `ui.c` | Interactive selection list and filesystem navigator (platform-specific I/O layer) |
-| `platform.c` | OS abstraction: console I/O, filesystem, threading, environment, atomic operations |
-| `strbuilder.c` | Dynamic string builder for JSON serialization |
-| `common.c` | Memory allocation wrappers with error handling |
+| `matcher.c` | Chain-matching algorithm for partial path queries (case-insensitive, substring-based), fuzzy matching with Damerau-Levenshtein distance |
+| `ui.c` | Interactive selection list, filesystem navigator, version update dialog |
+| `platform.c` | OS abstraction: console I/O, filesystem, threading, environment, atomic operations, CRC64 |
+| `strbuilder.c` | Dynamic string builder for JSON construction |
+| `common.c` | Memory allocation wrappers that exit on OOM |
 
 ## Build Instructions
 
@@ -82,9 +83,8 @@ Requirements: Visual Studio 2019/2022 with C++ workload
 build.bat
 
 :: Or from Visual Studio x64 Native Tools Command Prompt:
-cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc ^
-   src\main.c src\database.c src\scanner.c src\matcher.c src\ui.c src\platform.c ^
-   src\strbuilder.c src\common.c ^
+cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /Isrc ^
+   src\main.c src\database.c src\scanner.c src\matcher.c src\ui.c src\platform.c src\strbuilder.c src\common.c ^
    /Fe:NewChangeDirectory.exe /link /SUBSYSTEM:CONSOLE kernel32.lib user32.lib
 ```
 
@@ -92,9 +92,9 @@ cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc ^
 
 ```batch
 make                    # Build release binary
-make debug             # Build with debug symbols
-make clean             # Remove build artifacts
-make install           # Copy ncd.bat + exe to INSTALL_DIR (default: C:/Windows/System32)
+make debug              # Build with debug symbols
+make clean              # Remove build artifacts
+make install            # Copy ncd.bat + exe to INSTALL_DIR (default: C:/Windows/System32)
 ```
 
 ### Linux (GCC/Clang)
@@ -118,14 +118,20 @@ CC=clang ./build.sh
 ```batch
 ncd downloads           # Search for directories matching "downloads"
 ncd scott\downloads     # Search for chain: scott -> downloads
+ncd C:downloads         # Search only C: drive
+ncd .                   # Open navigator from current directory
+ncd C:                  # Open navigator from drive root
+ncd @home               # Jump to bookmarked group
 ncd /r                  # Force rescan of all drives
 ncd /rBDE               # Rescan specific drives only (B:, D:, E:)
 ncd /r-b-d              # Rescan all drives EXCEPT B: and D:
-ncd /i scott\appdata    # Include hidden directories
-ncd /s                  # Include system directories
+ncd /i                  # Include hidden directories in search
+ncd /s                  # Include system directories in search
 ncd /a                  # Include all (hidden + system)
-ncd .                   # Open navigator from current directory
-ncd C:                  # Open navigator from drive root
+ncd /z                  # Fuzzy matching with digit-word substitution
+ncd /g @home            # Create group for current directory
+ncd /g- @home           # Remove a group
+ncd /gl                 # List all groups
 ncd /f                  # Show frequent search history
 ncd /fc                 # Clear history
 ncd /v                  # Version info
@@ -152,19 +158,21 @@ source ncd <search>     # Or use the function added by deploy.sh
 
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database` (X = drive letter)
-- History: `%LOCALAPPDATA%\ncd.history`
+- History: `%LOCALAPPDATA%\NCD\ncd.history`
+- Groups: `%LOCALAPPDATA%\NCD\ncd.groups`
 
 **Linux:**
 - Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
 - History: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.history`
+- Groups: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.groups`
 
-### Binary Format
+### Binary Format (Version 2)
 
 Magic: `NCDB` (0x4244434E little-endian)
 
 Layout:
 ```
-[BinFileHdr: 32 bytes]           # magic, version, flags, timestamp, drive_count, checksum
+[BinFileHdr: 32 bytes]          # magic, version, flags, timestamp, drive_count, checksum
 [BinDriveHdr × N: 80 bytes each] # letter, type, label, dir_count, pool_size
 [DirEntry[] + name_pool per drive]
 ```
@@ -178,12 +186,6 @@ typedef struct {
     uint8_t  is_system;
 } DirEntry;
 ```
-
-**Key Design Decisions:**
-- Names stored in per-drive string pools (not inline in DirEntry)
-- Reduced DirEntry size from 268 bytes to 12 bytes
-- Single heap buffer allocation for binary blob loading
-- CRC64 checksum for corruption detection (ECMA-182 polynomial)
 
 ### Atomic Writes
 
@@ -222,7 +224,8 @@ Platform macros defined in `ncd.h`:
 
 ### Memory Management
 
-- Use `ncd_malloc()` / `ncd_realloc()` wrappers that exit on OOM
+- Use `ncd_malloc()` / `ncd_realloc()` / `ncd_calloc()` wrappers that exit on OOM
+- Use `ncd_malloc_array()` for array allocations with overflow checking
 - Database uses string pools to reduce memory fragmentation
 - Binary loads use single blob allocation with pointer referencing
 
@@ -242,22 +245,26 @@ No automated test suite is included. Manual testing matrix:
 
 2. **Functional tests:**
    - Search exact/prefix chain matching
+   - Fuzzy matching with `/z` option
    - Multi-match selector UI (arrow keys, Enter, Escape)
    - Selector → Navigator → Enter/Backspace/Esc flow
    - Rescan all/include/exclude forms (`/r`, `/rBDE`, `/r-b-d`)
+   - Group management (`/g`, `/g-`, `/gl`, `@group` lookup)
    - Frequent history promotion (`/f`, `/fc`)
    - Missing path handling (triggers rescan behavior)
    - Direct navigation mode (`ncd .` and `ncd C:`)
+   - Version mismatch detection and update UI
 
 ## Security Considerations
 
 1. **Path escaping:** Result files escape special characters for batch/shell safety
+   - Windows: filters `%`, `!`, `"`, control characters
+   - Linux: filters shell metacharacters (`$`, `` ` ``, `|`, `&`, etc.)
 2. **No elevated privileges:** Tool runs as regular user
-3. **Database integrity:** Magic number and version checks on load
+3. **Database integrity:** Magic number and version checks on load, CRC64 checksum
 4. **Buffer safety:** All string operations use bounded copies
-5. **Symlink handling:** On Linux, symlinks are followed; cycle detection via (dev,ino) hash set
-6. **Input validation:** Search strings sanitized before use in heuristics
-7. **CRC64 checksum:** Binary database files include integrity verification
+5. **Symlink handling:** On Linux, symlinks are followed; no cycle detection currently
+6. **Size limits:** Security limits on max drives (64), max dirs per drive (10M), max total dirs (50M), max file size (2GB)
 
 ## Architecture Decisions
 
@@ -270,32 +277,20 @@ A child process cannot change the working directory of its parent shell (OS limi
 - JSON parsing is slow for 100K+ directories
 - Binary format allows memory-mapping (single allocation)
 - DirEntry shrunk from 268 bytes to 12 bytes using string pools
-- CRC64 checksum detects file corruption
 
 ### Why per-drive databases?
 
 - Allows incremental updates without rescanning everything
 - Enables fast fallback search across all drives
 - Supports removable media that may be absent
-- Reduces memory footprint for large filesystems
+- Enables version checking per drive
 
 ### Why two UI modes?
 
-1. **Selector:** List of search results (arrow keys to select)
-2. **Navigator:** Browse filesystem hierarchy (Tab to enter, Backspace to exit)
+1. **Selector:** List of search results (arrow keys to select, Tab to enter navigator)
+2. **Navigator:** Browse filesystem hierarchy (Enter to select, Backspace to go up, Tab to cycle children)
 
 This mirrors Norton Commander's behavior for both search-driven and browse-driven workflows.
-
-## Known Limitations
-
-1. No automated tests - relies on manual verification
-2. Windows: No Unicode/wide-char support (ANSI only)
-3. History limited to 20 entries (`NCD_HEUR_MAX`)
-4. Database refresh only triggered manually or after 24 hours
-5. Linux: Drive letter mapping only works for WSL `/mnt/X` pattern
-6. Large database files (>2GB) not supported
-
-## Implementation Notes
 
 ### Heuristics System
 
@@ -305,42 +300,45 @@ The heuristics system learns user preferences:
 - Auto-updates when user selects different path for same search
 - Limited to 20 most recent unique searches (LRU eviction)
 
-### Scanner Threading
+### Group System
 
-- One thread per drive/mount
-- Main thread displays progress (status line updates every 100ms)
-- Uses atomic operations for thread-safe counters
-- Configurable inactivity timeout (default: 5 minutes)
-- Heap-allocated stack for iterative directory traversal (prevents stack overflow)
+Named bookmarks for directories:
+- Create: `ncd /g @work` (marks current directory)
+- Use: `ncd @work` (jumps to bookmarked directory)
+- Remove: `ncd /g- @work`
+- List: `ncd /gl`
+- Stored in separate binary file with magic `GGDB`
 
-### Linux Port Specifics
+### Version Checking
 
-- Uses `/proc/mounts` to enumerate filesystems
-- Filters pseudo-filesystems (proc, sysfs, tmpfs, etc.)
-- Maps WSL `/mnt/X` mounts to drive letters for compatibility
-- Uses termios raw mode + ANSI sequences for TUI
-- Result file uses shell export syntax instead of batch `set`
-- Bind mount cycle detection via (device, inode) hash set
+- Database files include version number (`NCD_BIN_VERSION`)
+- When loading outdated database, user is prompted via TUI to:
+  - Update all drives
+  - Update selected drives
+  - Skip updates (sets flag to avoid future prompts)
+- Allows graceful format evolution
 
-### Matcher Algorithm
+## Known Limitations
 
-- Uses FNV-1a hash for fast name lookup
-- Hash-based bucket index for O(1) candidate selection
-- Chain matching for multi-component paths (parent→child relationships)
-- Prefix matching (not substring) to reduce false positives
-- Case-insensitive comparison throughout
+1. No automated tests - relies on manual verification
+2. No symlink cycle detection on Linux
+3. Windows: No Unicode/wide-char support (ANSI only)
+4. History limited to 20 entries (`NCD_HEUR_MAX`)
+5. Groups limited to 256 entries (`NCD_MAX_GROUPS`)
+6. Database refresh only triggered manually or when outdated
+7. Linux: Drive letter mapping only works for WSL `/mnt/X` pattern
 
 ## File Dependencies
 
 ```
-ncd.h (base types)
+ncd.h (base types, memory utils, path utils)
   ├── main.c
   ├── database.h → database.c
   ├── scanner.h → scanner.c
   ├── matcher.h → matcher.c
   ├── ui.h → ui.c
-  └── platform.h → platform.c
-      └── strbuilder.h → strbuilder.c
+  ├── platform.h → platform.c
+  └── strbuilder.h → strbuilder.c
 ```
 
 **Build artifacts:**
@@ -348,26 +346,25 @@ ncd.h (base types)
 - Output: `NewChangeDirectory.exe` (Windows) or `NewChangeDirectory` (Linux)
 - Required runtime: `ncd.bat` (Windows) or `ncd` (Linux) wrapper script
 
-## Constants Reference
+## Development Checklist for Changes
 
-**Limits:**
-- `NCD_MAX_NAME` = 256 (max directory name length)
-- `NCD_MAX_PATH` = MAX_PATH (platform-defined)
-- `NCD_MAX_DRIVES` = 64
-- `NCD_MAX_DIRS_PER_DRIVE` = 10,000,000
-- `NCD_MAX_TOTAL_DIRS` = 50,000,000
-- `NCD_MAX_FILE_SIZE` = 2GB
+When modifying NCD:
 
-**Timeouts:**
-- `NCD_SCAN_TIMEOUT_MS` = 300000 (5 minutes)
-- `NCD_SCAN_INACTIVITY_MS` = 60000 (1 minute)
-- `NCD_RESCAN_HOURS` = 24
+1. **Bump version** if changing database format:
+   - Update `NCD_BIN_VERSION` in `ncd.h`
+   - Update `NCD_BUILD_VER` in `main.c`
 
-**UI:**
-- `NCD_UI_MAX_LIST_ITEMS` = 20
-- `NCD_UI_BOX_MAX_WIDTH` = 120
-- `NCD_UI_BOX_MIN_WIDTH` = 40
+2. **Update both platform code paths**:
+   - Windows: `#if NCD_PLATFORM_WINDOWS`
+   - Linux: `#elif NCD_PLATFORM_LINUX`
 
-**Matcher:**
-- `NCD_MATCHER_MAX_PARTS` = 32 (max search path components)
-- `NCD_MATCHER_INITIAL_CAP` = 16 (initial match array capacity)
+3. **Test both build systems** (Windows):
+   - MSVC: `build.bat`
+   - MinGW: `make`
+
+4. **Verify database compatibility**:
+   - Old databases should be auto-converted or prompt for rescan
+
+5. **Security review**:
+   - Check result file escaping in `write_result()`
+   - Verify buffer sizes in path operations

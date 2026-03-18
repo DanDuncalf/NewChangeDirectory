@@ -234,6 +234,22 @@ typedef struct {
 } NcdDatabase;
 
 /*
+ * NcdConfig  --  user configuration defaults (stored in ncd.config)
+ */
+typedef struct {
+    uint32_t magic;               /* NCD_CFG_MAGIC                           */
+    uint16_t version;             /* NCD_CFG_VERSION                         */
+    bool     default_show_hidden; /* Default for /i                          */
+    bool     default_show_system; /* Default for /s                          */
+    bool     default_fuzzy_match; /* Default for /z                          */
+    int      default_timeout;     /* Default for /t (seconds, -1 = not set)  */
+    bool     has_defaults;        /* true if any defaults have been set      */
+} NcdConfig;
+
+#define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
+#define NCD_CFG_VERSION  1
+
+/*
  * NcdOptions  --  parsed command-line options
  */
 typedef struct {
@@ -252,12 +268,18 @@ typedef struct {
     bool group_set;               /* /g <group> -- create group for cwd      */
     bool group_remove;            /* /g- <group> -- remove group             */
     bool group_list;              /* /gl        -- list all groups           */
+    bool config_edit;             /* /c        -- edit configuration         */
     char group_name[NCD_MAX_GROUP_NAME]; /* Group name for /g or /g-        */
     char db_override[NCD_MAX_PATH]; /* /d <path>                             */
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
     int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
     bool scan_root_only;          /* Linux: /r / scans only root, not /mnt */
+    char scan_subdirectory[NCD_MAX_PATH]; /* /r. -- rescan specific subdirectory */
+#if DEBUG
+    bool test_no_checksum;        /* /test NC -- ignore checksum validation  */
+    bool test_slow_mode;          /* /test SL -- pause 1s every 100 dirs     */
+#endif
 } NcdOptions;
 
 /*

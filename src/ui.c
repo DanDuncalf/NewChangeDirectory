@@ -11,6 +11,7 @@
 
 #include "ui.h"
 #include "platform.h"
+#include "database.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1235,4 +1236,267 @@ drive_done:
     con_show_cursor();
     ui_close_console();
     return result;
+}
+
+/* ======================================================================== */
+/* ===================== Configuration Editor UI ========================= */
+/* ======================================================================== */
+
+typedef struct {
+    int top_row;
+    int box_width;
+    int visible_rows;
+    int count;
+    int selected;
+    bool first_draw;
+} ConfigUiState;
+
+typedef struct {
+    const char *label;
+    bool *value;
+    bool is_bool;      /* true for bool, false for int */
+    int *int_value;
+    int min_val;
+    int max_val;
+    const char *fmt;   /* format string for display */
+} ConfigItem;
+
+static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count,
+                            NcdConfig *cfg)
+{
+    int w = st->box_width;
+    int inner = w - 2;
+    int list_start = st->top_row + 3;
+    
+    /* Title bar */
+    con_cursor_pos(st->top_row, 0);
+    con_write(BOX_TL);
+    {
+        char title[128];
+        snprintf(title, sizeof(title), " NCD Configuration ");
+        int title_len = (int)strlen(title);
+        int left_pad = (inner - title_len) / 2;
+        int right_pad = inner - title_len - left_pad;
+        int i;
+        for (i = 0; i < left_pad; i++) con_write(BOX_H);
+        con_write(title);
+        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+    }
+    con_write(BOX_TR);
+    
+    /* Help text */
+    con_cursor_pos(st->top_row + 1, 0);
+    con_write(BOX_V);
+    con_write_padded(" Use UP/DOWN to navigate, SPACE to toggle, +/- to adjust values ", inner);
+    con_write(BOX_V);
+    
+    /* Separator line */
+    con_cursor_pos(st->top_row + 2, 0);
+    con_write(BOX_ML);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_MR);
+    
+    /* Config items */
+    for (int row = 0; row < st->visible_rows; row++) {
+        int idx = row;
+        con_cursor_pos(list_start + row, 0);
+        con_write(BOX_V);
+        
+        if (idx < item_count) {
+            bool is_selected_row = (idx == st->selected);
+            ConfigItem *item = &items[idx];
+            
+            if (is_selected_row && g_ansi) con_write(ANSI_REVERSE);
+            
+            char line[512];
+            if (item->is_bool) {
+                snprintf(line, sizeof(line), " %s: [%s] ",
+                         item->label,
+                         *item->value ? "X" : " ");
+            } else {
+                snprintf(line, sizeof(line), " %s: %d ",
+                         item->label,
+                         *item->int_value);
+            }
+            con_write_padded(line, inner);
+            
+            if (is_selected_row && g_ansi) con_write(ANSI_RESET);
+        } else {
+            con_write_padded("", inner);
+        }
+        con_write(BOX_V);
+    }
+    
+    /* Footer with instructions */
+    int footer_row = list_start + st->visible_rows;
+    con_cursor_pos(footer_row, 0);
+    con_write(BOX_ML);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_MR);
+    
+    con_cursor_pos(footer_row + 1, 0);
+    con_write(BOX_V);
+    {
+        char footer[256];
+        snprintf(footer, sizeof(footer), " ENTER=Save  ESC=Cancel ");
+        int pad = inner - (int)strlen(footer);
+        con_write(footer);
+        int i;
+        for (i = 0; i < pad; i++) con_write(" ");
+    }
+    con_write(BOX_V);
+    
+    con_cursor_pos(footer_row + 2, 0);
+    con_write(BOX_BL);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_BR);
+}
+
+bool ui_edit_config(NcdConfig *cfg)
+{
+    if (!cfg) return false;
+    
+    /* Initialize defaults if not already set */
+    if (cfg->magic != NCD_CFG_MAGIC) {
+        db_config_init_defaults(cfg);
+    }
+    
+    ui_open_console();
+#if NCD_PLATFORM_WINDOWS
+    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
+        ui_close_console();
+        return false;
+    }
+#else
+    if (g_tty_out < 0 || g_tty_in < 0) {
+        ui_close_console();
+        return false;
+    }
+#endif
+    
+    /* Create working copies of values */
+    bool show_hidden = cfg->default_show_hidden;
+    bool show_system = cfg->default_show_system;
+    bool fuzzy_match = cfg->default_fuzzy_match;
+    int timeout = cfg->default_timeout;
+    if (timeout < 0) timeout = 300;  /* Default to 300 if not set */
+    
+    /* Define config items */
+    ConfigItem items[] = {
+        {"Show hidden dirs (/i)", &show_hidden, true, NULL, 0, 0, NULL},
+        {"Show system dirs (/s)", &show_system, true, NULL, 0, 0, NULL},
+        {"Fuzzy matching (/z)", &fuzzy_match, true, NULL, 0, 0, NULL},
+        {"Scan timeout in seconds (/t)", NULL, false, &timeout, 10, 3600, NULL},
+    };
+    int item_count = sizeof(items) / sizeof(items[0]);
+    
+    int cols, rows, cur_row;
+    get_console_size(&cols, &rows, &cur_row);
+    
+    int bw = 60;
+    if (bw > cols - 4) bw = cols - 4;
+    if (bw < 50) bw = 50;
+    
+    int max_list = rows - 8;
+    if (max_list < 3) max_list = 3;
+    int visible = item_count < max_list ? item_count : max_list;
+    
+    int total_rows = 5 + visible;
+    for (int i = 0; i < total_rows; i++) con_writeln("");
+    
+    get_console_size(&cols, &rows, &cur_row);
+    int box_top = cur_row - total_rows;
+    if (box_top < 0) box_top = 0;
+    
+    ConfigUiState st = {
+        .top_row = box_top,
+        .box_width = bw,
+        .visible_rows = visible,
+        .count = item_count,
+        .selected = 0,
+        .first_draw = true
+    };
+    
+    con_hide_cursor();
+    draw_config_box(&st, items, item_count, cfg);
+    
+    bool saved = false;
+    
+    for (;;) {
+        int key = read_key();
+        switch (key) {
+            case KEY_UP:
+                if (st.selected > 0) st.selected--;
+                break;
+            case KEY_DOWN:
+                if (st.selected < item_count - 1) st.selected++;
+                break;
+            case KEY_HOME:
+                st.selected = 0;
+                break;
+            case KEY_END:
+                st.selected = item_count - 1;
+                break;
+            case ' ':
+                /* Toggle boolean value */
+                if (items[st.selected].is_bool) {
+                    *items[st.selected].value = !*items[st.selected].value;
+                }
+                break;
+            case KEY_LEFT:
+            case '-':
+            case '_':
+                /* Decrease int value */
+                if (!items[st.selected].is_bool) {
+                    int *val = items[st.selected].int_value;
+                    int min_val = items[st.selected].min_val;
+                    if (*val > min_val) (*val)--;
+                }
+                break;
+            case KEY_RIGHT:
+            case '+':
+            case '=':
+                /* Increase int value */
+                if (!items[st.selected].is_bool) {
+                    int *val = items[st.selected].int_value;
+                    int max_val = items[st.selected].max_val;
+                    if (*val < max_val) (*val)++;
+                }
+                break;
+            case KEY_ENTER:
+                /* Save configuration */
+                cfg->default_show_hidden = show_hidden;
+                cfg->default_show_system = show_system;
+                cfg->default_fuzzy_match = fuzzy_match;
+                cfg->default_timeout = timeout;
+                cfg->has_defaults = true;
+                cfg->magic = NCD_CFG_MAGIC;
+                cfg->version = NCD_CFG_VERSION;
+                saved = true;
+                goto config_done;
+            case KEY_ESC:
+                /* Cancel */
+                saved = false;
+                goto config_done;
+            default:
+                continue;
+        }
+        draw_config_box(&st, items, item_count, cfg);
+    }
+    
+config_done:
+    clear_area(box_top, total_rows, bw);
+    con_cursor_pos(box_top, 0);
+    con_show_cursor();
+    ui_close_console();
+    return saved;
 }

@@ -13,6 +13,11 @@
 
 static const char *TEST_FILE = "corrupt_test.tmp";
 
+/* External debug flags from database.c */
+#if DEBUG
+extern bool g_test_no_checksum;
+#endif
+
 /* Helper: Create a valid database file */
 static void create_valid_db(void) {
     NcdDatabase *db = db_create();
@@ -393,6 +398,142 @@ TEST(random_bit_flips_same_byte) {
     return 0;
 }
 
+/* ================================================================ checksum tests */
+
+TEST(corrupt_checksum_detected) {
+    /* Normal mode: corrupted checksum should cause load to fail */
+    create_valid_db();
+    
+    unsigned char *buf;
+    size_t size = read_file(&buf);
+    ASSERT_TRUE(size > 32); /* Header is 32 bytes, checksum at offset 24 */
+    
+    /* Corrupt checksum at offset 24 (8 bytes) */
+    buf[24] = 0xDE;
+    buf[25] = 0xAD;
+    buf[26] = 0xBE;
+    buf[27] = 0xEF;
+    buf[28] = 0xDE;
+    buf[29] = 0xAD;
+    buf[30] = 0xBE;
+    buf[31] = 0xEF;
+    
+    write_file(buf, size);
+    ASSERT_TRUE(load_should_fail());
+    
+    free(buf);
+    remove(TEST_FILE);
+    return 0;
+}
+
+#if DEBUG
+TEST(corrupt_checksum_with_test_nc) {
+    /* With /test NC option: corrupted checksum should be ignored */
+    create_valid_db();
+    
+    unsigned char *buf;
+    size_t size = read_file(&buf);
+    ASSERT_TRUE(size > 32);
+    
+    /* Corrupt checksum */
+    buf[24] = 0xDE;
+    buf[25] = 0xAD;
+    buf[26] = 0xBE;
+    buf[27] = 0xEF;
+    buf[28] = 0xDE;
+    buf[29] = 0xAD;
+    buf[30] = 0xBE;
+    buf[31] = 0xEF;
+    
+    write_file(buf, size);
+    
+    /* Enable /test NC mode */
+    g_test_no_checksum = true;
+    
+    /* Should now load successfully despite checksum mismatch */
+    NcdDatabase *db = db_load_binary(TEST_FILE);
+    ASSERT_NOT_NULL(db);
+    if (db) db_free(db);
+    
+    /* Reset flag */
+    g_test_no_checksum = false;
+    
+    free(buf);
+    remove(TEST_FILE);
+    return 0;
+}
+
+TEST(valid_checksum_with_test_nc) {
+    /* With /test NC option: valid database should still load fine */
+    create_valid_db();
+    
+    /* Enable /test NC mode */
+    g_test_no_checksum = true;
+    
+    /* Should load successfully */
+    NcdDatabase *db = db_load_binary(TEST_FILE);
+    ASSERT_NOT_NULL(db);
+    if (db) {
+        /* Verify the data is intact */
+        ASSERT_EQ_INT(1, db->drive_count);
+        ASSERT_TRUE(db->drives[0].letter == 'C');
+        db_free(db);
+    }
+    
+    /* Reset flag */
+    g_test_no_checksum = false;
+    
+    remove(TEST_FILE);
+    return 0;
+}
+
+TEST(test_nc_resets_properly) {
+    /* Ensure the flag can be toggled on and off */
+    create_valid_db();
+    
+    unsigned char *buf;
+    size_t size = read_file(&buf);
+    ASSERT_TRUE(size > 32);
+    
+    /* Corrupt checksum */
+    buf[24] = 0xCA;
+    buf[25] = 0xFE;
+    buf[26] = 0xBA;
+    buf[27] = 0xBE;
+    buf[28] = 0xCA;
+    buf[29] = 0xFE;
+    buf[30] = 0xBA;
+    buf[31] = 0xBE;
+    
+    write_file(buf, size);
+    
+    /* First, with flag enabled - should load */
+    g_test_no_checksum = true;
+    NcdDatabase *db1 = db_load_binary(TEST_FILE);
+    ASSERT_NOT_NULL(db1);
+    if (db1) db_free(db1);
+    
+    /* Then, with flag disabled - should fail */
+    g_test_no_checksum = false;
+    NcdDatabase *db2 = db_load_binary(TEST_FILE);
+    ASSERT_NULL(db2);
+    if (db2) db_free(db2);
+    
+    /* Finally, with flag enabled again - should load again */
+    g_test_no_checksum = true;
+    NcdDatabase *db3 = db_load_binary(TEST_FILE);
+    ASSERT_NOT_NULL(db3);
+    if (db3) db_free(db3);
+    
+    /* Reset flag */
+    g_test_no_checksum = false;
+    
+    free(buf);
+    remove(TEST_FILE);
+    return 0;
+}
+#endif /* DEBUG */
+
 void suite_db_corruption(void) {
     RUN_TEST(corrupt_magic_number);
     RUN_TEST(corrupt_version_invalid);
@@ -406,6 +547,12 @@ void suite_db_corruption(void) {
     RUN_TEST(corrupt_dir_count_overflow);
     RUN_TEST(random_bit_flips_alternating);
     RUN_TEST(random_bit_flips_same_byte);
+    RUN_TEST(corrupt_checksum_detected);
+#if DEBUG
+    RUN_TEST(corrupt_checksum_with_test_nc);
+    RUN_TEST(valid_checksum_with_test_nc);
+    RUN_TEST(test_nc_resets_properly);
+#endif
 }
 
 TEST_MAIN(

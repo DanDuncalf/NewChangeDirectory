@@ -1,6 +1,16 @@
 /*
  * database.c  --  Load, save, and manipulate the NCD directory database
  *
+ * Debug test flags (debug builds only)
+ */
+#if DEBUG
+bool g_test_no_checksum = false;
+bool g_test_slow_mode = false;
+#endif
+
+/*
+ * database.c  --  Load, save, and manipulate the NCD directory database
+ *
  * Storage format (compact JSON, written on one line):
  * {
  *   "version":  1,
@@ -213,6 +223,163 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
         platform_move_file(old_path, path);
         return false;
     }
+    return true;
+}
+
+/* ========================================================= configuration  */
+
+/*
+ * Get the path to the configuration file.
+ * Returns path in buf, or NULL on failure.
+ */
+char *db_config_path(char *buf, size_t buf_size)
+{
+    if (!buf || buf_size == 0) return NULL;
+    buf[0] = '\0';
+    
+#if NCD_PLATFORM_WINDOWS
+    char local[MAX_PATH] = {0};
+    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
+    
+    size_t len = strlen(local);
+    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
+    snprintf(buf, buf_size, "%s%sncd\\ncd.config", local, has_sep ? "" : "\\");
+#else
+    char base[MAX_PATH] = {0};
+    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
+        char home[MAX_PATH] = {0};
+        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
+            return NULL;
+        snprintf(base, sizeof(base), "%s/.local/share", home);
+    }
+    int w = snprintf(buf, buf_size, "%s/ncd/ncd.config", base);
+    if (w <= 0 || (size_t)w >= buf_size) return NULL;
+#endif
+    return buf;
+}
+
+/*
+ * Initialize config with default values.
+ */
+void db_config_init_defaults(NcdConfig *cfg)
+{
+    if (!cfg) return;
+    memset(cfg, 0, sizeof(NcdConfig));
+    cfg->magic = NCD_CFG_MAGIC;
+    cfg->version = NCD_CFG_VERSION;
+    cfg->default_show_hidden = false;
+    cfg->default_show_system = false;
+    cfg->default_fuzzy_match = false;
+    cfg->default_timeout = -1;  /* -1 means not set (use built-in default of 300) */
+    cfg->has_defaults = false;
+}
+
+/*
+ * Check if configuration file exists.
+ */
+bool db_config_exists(void)
+{
+    char path[MAX_PATH];
+    if (!db_config_path(path, sizeof(path))) return false;
+    return platform_file_exists(path);
+}
+
+/*
+ * Load configuration from disk.
+ * Returns true on success, false if file doesn't exist or is corrupt.
+ * On failure, fills cfg with default values.
+ */
+bool db_config_load(NcdConfig *cfg)
+{
+    if (!cfg) return false;
+    
+    db_config_init_defaults(cfg);
+    
+    char path[MAX_PATH];
+    if (!db_config_path(path, sizeof(path))) return false;
+    
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    
+    NcdConfig temp;
+    size_t rd = fread(&temp, 1, sizeof(temp), f);
+    fclose(f);
+    
+    if (rd != sizeof(temp)) return false;
+    
+    /* Validate magic and version */
+    if (temp.magic != NCD_CFG_MAGIC) return false;
+    if (temp.version != NCD_CFG_VERSION) return false;
+    
+    *cfg = temp;
+    return true;
+}
+
+/*
+ * Save configuration to disk.
+ * Returns true on success.
+ */
+bool db_config_save(const NcdConfig *cfg)
+{
+    if (!cfg) return false;
+    
+    char path[MAX_PATH];
+    if (!db_config_path(path, sizeof(path))) return false;
+    
+    /* Ensure directory exists */
+#if NCD_PLATFORM_WINDOWS
+    char dir[MAX_PATH];
+    platform_strncpy_s(dir, sizeof(dir), path);
+    char *last_sep = strrchr(dir, '\\');
+    if (!last_sep) last_sep = strrchr(dir, '/');
+    if (last_sep) {
+        *last_sep = '\0';
+        /* Try to create directory - ignore errors (may already exist) */
+        CreateDirectoryA(dir, NULL);
+    }
+#else
+    char dir[MAX_PATH];
+    platform_strncpy_s(dir, sizeof(dir), path);
+    char *last_sep = strrchr(dir, '/');
+    if (last_sep) {
+        *last_sep = '\0';
+        /* Try to create directory - ignore errors */
+        char cmd[MAX_PATH + 32];
+        snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir);
+        system(cmd);
+    }
+#endif
+    
+    /* Write with atomic rename pattern */
+    char tmp_path[MAX_PATH];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    
+    FILE *f = fopen(tmp_path, "wb");
+    if (!f) return false;
+    
+    size_t wr = fwrite(cfg, 1, sizeof(NcdConfig), f);
+    fflush(f);
+    fclose(f);
+    
+    if (wr != sizeof(NcdConfig)) {
+        platform_delete_file(tmp_path);
+        return false;
+    }
+    
+    /* Atomic replace */
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    platform_delete_file(old_path);
+    if (platform_file_exists(path)) {
+        if (!platform_move_file(path, old_path)) {
+            platform_delete_file(path);
+        }
+    }
+    if (!platform_move_file(tmp_path, path)) {
+        platform_move_file(old_path, path);
+        return false;
+    }
+    
     return true;
 }
 
@@ -1271,7 +1438,11 @@ NcdDatabase *db_load_binary(const char *path)
     }
     
     /* ---- verify CRC64 checksum over all data after the header ---- */
+#if DEBUG
+    if (hdr.checksum != 0 && !g_test_no_checksum) {
+#else
     if (hdr.checksum != 0) {
+#endif
         uint64_t computed_checksum = platform_crc64(blob + sizeof(hdr), sz - sizeof(hdr));
         if (computed_checksum != hdr.checksum) {
             fprintf(stderr, "NCD: Database checksum mismatch (file may be corrupted)\n");

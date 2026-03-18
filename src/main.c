@@ -584,6 +584,7 @@ static void print_usage(void)
         "  /f          Show Frequent history (last 20 unique searches)\r\n"
         "  /fc         Clear Frequent history\r\n"
         "  /r          Force rescan of all drives now\r\n"
+        "  /r. or /r . Rescan current subdirectory only\r\n"
         "  /rBDE       Force rescan of specific drives only (B:,D:,E:)\r\n"
         "  /r-b-d      Force rescan of all drives EXCEPT B: and D:\r\n"
         "  /r-b,d      Same as /r-b-d (comma separators supported)\r\n"
@@ -594,6 +595,7 @@ static void print_usage(void)
         "  /g <group>  Group current directory (e.g., /g @home)\r\n"
         "  /g- <group> Remove a group\r\n"
         "  /gl         List all groups\r\n"
+        "  /c          Edit configuration (set default options)\r\n"
         "  /d <path>   Use alternate database file\r\n"
         "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
         "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
@@ -766,6 +768,12 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 }
             }
             if (!drives_form) {
+                /* Check for /r. (rescan current subdirectory) */
+                if (arg[2] == '.' && arg[3] == '\0') {
+                    opts->force_rescan = true;
+                    platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
+                    continue;
+                }
                 /* Fall through to normal option parsing (/ri, /rs, etc). */
             } else {
             opts->force_rescan = true;
@@ -778,6 +786,19 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 }
             }
             continue;
+            }
+        }
+
+        /* /r . form: rescan current subdirectory */
+        if ((arg[0] == '/' || arg[0] == '-') &&
+            (arg[1] == 'r' || arg[1] == 'R') &&
+            arg[2] == '\0' && i + 1 < argc) {
+            const char *next = argv[i + 1];
+            if (strcmp(next, ".") == 0) {
+                opts->force_rescan = true;
+                platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
+                i++;  /* consume the '.' */
+                continue;
             }
         }
 
@@ -814,6 +835,34 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
         }
         
+        /* Configuration editor: /c */
+        if ((_stricmp(arg, "/c") == 0 || _stricmp(arg, "-c") == 0)) {
+            opts->config_edit = true;
+            continue;
+        }
+
+#if DEBUG
+        /* Hidden test options (debug builds only, not documented) */
+        if ((_stricmp(arg, "/test") == 0 || _stricmp(arg, "-test") == 0)) {
+            if (i + 1 < argc) {
+                i++;
+                const char *test_opt = argv[i];
+                if (_stricmp(test_opt, "NC") == 0) {
+                    opts->test_no_checksum = true;
+                } else if (_stricmp(test_opt, "SL") == 0) {
+                    opts->test_slow_mode = true;
+                } else {
+                    ncd_printf("NCD: unknown /test option: %s\r\n", test_opt);
+                    return false;
+                }
+                continue;
+            } else {
+                ncd_println("NCD: /test requires an option (NC, SL)");
+                return false;
+            }
+        }
+#endif
+        
         /* Options start with / or - */
         if ((arg[0] == '/' || arg[0] == '-') && arg[1]) {
             /* Multi-char flags after / are processed char by char */
@@ -827,6 +876,7 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                     case 'a': opts->show_hidden   = true;
                               opts->show_system   = true; break;
                     case 'z': opts->fuzzy_match   = true; break;
+                    case 'c': opts->config_edit   = true; break;
                     case 'd':
                         /* /d requires a path as the next argument */
                         if (arg[j + 1] == '\0' && i + 1 < argc) {
@@ -909,6 +959,15 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 
 static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
 {
+    /* Handle subdirectory rescan: /r. */
+    if (opts->scan_subdirectory[0]) {
+        char drive = platform_get_drive_letter(opts->scan_subdirectory);
+        ncd_printf("NCD: Rescanning subdirectory %s...\r\n", opts->scan_subdirectory);
+        int n = scan_subdirectory(db, drive, opts->scan_subdirectory, opts->show_hidden, opts->show_system);
+        ncd_printf("  Scanned %d directories.\r\n", n);
+        return n;
+    }
+
     /* Build a drive list from the options. If opts->scan_drive_count>0 use
      * those drives. If skip mask is specified, enumerate available drives
      * and exclude the skipped ones. If neither is set, pass count==0 to
@@ -1028,6 +1087,53 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+#if DEBUG
+    /* Set debug test flags in database module */
+    extern bool g_test_no_checksum;
+    extern bool g_test_slow_mode;
+    g_test_no_checksum = opts.test_no_checksum;
+    g_test_slow_mode = opts.test_slow_mode;
+#endif
+
+    /* ------------------------------------------------ first-run configuration */
+    /* If no config file exists and user didn't specify /c, prompt for configuration */
+    if (!db_config_exists() && !opts.config_edit && !opts.show_help) {
+        ncd_println("Welcome to NCD! Let's set up your default options.");
+        ncd_println("(Use 'ncd /c' anytime to change these settings)\r\n");
+        
+        NcdConfig cfg;
+        db_config_init_defaults(&cfg);
+        
+        if (ui_edit_config(&cfg)) {
+            if (db_config_save(&cfg)) {
+                ncd_println("Configuration saved.\r\n");
+            } else {
+                ncd_println("Warning: Could not save configuration.\r\n");
+            }
+        } else {
+            ncd_println("Using default settings. (Run 'ncd /c' to configure later)\r\n");
+        }
+    }
+
+    /* ------------------------------------------------ apply config defaults */
+    /* Load configuration and apply defaults for options not explicitly set */
+    NcdConfig cfg;
+    if (db_config_load(&cfg) && cfg.has_defaults) {
+        /* Only apply defaults if user didn't explicitly set these options */
+        if (!opts.show_hidden && !opts.show_system) {
+            /* /a sets both, so only apply defaults if neither /i nor /s was used */
+            opts.show_hidden = cfg.default_show_hidden;
+            opts.show_system = cfg.default_show_system;
+        }
+        if (!opts.fuzzy_match) {
+            opts.fuzzy_match = cfg.default_fuzzy_match;
+        }
+        if (opts.timeout_seconds == 300 && cfg.default_timeout > 0) {
+            /* Only override if using the built-in default (300) */
+            opts.timeout_seconds = cfg.default_timeout;
+        }
+    }
+
     if (argc == 1) {
         print_usage();
         con_close();
@@ -1102,6 +1208,24 @@ int main(int argc, char *argv[])
         con_close();
         return 0;
     }
+    
+    /* ------------------------------------------------ configuration editor */
+    if (opts.config_edit) {
+        NcdConfig cfg;
+        db_config_load(&cfg);  /* Load existing or init defaults */
+        
+        if (ui_edit_config(&cfg)) {
+            if (db_config_save(&cfg)) {
+                ncd_println("Configuration saved.");
+            } else {
+                ncd_println("Failed to save configuration.");
+            }
+        } else {
+            ncd_println("Configuration cancelled.");
+        }
+        con_close();
+        return 0;
+    }
 
     /*
      * /v behavior:
@@ -1122,6 +1246,19 @@ int main(int argc, char *argv[])
         db->default_show_hidden = opts.show_hidden;
         db->default_show_system = opts.show_system;
         db->last_scan = time(NULL);
+
+        /* For subdirectory rescan, load existing database first */
+        if (opts.scan_subdirectory[0]) {
+            char drive = platform_get_drive_letter(opts.scan_subdirectory);
+            char drv_path[NCD_MAX_PATH];
+            if (db_drive_path(drive, drv_path, sizeof(drv_path))) {
+                NcdDatabase *existing = db_load_auto(drv_path);
+                if (existing) {
+                    db_free(db);
+                    db = existing;
+                }
+            }
+        }
 
         int n = run_requested_rescan(db, &opts);
         ncd_printf("  Scan complete: %d directories found across %d drive(s).\r\n",

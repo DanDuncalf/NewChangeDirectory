@@ -13,6 +13,12 @@ extern "C" {
 
 /* --------------------------------------------------------- lifecycle      */
 
+/* Debug test flags (debug builds only) */
+#if DEBUG
+extern bool g_test_no_checksum;
+extern bool g_test_slow_mode;
+#endif
+
 /* Allocate an empty database. */
 NcdDatabase *db_create(void);
 
@@ -239,6 +245,37 @@ const NcdGroupEntry *db_group_get(const NcdGroupDb *gdb, const char *name);
  * List all groups to console.
  */
 void db_group_list(const NcdGroupDb *gdb);
+
+/* --------------------------------------------------------- configuration  */
+
+/*
+ * Get the path to the configuration file.
+ * Returns path in buf, or NULL on failure.
+ */
+char *db_config_path(char *buf, size_t buf_size);
+
+/*
+ * Load configuration from disk.
+ * Returns true on success, false if file doesn't exist or is corrupt.
+ * On failure, fills cfg with default values.
+ */
+bool db_config_load(NcdConfig *cfg);
+
+/*
+ * Save configuration to disk.
+ * Returns true on success.
+ */
+bool db_config_save(const NcdConfig *cfg);
+
+/*
+ * Initialize config with default values.
+ */
+void db_config_init_defaults(NcdConfig *cfg);
+
+/*
+ * Check if configuration file exists.
+ */
+bool db_config_exists(void);
 
 #ifdef __cplusplus
 }
