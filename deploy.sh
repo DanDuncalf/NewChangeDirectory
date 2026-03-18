@@ -52,10 +52,33 @@ echo "  Installing: NewChangeDirectory -> ${DEST_DIR}/NewChangeDirectory"
 ${SUDO} cp "${SCRIPT_DIR}/NewChangeDirectory" "${DEST_DIR}/NewChangeDirectory"
 ${SUDO} chmod 755 "${DEST_DIR}/NewChangeDirectory"
 
+# -----------------------------------------------------------------------
+# 5.  Add ncd() function to ~/.bashrc if not already present
+# -----------------------------------------------------------------------
+BASHRC="${HOME}/.bashrc"
+NCD_FUNC="ncd() { source ${DEST_DIR}/ncd \"\$@\"; }"
+
+if [[ -f "${BASHRC}" ]]; then
+    if grep -q "^ncd() { source ${DEST_DIR}/ncd" "${BASHRC}" 2>/dev/null; then
+        echo ""
+        echo "ncd() function already exists in ${BASHRC}"
+    else
+        echo ""
+        echo "Adding ncd() function to ${BASHRC}..."
+        echo "" >> "${BASHRC}"
+        echo "# NCD - Norton Change Directory" >> "${BASHRC}"
+        echo "${NCD_FUNC}" >> "${BASHRC}"
+        echo ""
+        echo "ncd() function added to ${BASHRC}"
+        echo "Run 'source ${BASHRC}' to use ncd immediately."
+    fi
+else
+    echo ""
+    echo "Note: ${BASHRC} not found. Add this function manually:"
+    echo "  ${NCD_FUNC}"
+fi
+
 echo ""
 echo "Deployment complete!"
 echo ""
-echo "Add this function to your ~/.bashrc to use 'ncd' directly:"
-echo "  ncd() { source ${DEST_DIR}/ncd \"\$@\"; }"
-echo ""
-echo "Or use: source ${DEST_DIR}/ncd <search>"
+echo "Usage: ncd <search>"
