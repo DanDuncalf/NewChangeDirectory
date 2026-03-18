@@ -524,9 +524,18 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
             continue;
 
-        /* When scanning root (/), skip /mnt to avoid scanning Windows drives twice */
-        if (strcmp(mount_path, "/") == 0 && strcmp(ent->d_name, "mnt") == 0)
-            continue;
+        /* When scanning root (/), only scan whitelisted system directories */
+        if (strcmp(mount_path, "/") == 0) {
+            /* Only allow: etc, home, usr, var, root, opt */
+            if (strcmp(ent->d_name, "etc") != 0 &&
+                strcmp(ent->d_name, "home") != 0 &&
+                strcmp(ent->d_name, "usr") != 0 &&
+                strcmp(ent->d_name, "var") != 0 &&
+                strcmp(ent->d_name, "root") != 0 &&
+                strcmp(ent->d_name, "opt") != 0) {
+                continue;
+            }
+        }
 
         char child[MAX_PATH];
         if (snprintf(child, sizeof(child), "%s%s%s", mount_path,
