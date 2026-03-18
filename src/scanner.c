@@ -413,6 +413,11 @@ int scan_mounts(NcdDatabase *db,
                              (long)s->dir_count,
                              path_buf);
                 }
+                /* Truncate content to console width to prevent line wrapping */
+                int content_len = (int)strlen(content);
+                if (content_len > con_width) {
+                    content[con_width] = '\0';
+                }
                 platform_console_fill_char(con, status_start_row + i, 0, con_width, ' ');
                 platform_console_fill_attr_default(con, status_start_row + i, 0, con_width);
                 platform_console_write_at(con, status_start_row + i, 0, content);
