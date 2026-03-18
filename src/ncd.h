@@ -219,6 +219,7 @@ typedef struct {
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
     int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
+    bool scan_root_only;          /* Linux: /r / scans only root, not /mnt */
 } NcdOptions;
 
 /*

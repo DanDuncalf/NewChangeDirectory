@@ -537,6 +537,13 @@ static void print_usage(void)
         "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
         "              Special: '.' opens navigator from current directory\r\n"
         "                       'X:' or 'X:\\' opens navigator from drive root\r\n"
+#if NCD_PLATFORM_LINUX
+        "\r\n"
+        "Linux/WSL Specific:\r\n"
+        "  /r /        Scan only root filesystem (/etc,/home,/usr,/var,...)\r\n"
+        "              Without this, /r scans Windows drives under /mnt/*\r\n"
+        "  Installation: Run ./deploy.sh to install to /usr/local/bin\r\n"
+#endif
         "\r\n"
         "Examples:\r\n"
         "  ncd downloads\r\n"
@@ -549,6 +556,9 @@ static void print_usage(void)
         "  ncd /r-b,d      (same exclude syntax using commas)\r\n"
         "  ncd /r e,p      (same as /rEP)\r\n"
         "  ncd /r          (force immediate rescan)\r\n"
+#if NCD_PLATFORM_LINUX
+        "  ncd /r /        (force rescan of Linux root only, no /mnt drives)\r\n"
+#endif
     );
 }
 
@@ -613,6 +623,7 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
          * /r <drives> form:
          *   ncd /r e,p
          *   ncd /r e-p
+         *   ncd /r /      (Linux: scan only root, not /mnt drives)
          * Only treat next arg as drive list if it looks like one (commas/hyphens).
          * A bare letter like "c" is treated as search, not drive "C:".
          */
@@ -620,6 +631,15 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             i + 1 < argc &&
             argv[i + 1][0] != '/' && argv[i + 1][0] != '-') {
             const char *next = argv[i + 1];
+#if NCD_PLATFORM_LINUX
+            /* Linux special: /r / scans only root filesystem */
+            if (strcmp(next, "/") == 0) {
+                opts->force_rescan = true;
+                opts->scan_root_only = true;
+                i++;  /* consume the '/' token */
+                continue;
+            }
+#endif
             bool looks_like_drive_list = false;
             for (int k = 0; next[k]; k++) {
                 if (next[k] == ',' || next[k] == '-') {
@@ -805,6 +825,14 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
      * scan_drives to scan all drives. */
     char drives[26];
     int dcount = 0;
+
+#if NCD_PLATFORM_LINUX
+    /* Linux special: /r / scans only root filesystem */
+    if (opts->scan_root_only) {
+        const char *root_mount = "/";
+        return scan_mounts(db, &root_mount, 1, opts->show_hidden, opts->show_system, opts->timeout_seconds);
+    }
+#endif
 
     if (opts->scan_drive_count > 0) {
         for (int i = 0; i < 26; i++) if (opts->scan_drive_mask[i] && !opts->skip_drive_mask[i]) drives[dcount++] = (char)('A' + i);
