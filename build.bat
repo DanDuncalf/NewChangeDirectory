@@ -90,12 +90,14 @@ set TARGET=NewChangeDirectory.exe
 set SRCDIR=src
 
 set SOURCES=^
-    %SRCDIR%\main.c     ^
-    %SRCDIR%\database.c ^
-    %SRCDIR%\scanner.c  ^
-    %SRCDIR%\matcher.c  ^
-    %SRCDIR%\ui.c       ^
-    %SRCDIR%\platform.c
+    %SRCDIR%\main.c       ^
+    %SRCDIR%\database.c   ^
+    %SRCDIR%\scanner.c    ^
+    %SRCDIR%\matcher.c    ^
+    %SRCDIR%\ui.c         ^
+    %SRCDIR%\platform.c   ^
+    %SRCDIR%\strbuilder.c ^
+    %SRCDIR%\common.c
 
 set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR%
 

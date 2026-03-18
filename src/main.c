@@ -389,11 +389,22 @@ static void write_result(bool ok, const char *drive, const char *path,
     const char *src_msg   = message ? message : "";
 
 #if NCD_PLATFORM_WINDOWS
-    /* Escape for: @set "VAR=value" -- disallow embedded quotes and newlines */
+    /*
+     * Escape for: @set "VAR=value"
+     * Security: Reject control characters (except tab), replace quotes,
+     * and filter out percent signs to prevent batch variable expansion attacks.
+     */
     size_t j = 0;
     for (size_t i = 0; src_drive[i] && j + 2 < sizeof(safe_drive); i++) {
         char c = src_drive[i];
-        if (c == '"') c = '\'';
+        /* Reject control characters except common whitespace */
+        if ((unsigned char)c < 32 && c != '\t') {
+            c = '_';  /* Replace control chars with underscore */
+        }
+        /* Replace dangerous characters for batch files */
+        if (c == '"') c = '\'';      /* Quotes could break out of string */
+        if (c == '%') c = '_';       /* Prevent %VAR% expansion */
+        if (c == '!') c = '_';       /* Prevent delayed expansion */
         if (c == '\r' || c == '\n') c = ' ';
         safe_drive[j++] = c;
     }
@@ -402,7 +413,14 @@ static void write_result(bool ok, const char *drive, const char *path,
     j = 0;
     for (size_t i = 0; src_path[i] && j + 2 < sizeof(safe_path); i++) {
         char c = src_path[i];
+        /* Reject control characters except common whitespace */
+        if ((unsigned char)c < 32 && c != '\t') {
+            c = '_';
+        }
+        /* Replace dangerous characters */
         if (c == '"') c = '\'';
+        if (c == '%') c = '_';
+        if (c == '!') c = '_';
         if (c == '\r' || c == '\n') c = ' ';
         safe_path[j++] = c;
     }
@@ -411,7 +429,14 @@ static void write_result(bool ok, const char *drive, const char *path,
     j = 0;
     for (size_t i = 0; src_msg[i] && j + 2 < sizeof(safe_msg); i++) {
         char c = src_msg[i];
+        /* Reject control characters except common whitespace */
+        if ((unsigned char)c < 32 && c != '\t') {
+            c = '_';
+        }
+        /* Replace dangerous characters */
         if (c == '"') c = '\'';
+        if (c == '%') c = '_';
+        if (c == '!') c = '_';
         if (c == '\r' || c == '\n') c = ' ';
         safe_msg[j++] = c;
     }
@@ -422,11 +447,23 @@ static void write_result(bool ok, const char *drive, const char *path,
     fprintf(f, "@set \"NCD_PATH=%s\"\r\n",   safe_path);
     fprintf(f, "@set \"NCD_MESSAGE=%s\"\r\n", safe_msg);
 #else
-    /* Escape for: export VAR='value'  -- replace ' with '"'"' and strip newlines */
+    /*
+     * Escape for: export VAR='value'
+     * Security: Reject control characters and shell metacharacters
+     * that could be used for command injection.
+     */
     size_t j = 0;
     for (size_t i = 0; src_drive[i] && j + 2 < sizeof(safe_drive); i++) {
         char c = src_drive[i];
-        if (c == '\'' || c == '\r' || c == '\n') c = '_';
+        /* Reject control characters */
+        if ((unsigned char)c < 32) c = '_';
+        /* Reject shell metacharacters */
+        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
+            c == '\\' || c == '|' || c == '&' || c == ';' ||
+            c == '<' || c == '>' || c == '(' || c == ')' ||
+            c == '{' || c == '}' || c == '*' || c == '?') {
+            c = '_';
+        }
         safe_drive[j++] = c;
     }
     safe_drive[j] = '\0';
@@ -434,7 +471,15 @@ static void write_result(bool ok, const char *drive, const char *path,
     j = 0;
     for (size_t i = 0; src_path[i] && j + 2 < sizeof(safe_path); i++) {
         char c = src_path[i];
-        if (c == '\'' || c == '\r' || c == '\n') c = '_';
+        /* Reject control characters */
+        if ((unsigned char)c < 32) c = '_';
+        /* Reject shell metacharacters */
+        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
+            c == '\\' || c == '|' || c == '&' || c == ';' ||
+            c == '<' || c == '>' || c == '(' || c == ')' ||
+            c == '{' || c == '}' || c == '*' || c == '?') {
+            c = '_';
+        }
         safe_path[j++] = c;
     }
     safe_path[j] = '\0';
@@ -442,7 +487,15 @@ static void write_result(bool ok, const char *drive, const char *path,
     j = 0;
     for (size_t i = 0; src_msg[i] && j + 2 < sizeof(safe_msg); i++) {
         char c = src_msg[i];
-        if (c == '\'' || c == '\r' || c == '\n') c = '_';
+        /* Reject control characters */
+        if ((unsigned char)c < 32) c = '_';
+        /* Reject shell metacharacters */
+        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
+            c == '\\' || c == '|' || c == '&' || c == ';' ||
+            c == '<' || c == '>' || c == '(' || c == ')' ||
+            c == '{' || c == '}' || c == '*' || c == '?') {
+            c = '_';
+        }
         safe_msg[j++] = c;
     }
     safe_msg[j] = '\0';
@@ -510,8 +563,13 @@ static void spawn_background_rescan(const char *db_path)
 
 static void print_usage(void)
 {
+#if NCD_PLATFORM_WINDOWS
     ncd_print(
-        "NewChangeDirectory (NCD) -- Norton CD clone for Windows 64-bit\r\n"
+        "NewChangeDirectory (NCD) -- Nifty CD for Windows 64-bit\r\n"
+#else
+    ncd_print(
+        "NewChangeDirectory (NCD) -- Nifty CD for Linux 64-bit\r\n"
+#endif
         "\r\n"
         "Usage:\r\n"
         "  ncd <search>\r\n"
@@ -532,6 +590,10 @@ static void print_usage(void)
         "  /i          Include hidden directories in search\r\n"
         "  /s          Include system directories in search\r\n"
         "  /a          Include all directories (hidden + system)\r\n"
+        "  /z          Fuzzy matching (digit-word substitution + DL distance)\r\n"
+        "  /g <group>  Group current directory (e.g., /g @home)\r\n"
+        "  /g- <group> Remove a group\r\n"
+        "  /gl         List all groups\r\n"
         "  /d <path>   Use alternate database file\r\n"
         "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
         "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
@@ -719,6 +781,39 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
         }
 
+        /* Tag list: /gl or /gL */
+        if ((_stricmp(arg, "/gl") == 0 || _stricmp(arg, "-gl") == 0 ||
+             _stricmp(arg, "/gL") == 0 || _stricmp(arg, "-gL") == 0)) {
+            opts->group_list = true;
+            continue;
+        }
+        
+        /* Tag remove: /g- <tag> */
+        if ((_stricmp(arg, "/g-") == 0 || _stricmp(arg, "-g-") == 0)) {
+            if (i + 1 < argc) {
+                i++;
+                platform_strncpy_s(opts->group_name, sizeof(opts->group_name), argv[i]);
+                opts->group_remove = true;
+                continue;
+            } else {
+                ncd_println("NCD: /g- requires a tag name");
+                return false;
+            }
+        }
+        
+        /* Tag set: /g <tag> */
+        if ((_stricmp(arg, "/g") == 0 || _stricmp(arg, "-g") == 0)) {
+            if (i + 1 < argc) {
+                i++;
+                platform_strncpy_s(opts->group_name, sizeof(opts->group_name), argv[i]);
+                opts->group_set = true;
+                continue;
+            } else {
+                ncd_println("NCD: /g requires a tag name");
+                return false;
+            }
+        }
+        
         /* Options start with / or - */
         if ((arg[0] == '/' || arg[0] == '-') && arg[1]) {
             /* Multi-char flags after / are processed char by char */
@@ -731,6 +826,7 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                     case 's': opts->show_system   = true; break;
                     case 'a': opts->show_hidden   = true;
                               opts->show_system   = true; break;
+                    case 'z': opts->fuzzy_match   = true; break;
                     case 'd':
                         /* /d requires a path as the next argument */
                         if (arg[j + 1] == '\0' && i + 1 < argc) {
@@ -785,19 +881,12 @@ next_arg:;
 #if NCD_PLATFORM_LINUX
 /*
  * Check if a filesystem type is a pseudo filesystem that should be skipped.
+ * Uses the global ncd_pseudo_filesystems list defined in platform.c.
  */
 static bool is_pseudo_fs(const char *fstype)
 {
-    static const char *pseudo_fs[] = {
-        "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
-        "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
-        "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
-        "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
-        "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
-        "fuse.portal", "fuse.gvfsd-fuse", NULL
-    };
-    for (int i = 0; pseudo_fs[i]; i++) {
-        if (strcmp(fstype, pseudo_fs[i]) == 0)
+    for (int i = 0; ncd_pseudo_filesystems[i]; i++) {
+        if (strcmp(fstype, ncd_pseudo_filesystems[i]) == 0)
             return true;
     }
     return false;
@@ -961,6 +1050,58 @@ int main(int argc, char *argv[])
         con_close();
         return 0;
     }
+    
+    /* -------------------------------------------------- tag list command  */
+    if (opts.group_list) {
+        NcdGroupDb *gdb = db_group_load();
+        if (gdb) {
+            db_group_list(gdb);
+            db_group_free(gdb);
+        } else {
+            ncd_println("No groups defined.");
+        }
+        con_close();
+        return 0;
+    }
+    
+    /* ----------------------------------------------- group remove command */
+    if (opts.group_remove) {
+        NcdGroupDb *gdb = db_group_load();
+        if (!gdb) gdb = db_group_create();
+        
+        if (db_group_remove(gdb, opts.group_name)) {
+            db_group_save(gdb);
+            ncd_printf("Group '%s' removed.\r\n", opts.group_name);
+        } else {
+            ncd_printf("Group '%s' not found.\r\n", opts.group_name);
+        }
+        db_group_free(gdb);
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ group set command   */
+    if (opts.group_set) {
+        char cwd[MAX_PATH] = {0};
+        if (!platform_get_current_dir(cwd, sizeof(cwd))) {
+            result_error("Could not determine current directory.");
+            con_close();
+            return 1;
+        }
+        
+        NcdGroupDb *gdb = db_group_load();
+        if (!gdb) gdb = db_group_create();
+        
+        if (db_group_set(gdb, opts.group_name, cwd)) {
+            db_group_save(gdb);
+            ncd_printf("Group '%s' -> '%s'\r\n", opts.group_name, cwd);
+        } else {
+            ncd_println("Failed to set group (too many groups?).");
+        }
+        db_group_free(gdb);
+        con_close();
+        return 0;
+    }
 
     /*
      * /v behavior:
@@ -1012,6 +1153,13 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    /* ------------------------------------------------ version check flow  */
+    /*
+     * Only check all databases for version mismatches when we actually try
+     * to load a database and find it has the wrong version. This keeps
+     * normal operation fast - we only do the full check when necessary.
+     */
+
     /* -------------------------------------- direct navigation mode (.)   */
     if (strcmp(opts.search, ".") == 0 ||
         strcmp(opts.search, ".\\") == 0 ||
@@ -1060,6 +1208,38 @@ int main(int argc, char *argv[])
         return 0;
     }
 #endif
+
+    /* -------------------------------------- tag lookup (@tagname)        */
+    if (opts.search[0] == '@') {
+        const char *group_name = opts.search;  /* Includes the @ prefix */
+        
+        NcdGroupDb *gdb = db_group_load();
+        if (gdb) {
+            const NcdGroupEntry *entry = db_group_get(gdb, group_name);
+            if (entry) {
+                /* Verify the directory still exists */
+                if (platform_dir_exists(entry->path)) {
+                    char drive_letter = entry->path[0];
+                    result_ok(entry->path, drive_letter);
+                    db_group_free(gdb);
+                    con_close();
+                    return 0;
+                } else {
+                    ncd_printf("Group '%s' points to non-existent directory: %s\r\n",
+                               group_name, entry->path);
+                    db_group_free(gdb);
+                    con_close();
+                    return 1;
+                }
+            }
+            db_group_free(gdb);
+        }
+        
+        /* Group not found */
+        result_error("Unknown group: %s", group_name);
+        con_close();
+        return 1;
+    }
 
     /* ----------------------------------------- parse drive from search   */
     char target_drive;
@@ -1137,10 +1317,136 @@ int main(int argc, char *argv[])
         db_free(scan_db);
     }
 
-    /* -------------------- load target drive and search it               */
+    /* -------------------- check version and load target drive           */
+    /*
+     * Fast path: Only check our specific database first. If it has the wrong
+     * version, then we check ALL databases to present a unified update UI.
+     * This keeps normal operation fast.
+     */
+    int target_version_status = db_check_file_version(target_db);
+    
+    if (target_version_status == DB_VERSION_MISMATCH && !opts.force_rescan) {
+        /* Target DB has wrong version - check ALL databases for version issues */
+        DbVersionInfo outdated[26];
+        int outdated_count = db_check_all_versions(outdated, 26);
+        
+        if (outdated_count > 0) {
+            /* Build arrays for UI */
+            char drives[26];
+            uint16_t versions[26];
+            bool selected[26];
+            
+            for (int i = 0; i < outdated_count; i++) {
+                drives[i] = outdated[i].letter;
+                versions[i] = outdated[i].version;
+            }
+            
+            /* Present TUI for drive selection */
+            int choice = ui_select_drives_for_update(drives, versions, 
+                                                      outdated_count, selected, 60);
+            
+            if (choice == UI_UPDATE_NONE) {
+                /* User chose to skip all - set skip flags */
+                for (int i = 0; i < outdated_count; i++) {
+                    db_set_skip_update_flag(outdated[i].path);
+                }
+                ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
+            } else {
+                /* User chose to update some or all */
+                bool any_selected = false;
+                for (int i = 0; i < outdated_count; i++) {
+                    if (selected[i]) {
+                        any_selected = true;
+                        break;
+                    }
+                }
+                
+                if (any_selected) {
+                    /* Set skip flag on drives user chose NOT to update */
+                    for (int i = 0; i < outdated_count; i++) {
+                        if (!selected[i]) {
+                            db_set_skip_update_flag(outdated[i].path);
+                        }
+                    }
+                    
+                    /* Build drive list for rescan */
+                    char rescan_drives[26];
+                    int rescan_count = 0;
+                    for (int i = 0; i < outdated_count; i++) {
+                        if (selected[i]) {
+                            rescan_drives[rescan_count++] = outdated[i].letter;
+                        }
+                    }
+                    
+                    /* Perform rescan of selected drives */
+                    ncd_printf("NCD: Updating %d database(s)...\r\n", rescan_count);
+                    NcdDatabase *scan_db = db_create();
+                    scan_db->default_show_hidden = opts.show_hidden;
+                    scan_db->default_show_system = opts.show_system;
+                    scan_db->last_scan = time(NULL);
+                    
+#if NCD_PLATFORM_WINDOWS
+                    const char *mounts[26];
+                    char mount_bufs[26][MAX_PATH];
+                    for (int i = 0; i < rescan_count; i++) {
+                        snprintf(mount_bufs[i], MAX_PATH, "%c:\\", rescan_drives[i]);
+                        mounts[i] = mount_bufs[i];
+                    }
+                    int n = scan_mounts(scan_db, mounts, rescan_count, 
+                                        opts.show_hidden, opts.show_system, 
+                                        opts.timeout_seconds);
+#else
+                    /* Linux: need to map drive letters back to mount points */
+                    const char *mounts[26];
+                    char mount_bufs[26][MAX_PATH];
+                    int mcount = 0;
+                    char all_mount_bufs[26][MAX_PATH];
+                    const char *all_mount_ptrs[26];
+                    int all_count = platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
+                                                              sizeof(all_mount_bufs[0]), 26);
+                    for (int i = 0; i < rescan_count && mcount < 26; i++) {
+                        for (int j = 0; j < all_count; j++) {
+                            char letter = platform_get_drive_letter(all_mount_ptrs[j]);
+                            if (letter == rescan_drives[i]) {
+                                snprintf(mount_bufs[mcount], MAX_PATH, "%s", all_mount_ptrs[j]);
+                                mounts[mcount] = mount_bufs[mcount];
+                                mcount++;
+                                break;
+                            }
+                        }
+                    }
+                    int n = scan_mounts(scan_db, mounts, mcount, 
+                                        opts.show_hidden, opts.show_system, 
+                                        opts.timeout_seconds);
+#endif
+                    ncd_printf("  Scan complete: %d directories found.\r\n", n);
+                    
+                    /* Save updated databases */
+                    for (int i = 0; i < scan_db->drive_count; i++) {
+                        char drv_path[NCD_MAX_PATH];
+                        if (!db_drive_path(scan_db->drives[i].letter, drv_path,
+                                           sizeof(drv_path)))
+                            continue;
+                        db_save_binary_single(scan_db, i, drv_path);
+                    }
+                    db_free(scan_db);
+                } else {
+                    /* User deselected all - treat as skip */
+                    for (int i = 0; i < outdated_count; i++) {
+                        db_set_skip_update_flag(outdated[i].path);
+                    }
+                    ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
+                }
+            }
+        }
+        /* Re-check target after potential update */
+        target_version_status = db_check_file_version(target_db);
+    }
+    
+    /* Now load the target database */
     NcdDatabase *primary_db = db_load_auto(target_db);
-    if (!primary_db) {
-        /* Corrupt target DB -- rebuild that file */
+    if (!primary_db && target_version_status != DB_VERSION_SKIPPED) {
+        /* Corrupt target DB (not just wrong version) -- rebuild that file */
         ncd_printf("NCD: Database for %c: is corrupt -- rebuilding...\r\n",
                    target_drive);
         NcdDatabase *scan_db = db_create();
@@ -1164,11 +1470,19 @@ int main(int argc, char *argv[])
     NcdMatch *matches = NULL;
 
     if (primary_db) {
-        matches = matcher_find(primary_db,
-                               clean_search,
-                               opts.show_hidden,
-                               opts.show_system,
-                               &match_count);
+        if (opts.fuzzy_match) {
+            matches = matcher_find_fuzzy(primary_db,
+                                         clean_search,
+                                         opts.show_hidden,
+                                         opts.show_system,
+                                         &match_count);
+        } else {
+            matches = matcher_find(primary_db,
+                                   clean_search,
+                                   opts.show_hidden,
+                                   opts.show_system,
+                                   &match_count);
+        }
     }
 
     /* -------------------- fallback: search all other drive databases     */
@@ -1194,9 +1508,16 @@ int main(int argc, char *argv[])
             if (!d) continue;
 
             int cnt = 0;
-            NcdMatch *m = matcher_find(d, clean_search,
+            NcdMatch *m;
+            if (opts.fuzzy_match) {
+                m = matcher_find_fuzzy(d, clean_search,
                                        opts.show_hidden, opts.show_system,
                                        &cnt);
+            } else {
+                m = matcher_find(d, clean_search,
+                                 opts.show_hidden, opts.show_system,
+                                 &cnt);
+            }
             db_free(d);
 
             if (m && cnt > 0) {

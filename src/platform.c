@@ -817,15 +817,6 @@ int platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
 #else
     if (buf_size < 2) return 0;
 
-    static const char *pseudo_fs[] = {
-        "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
-        "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
-        "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
-        "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
-        "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
-        "fuse.portal", "fuse.gvfsd-fuse", NULL
-    };
-
     FILE *mf = fopen("/proc/mounts", "r");
     if (!mf) return 0;
 
@@ -838,8 +829,8 @@ int platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
 
         /* Skip pseudo filesystems */
         bool is_pseudo = false;
-        for (int i = 0; pseudo_fs[i]; i++) {
-            if (strcmp(fstype, pseudo_fs[i]) == 0) {
+        for (int i = 0; ncd_pseudo_filesystems[i]; i++) {
+            if (strcmp(fstype, ncd_pseudo_filesystems[i]) == 0) {
                 is_pseudo = true;
                 break;
             }
@@ -949,6 +940,79 @@ long platform_atomic_exchange(volatile long *dst, long value)
 #else
     return __sync_lock_test_and_set(dst, value);
 #endif
+}
+
+long platform_atomic_read(volatile long *v)
+{
+    if (!v) return 0;
+#if NCD_PLATFORM_WINDOWS
+    return InterlockedCompareExchange(v, 0, 0);  /* Read without changing */
+#else
+    return __sync_fetch_and_add(v, 0);  /* Add 0 = read */
+#endif
+}
+
+/* ================================================================ CRC64 checksum */
+
+/* ECMA-182 polynomial: x^64 + x^62 + x^57 + x^55 + x^54 + x^53 + x^52 + x^47 + x^46 + x^45 + 
+ *                      x^40 + x^39 + x^38 + x^37 + x^35 + x^33 + x^32 + x^31 + x^29 + x^27 + 
+ *                      x^24 + x^23 + x^22 + x^21 + x^19 + x^17 + x^13 + x^12 + x^10 + x^9 + 
+ *                      x^7 + x^4 + x^1 + 1
+ * Normal form: 0x42F0E1EBA9EA3693
+ */
+#define CRC64_POLY 0x42F0E1EBA9EA3693ULL
+#define CRC64_INIT 0xFFFFFFFFFFFFFFFFULL
+
+static uint64_t crc64_table[256];
+static bool crc64_table_initialized = false;
+
+static void crc64_init_table(void)
+{
+    if (crc64_table_initialized) return;
+    
+    for (int i = 0; i < 256; i++) {
+        uint64_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ CRC64_POLY;
+            } else {
+                crc >>= 1;
+            }
+        }
+        crc64_table[i] = crc;
+    }
+    crc64_table_initialized = true;
+}
+
+uint64_t platform_crc64(const void *data, size_t len)
+{
+    if (!data || len == 0) return 0;
+    
+    crc64_init_table();
+    
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint64_t crc = CRC64_INIT;
+    
+    for (size_t i = 0; i < len; i++) {
+        crc = crc64_table[(crc ^ bytes[i]) & 0xFF] ^ (crc >> 8);
+    }
+    
+    return crc ^ CRC64_INIT;  /* Final XOR */
+}
+
+uint64_t platform_crc64_update(uint64_t crc, const void *data, size_t len)
+{
+    if (!data || len == 0) return crc;
+    
+    crc64_init_table();
+    
+    const uint8_t *bytes = (const uint8_t *)data;
+    
+    for (size_t i = 0; i < len; i++) {
+        crc = crc64_table[(crc ^ bytes[i]) & 0xFF] ^ (crc >> 8);
+    }
+    
+    return crc;
 }
 
 /* ================================================================ threading */
@@ -1194,3 +1258,90 @@ bool platform_find_is_reparse(const PlatformFindData *fd)
 }
 
 #endif
+
+/* ================================================================ pseudo filesystem list */
+
+const char *ncd_pseudo_filesystems[] = {
+    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
+    "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
+    "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
+    "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
+    "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
+    "fuse.portal", "fuse.gvfsd-fuse", NULL
+};
+
+/* ================================================================ path utilities */
+
+bool path_parent(const char *path, char *out, size_t out_size)
+{
+    if (!path || !out || out_size == 0) return false;
+    snprintf(out, out_size, "%s", path);
+    size_t len = strlen(out);
+
+#if NCD_PLATFORM_WINDOWS
+    while (len > 0 && (out[len-1]=='\\' || out[len-1]=='/')) {
+        if (len == 3 && out[1] == ':') break;
+        out[--len] = '\0';
+    }
+    if (len <= 3 && out[1] == ':') return false;
+    char *sl = strrchr(out, '\\'); if (!sl) sl = strrchr(out, '/');
+    if (!sl) return false;
+    if (sl == out + 2 && out[1] == ':') out[3] = '\0'; else *sl = '\0';
+#else
+    while (len > 1 && out[len-1] == '/') out[--len] = '\0';
+    if (len == 0 || (len == 1 && out[0] == '/')) return false;
+    char *sl = strrchr(out, '/');
+    if (!sl) return false;
+    if (sl == out) out[1] = '\0'; else *sl = '\0';
+#endif
+    return true;
+}
+
+const char *path_leaf(const char *path)
+{
+    const char *b = strrchr(path, '\\');
+    const char *f = strrchr(path, '/');
+    const char *last = b > f ? b : f;
+    if (!last) return path;
+    return last[1] ? last + 1 : last;
+}
+
+bool path_join(char *out, size_t out_size, const char *base, const char *name)
+{
+    if (!out || out_size == 0 || !base || !name) return false;
+    size_t blen = strlen(base);
+    bool has_sep = blen > 0 && (base[blen-1]=='\\' || base[blen-1]=='/');
+    if (has_sep)
+        return snprintf(out, out_size, "%s%s", base, name) < (int)out_size;
+    return snprintf(out, out_size, "%s%s%s", base, NCD_PATH_SEP, name) < (int)out_size;
+}
+
+bool path_is_absolute(const char *path)
+{
+    if (!path || !path[0]) return false;
+#if NCD_PLATFORM_WINDOWS
+    return (path[1] == ':' && ((path[0] >= 'A' && path[0] <= 'Z') || 
+                               (path[0] >= 'a' && path[0] <= 'z')));
+#else
+    return path[0] == '/';
+#endif
+}
+
+void path_normalize_separators(char *path)
+{
+    if (!path) return;
+    for (char *p = path; *p; p++) {
+#if NCD_PLATFORM_WINDOWS
+        if (*p == '/') *p = '\\';
+#else
+        if (*p == '\\') *p = '/';
+#endif
+    }
+}
+
+char path_get_drive(const char *path)
+{
+    if (!path || path[0] < 'A' || path[0] > 'Z') return 0;
+    if (path[1] != ':') return 0;
+    return path[0];
+}

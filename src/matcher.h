@@ -49,6 +49,47 @@ NcdMatch *matcher_find(const NcdDatabase *db,
                         bool               include_system,
                         int               *out_count);
 
+/* ================================================================ name index */
+
+typedef struct {
+    uint32_t hash;       /* FNV-1a hash of lowercase name */
+    uint32_t drive_idx;  /* Index in database drives array */
+    uint32_t dir_idx;    /* Index in drive's dirs array */
+} NameIndexEntry;
+
+typedef struct {
+    NameIndexEntry *entries;
+    int count;
+    int bucket_count;
+    int *bucket_starts;
+} NameIndex;
+
+NameIndex *name_index_build(const NcdDatabase *db);
+void name_index_free(NameIndex *idx);
+int name_index_find_by_hash(const NameIndex *idx, uint32_t hash,
+                            NameIndexEntry *out_entries, int max_matches);
+
+/* ================================================================ fuzzy matching */
+
+/*
+ * Fuzzy matching with Damerau-Levenshtein distance.
+ * 
+ * Layer 1: Generates variations of search_str by substituting digits with words
+ *          (e.g., "2" -> "to", "too", "two") up to 3 replacements.
+ * Layer 2: Ranks candidates using Damerau-Levenshtein distance with normalized
+ *          scoring: score = 1.0 - (distance / max(len(query), len(candidate)))
+ * 
+ * Only returns matches with score >= 0.5 (50% similarity).
+ * Results are sorted by score (highest first).
+ * 
+ * Returns malloc'd array (caller must free) or NULL on error.
+ */
+NcdMatch *matcher_find_fuzzy(const NcdDatabase *db,
+                              const char        *search_str,
+                              bool               include_hidden,
+                              bool               include_system,
+                              int               *out_count);
+
 #ifdef __cplusplus
 }
 #endif

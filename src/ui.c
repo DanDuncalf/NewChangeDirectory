@@ -59,6 +59,10 @@ typedef struct {
     int          scroll_top;
     const NcdMatch *matches;
     const char  *search_str;
+    /* Dirty tracking for incremental redraw */
+    int          last_selected;
+    int          last_scroll_top;
+    bool         first_draw;
 } UiState;
 
 typedef struct {
@@ -490,52 +494,6 @@ static void names_sort(NameList *list)
     qsort(list->items, (size_t)list->count, sizeof(char *), cmp_names_ci);
 }
 
-/* ---- path helpers ------------------------------------------------------ */
-
-static bool path_parent(const char *path, char *out, size_t out_sz)
-{
-    if (!path || !out || out_sz == 0) return false;
-    snprintf(out, out_sz, "%s", path);
-    size_t len = strlen(out);
-
-#if NCD_PLATFORM_WINDOWS
-    while (len > 0 && (out[len-1]=='\\' || out[len-1]=='/')) {
-        if (len == 3 && out[1] == ':') break;
-        out[--len] = '\0';
-    }
-    if (len <= 3 && out[1] == ':') return false;
-    char *sl = strrchr(out, '\\'); if (!sl) sl = strrchr(out, '/');
-    if (!sl) return false;
-    if (sl == out + 2 && out[1] == ':') out[3] = '\0'; else *sl = '\0';
-#else
-    while (len > 1 && out[len-1] == '/') out[--len] = '\0';
-    if (len == 0 || (len == 1 && out[0] == '/')) return false;
-    char *sl = strrchr(out, '/');
-    if (!sl) return false;
-    if (sl == out) out[1] = '\0'; else *sl = '\0';
-#endif
-    return true;
-}
-
-static const char *path_leaf(const char *path)
-{
-    const char *b = strrchr(path, '\\');
-    const char *f = strrchr(path, '/');
-    const char *last = b > f ? b : f;
-    if (!last) return path;
-    return last[1] ? last + 1 : last;
-}
-
-static bool path_join(char *out, size_t out_sz, const char *base, const char *name)
-{
-    if (!out || out_sz == 0 || !base || !name) return false;
-    size_t blen = strlen(base);
-    bool has_sep = blen > 0 && (base[blen-1]=='\\' || base[blen-1]=='/');
-    if (has_sep)
-        return snprintf(out, out_sz, "%s%s", base, name) < (int)out_sz;
-    return snprintf(out, out_sz, "%s%s%s", base, NCD_PATH_SEP, name) < (int)out_sz;
-}
-
 /* ---- scroll clamping -------------------------------------------------- */
 
 static void clamp_scroll(UiState *st)
@@ -571,57 +529,34 @@ static void nav_clamp_scroll(NavState *st)
 /* ========================= Shared drawing logic ========================== */
 /* ======================================================================== */
 
-static void draw_box(UiState *st)
+/* Helper: Draw a single list row */
+static void draw_list_row(UiState *st, int row, int idx, bool is_selected)
 {
     int w = st->box_width;
     int inner = w - 2;
     char line[512];
-    int i;
-
-    con_cursor_pos(st->top_row, 0);
-    con_write(BOX_TL);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_TR);
-
-    con_cursor_pos(st->top_row + 1, 0);
-    con_write(BOX_V);
-    if (g_ansi) con_write(ANSI_BOLD ANSI_CYAN);
-    char header[256];
-    snprintf(header, sizeof(header),
-             "  NCD  --  %d match%s for \"%s\"  (Up/Dn PgUp PgDn Home End  Tab=Nav  Enter=OK  Esc=Cancel)",
-             st->count, st->count == 1 ? "" : "es", st->search_str);
-    con_write_padded(header, inner);
-    if (g_ansi) con_write(ANSI_RESET);
-    con_write(BOX_V);
-
-    con_cursor_pos(st->top_row + 2, 0);
-    con_write(BOX_ML);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_MR);
-
     int list_start = st->top_row + 3;
-    for (int r = 0; r < st->visible_rows; r++) {
-        int idx = st->scroll_top + r;
-        con_cursor_pos(list_start + r, 0);
-        con_write(BOX_V);
-        bool is_sel = (idx == st->selected);
-        if (is_sel && g_ansi) con_write(ANSI_REVERSE);
-        if (idx < st->count)
-            snprintf(line, sizeof(line), " %s %.*s",
-                     is_sel ? SEL_IND : " ",
-                     (int)(sizeof(line) - 4), st->matches[idx].full_path);
-        else
-            line[0] = '\0';
-        con_write_padded(line, inner);
-        if (is_sel && g_ansi) con_write(ANSI_RESET);
-        con_write(BOX_V);
-    }
+    
+    con_cursor_pos(list_start + row, 0);
+    con_write(BOX_V);
+    if (is_selected && g_ansi) con_write(ANSI_REVERSE);
+    if (idx < st->count && idx >= 0)
+        snprintf(line, sizeof(line), " %s %.*s",
+                 is_selected ? SEL_IND : " ",
+                 (int)(sizeof(line) - 4), st->matches[idx].full_path);
+    else
+        line[0] = '\0';
+    con_write_padded(line, inner);
+    if (is_selected && g_ansi) con_write(ANSI_RESET);
+    con_write(BOX_V);
+}
 
-    con_cursor_pos(list_start + st->visible_rows, 0);
-    con_write(BOX_BL);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_BR);
-
+/* Helper: Draw scrollbar */
+static void draw_scrollbar(UiState *st)
+{
+    int w = st->box_width;
+    int list_start = st->top_row + 3;
+    
     if (st->count > st->visible_rows) {
         int track = st->visible_rows;
         int thumb = (int)((double)st->scroll_top / (st->count - st->visible_rows)
@@ -631,6 +566,83 @@ static void draw_box(UiState *st)
             con_write(r == thumb ? "#" : ".");
         }
     }
+}
+
+static void draw_box(UiState *st)
+{
+    int w = st->box_width;
+    int inner = w - 2;
+    int i;
+
+    /* Full redraw on first draw */
+    if (st->first_draw) {
+        st->first_draw = false;
+        
+        /* Draw box frame and header */
+        con_cursor_pos(st->top_row, 0);
+        con_write(BOX_TL);
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+        con_write(BOX_TR);
+
+        con_cursor_pos(st->top_row + 1, 0);
+        con_write(BOX_V);
+        if (g_ansi) con_write(ANSI_BOLD ANSI_CYAN);
+        char header[256];
+        snprintf(header, sizeof(header),
+                 "  NCD  --  %d match%s for \"%s\"  (Up/Dn PgUp PgDn Home End  Tab=Nav  Enter=OK  Esc=Cancel)",
+                 st->count, st->count == 1 ? "" : "es", st->search_str);
+        con_write_padded(header, inner);
+        if (g_ansi) con_write(ANSI_RESET);
+        con_write(BOX_V);
+
+        con_cursor_pos(st->top_row + 2, 0);
+        con_write(BOX_ML);
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+        con_write(BOX_MR);
+
+        /* Draw all list rows */
+        for (int r = 0; r < st->visible_rows; r++) {
+            int idx = st->scroll_top + r;
+            draw_list_row(st, r, idx, idx == st->selected);
+        }
+
+        /* Draw bottom border */
+        con_cursor_pos(st->top_row + 3 + st->visible_rows, 0);
+        con_write(BOX_BL);
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+        con_write(BOX_BR);
+
+        /* Draw scrollbar */
+        draw_scrollbar(st);
+        
+        st->last_selected = st->selected;
+        st->last_scroll_top = st->scroll_top;
+        return;
+    }
+
+    /* Incremental redraw */
+    if (st->scroll_top != st->last_scroll_top) {
+        /* Scroll changed - redraw all visible rows */
+        for (int r = 0; r < st->visible_rows; r++) {
+            int idx = st->scroll_top + r;
+            draw_list_row(st, r, idx, idx == st->selected);
+        }
+        draw_scrollbar(st);
+    } else if (st->selected != st->last_selected) {
+        /* Only selection changed - redraw old and new rows */
+        int old_row = st->last_selected - st->scroll_top;
+        int new_row = st->selected - st->scroll_top;
+        
+        if (old_row >= 0 && old_row < st->visible_rows) {
+            draw_list_row(st, old_row, st->last_selected, false);
+        }
+        if (new_row >= 0 && new_row < st->visible_rows) {
+            draw_list_row(st, new_row, st->selected, true);
+        }
+    }
+    
+    st->last_selected = st->selected;
+    st->last_scroll_top = st->scroll_top;
 }
 
 static void nav_draw(NavState *st)
@@ -879,7 +891,10 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
         .selected     = 0,
         .scroll_top   = 0,
         .matches      = matches,
-        .search_str   = search_str
+        .search_str   = search_str,
+        .last_selected = -1,
+        .last_scroll_top = -1,
+        .first_draw   = true
     };
 
     con_hide_cursor();
@@ -957,4 +972,267 @@ bool ui_navigate_directory(const char *start_path,
     con_show_cursor();
     ui_close_console();
     return nav == NAV_RESULT_SELECT;
+}
+
+/* ======================================================================== */
+/* ===================== Drive Update Selection UI ======================== */
+/* ======================================================================== */
+
+typedef struct {
+    int top_row;
+    int box_width;
+    int visible_rows;
+    int count;
+    int selected;      /* Currently highlighted row */
+    int scroll_top;    /* First visible row */
+    bool first_draw;
+} DriveUiState;
+
+static void draw_drive_box(DriveUiState *st, const char *drives,
+                           const uint16_t *versions, bool *selected_drives)
+{
+    int w = st->box_width;
+    int inner = w - 2;
+    int list_start = st->top_row + 3;
+    
+    /* Title bar */
+    con_cursor_pos(st->top_row, 0);
+    con_write(BOX_TL);
+    {
+        char title[128];
+        snprintf(title, sizeof(title), " NCD Database Update Required ");
+        int title_len = (int)strlen(title);
+        int left_pad = (inner - title_len) / 2;
+        int right_pad = inner - title_len - left_pad;
+        int i;
+        for (i = 0; i < left_pad; i++) con_write(BOX_H);
+        con_write(title);
+        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+    }
+    con_write(BOX_TR);
+    
+    /* Help text */
+    con_cursor_pos(st->top_row + 1, 0);
+    con_write(BOX_V);
+    {
+        char help[256];
+        snprintf(help, sizeof(help), " %-3s | %-7s | %s",
+                 "Sel", "Version", "Drive");
+        con_write_padded(help, inner);
+    }
+    con_write(BOX_V);
+    
+    /* Separator line */
+    con_cursor_pos(st->top_row + 2, 0);
+    con_write(BOX_ML);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_MR);
+    
+    /* Drive list */
+    for (int row = 0; row < st->visible_rows; row++) {
+        int idx = st->scroll_top + row;
+        con_cursor_pos(list_start + row, 0);
+        con_write(BOX_V);
+        
+        if (idx < st->count) {
+            bool is_selected_row = (idx == st->selected);
+            bool is_checked = selected_drives[idx];
+            
+            if (is_selected_row && g_ansi) con_write(ANSI_REVERSE);
+            
+            char line[512];
+            snprintf(line, sizeof(line), " [%c] | v%-5u | %c:",
+                     is_checked ? 'X' : ' ',
+                     versions[idx],
+                     drives[idx]);
+            con_write_padded(line, inner);
+            
+            if (is_selected_row && g_ansi) con_write(ANSI_RESET);
+        } else {
+            con_write_padded("", inner);
+        }
+        con_write(BOX_V);
+    }
+    
+    /* Footer with instructions */
+    int footer_row = list_start + st->visible_rows;
+    con_cursor_pos(footer_row, 0);
+    con_write(BOX_ML);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_MR);
+    
+    con_cursor_pos(footer_row + 1, 0);
+    con_write(BOX_V);
+    {
+        char footer[256];
+        snprintf(footer, sizeof(footer), " SPACE=Toggle  A=All  N=None  ENTER=Update Selected  ESC=Skip All ");
+        int pad = inner - (int)strlen(footer);
+        con_write(footer);
+        int i;
+        for (i = 0; i < pad; i++) con_write(" ");
+    }
+    con_write(BOX_V);
+    
+    con_cursor_pos(footer_row + 2, 0);
+    con_write(BOX_BL);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_BR);
+}
+
+static void drive_clamp_scroll(DriveUiState *st)
+{
+    if (st->selected < 0) st->selected = 0;
+    if (st->selected >= st->count) st->selected = st->count - 1;
+    if (st->selected < st->scroll_top)
+        st->scroll_top = st->selected;
+    if (st->selected >= st->scroll_top + st->visible_rows)
+        st->scroll_top = st->selected - st->visible_rows + 1;
+    if (st->scroll_top < 0) st->scroll_top = 0;
+    if (st->count <= st->visible_rows) st->scroll_top = 0;
+}
+
+int ui_select_drives_for_update(const char *drives,
+                                const uint16_t *versions,
+                                int count,
+                                bool *selected,
+                                int max_width)
+{
+    if (!drives || !versions || !selected || count <= 0) return UI_UPDATE_NONE;
+    
+    ui_open_console();
+#if NCD_PLATFORM_WINDOWS
+    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
+        ui_close_console();
+        /* Default to update all on TUI failure */
+        for (int i = 0; i < count; i++) selected[i] = true;
+        return UI_UPDATE_ALL;
+    }
+#else
+    if (g_tty_out < 0 || g_tty_in < 0) {
+        ui_close_console();
+        for (int i = 0; i < count; i++) selected[i] = true;
+        return UI_UPDATE_ALL;
+    }
+#endif
+    
+    /* Initialize all as selected */
+    for (int i = 0; i < count; i++) selected[i] = true;
+    
+    int cols, rows, cur_row;
+    get_console_size(&cols, &rows, &cur_row);
+    
+    int bw = cols;
+    if (bw > max_width) bw = max_width;
+    if (bw < 50) bw = 50;
+    
+    int max_list = rows - 8;
+    if (max_list < 3) max_list = 3;
+    if (max_list > 20) max_list = 20;
+    int visible = count < max_list ? count : max_list;
+    
+    int total_rows = 5 + visible;
+    for (int i = 0; i < total_rows; i++) con_writeln("");
+    
+    get_console_size(&cols, &rows, &cur_row);
+    int box_top = cur_row - total_rows;
+    if (box_top < 0) box_top = 0;
+    
+    DriveUiState st = {
+        .top_row = box_top,
+        .box_width = bw,
+        .visible_rows = visible,
+        .count = count,
+        .selected = 0,
+        .scroll_top = 0,
+        .first_draw = true
+    };
+    
+    con_hide_cursor();
+    draw_drive_box(&st, drives, versions, selected);
+    
+    int result = UI_UPDATE_NONE;
+    
+    for (;;) {
+        int key = read_key();
+        switch (key) {
+            case KEY_UP:
+                if (st.selected > 0) st.selected--;
+                break;
+            case KEY_DOWN:
+                if (st.selected < count - 1) st.selected++;
+                break;
+            case KEY_HOME:
+                st.selected = 0;
+                break;
+            case KEY_END:
+                st.selected = count - 1;
+                break;
+            case KEY_PGUP:
+                st.selected -= visible;
+                if (st.selected < 0) st.selected = 0;
+                break;
+            case KEY_PGDN:
+                st.selected += visible;
+                if (st.selected >= count) st.selected = count - 1;
+                break;
+            case ' ':
+                /* Toggle selection */
+                selected[st.selected] = !selected[st.selected];
+                break;
+            case 'a':
+            case 'A':
+                /* Select all */
+                for (int i = 0; i < count; i++) selected[i] = true;
+                break;
+            case 'n':
+            case 'N':
+                /* Select none */
+                for (int i = 0; i < count; i++) selected[i] = false;
+                break;
+            case KEY_ENTER:
+                /* Check if any are selected */
+                {
+                    bool any = false;
+                    for (int i = 0; i < count; i++) {
+                        if (selected[i]) { any = true; break; }
+                    }
+                    if (any) {
+                        /* Check if all are selected */
+                        bool all = true;
+                        for (int i = 0; i < count; i++) {
+                            if (!selected[i]) { all = false; break; }
+                        }
+                        result = all ? UI_UPDATE_ALL : UI_UPDATE_SOME;
+                    } else {
+                        result = UI_UPDATE_NONE;
+                    }
+                }
+                goto drive_done;
+            case KEY_ESC:
+                /* Cancel - skip all */
+                for (int i = 0; i < count; i++) selected[i] = false;
+                result = UI_UPDATE_NONE;
+                goto drive_done;
+            default:
+                continue;
+        }
+        drive_clamp_scroll(&st);
+        draw_drive_box(&st, drives, versions, selected);
+    }
+    
+drive_done:
+    clear_area(box_top, total_rows, bw);
+    con_cursor_pos(box_top, 0);
+    con_show_cursor();
+    ui_close_console();
+    return result;
 }

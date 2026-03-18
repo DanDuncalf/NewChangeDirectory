@@ -207,6 +207,11 @@ void platform_sleep_ms(unsigned long ms);
 unsigned long platform_tick_ms(void);
 long platform_atomic_inc(volatile long *v);
 long platform_atomic_exchange(volatile long *dst, long value);
+long platform_atomic_read(volatile long *v);  /* Read without changing value */
+
+/* CRC64 checksum (ECMA-182 polynomial) */
+uint64_t platform_crc64(const void *data, size_t len);
+uint64_t platform_crc64_update(uint64_t crc, const void *data, size_t len);
 
 PlatformHandle platform_thread_create(unsigned long (*fn)(void *), void *param);
 void platform_thread_wait(PlatformHandle h, unsigned long ms);

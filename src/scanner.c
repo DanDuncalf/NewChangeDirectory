@@ -17,7 +17,92 @@
 
 #if NCD_PLATFORM_LINUX
 #include <sys/stat.h>
-#endif
+#include <stdint.h>
+#include <dirent.h>
+
+/* ================================================================ bind mount cycle detection (Linux) */
+
+/* Device+Inode pair for cycle detection */
+typedef struct {
+    dev_t dev;
+    ino_t ino;
+} DirId;
+
+/* Simple hash set for DirId using open addressing */
+typedef struct {
+    DirId *entries;
+    size_t count;
+    size_t capacity;
+} DirIdSet;
+
+static uint64_t dirid_hash(DirId id) {
+    return ((uint64_t)(id.dev) << 32) ^ (uint64_t)(id.ino);
+}
+
+static bool dirid_eq(DirId a, DirId b) {
+    return a.dev == b.dev && a.ino == b.ino;
+}
+
+static DirIdSet *diridset_create(void) {
+    DirIdSet *set = (DirIdSet *)malloc(sizeof(DirIdSet));
+    if (!set) return NULL;
+    set->capacity = 256;
+    set->entries = (DirId *)calloc(set->capacity, sizeof(DirId));
+    if (!set->entries) { free(set); return NULL; }
+    set->count = 0;
+    return set;
+}
+
+static void diridset_free(DirIdSet *set) {
+    if (!set) return;
+    free(set->entries);
+    free(set);
+}
+
+static bool diridset_contains(DirIdSet *set, DirId id) {
+    if (!set || set->count == 0) return false;
+    size_t idx = (size_t)(dirid_hash(id) % set->capacity);
+    size_t start = idx;
+    while (set->entries[idx].dev != 0 || set->entries[idx].ino != 0) {
+        if (dirid_eq(set->entries[idx], id)) return true;
+        idx = (idx + 1) % set->capacity;
+        if (idx == start) break;
+    }
+    return false;
+}
+
+static bool diridset_add(DirIdSet *set, DirId id) {
+    if (!set) return false;
+    /* Check if needs resize (70% load factor) */
+    if (set->count >= set->capacity * 7 / 10) {
+        size_t newcap = set->capacity * 2;
+        DirId *newentries = (DirId *)calloc(newcap, sizeof(DirId));
+        if (!newentries) return false;
+        /* Rehash all existing entries */
+        for (size_t i = 0; i < set->capacity; i++) {
+            if (set->entries[i].dev != 0 || set->entries[i].ino != 0) {
+                size_t idx = (size_t)(dirid_hash(set->entries[i]) % newcap);
+                while (newentries[idx].dev != 0 || newentries[idx].ino != 0) {
+                    idx = (idx + 1) % newcap;
+                }
+                newentries[idx] = set->entries[i];
+            }
+        }
+        free(set->entries);
+        set->entries = newentries;
+        set->capacity = newcap;
+    }
+    size_t idx = (size_t)(dirid_hash(id) % set->capacity);
+    while (set->entries[idx].dev != 0 || set->entries[idx].ino != 0) {
+        if (dirid_eq(set->entries[idx], id)) return true; /* Already exists */
+        idx = (idx + 1) % set->capacity;
+    }
+    set->entries[idx] = id;
+    set->count++;
+    return true;
+}
+
+#endif /* NCD_PLATFORM_LINUX */
 
 /* ================================================================ directory entry attribute queries */
 
@@ -81,6 +166,9 @@ typedef struct {
     int         dir_count;        /* local counter (mirrors status->dir_count)*/
     ScanProgressFn progress_fn;
     void       *progress_user_data;
+#if NCD_PLATFORM_LINUX
+    DirIdSet   *visited;          /* Track visited (dev,ino) for cycle detection */
+#endif
 } ScanCtx;
 
 /* ============================================================= threading  */
@@ -121,10 +209,17 @@ static unsigned long worker_thread(void *param)
         .include_system = td->include_system,
         .status         = td->status,
         .dir_count      = 0,
+#if NCD_PLATFORM_LINUX
+        .visited        = diridset_create(),
+#endif
     };
 
     /* Perform platform-specific scan. */
     int count = platform_scan_directory(&ctx, mount, -1);
+
+#if NCD_PLATFORM_LINUX
+    diridset_free(ctx.visited);
+#endif
 
     /* Signal completion to the main-thread display loop. */
     td->status->final_count = count;
@@ -205,8 +300,14 @@ int scan_mount(NcdDatabase   *db,
                 .include_system = include_system,
                 .status         = &local_status,
                 .dir_count      = 0,
+#if NCD_PLATFORM_LINUX
+                .visited        = diridset_create(),
+#endif
             };
             total_count += platform_scan_directory(&ctx, root_dirs[i], (int32_t)dir_id);
+#if NCD_PLATFORM_LINUX
+            diridset_free(ctx.visited);
+#endif
         }
         
         local_status.final_count = total_count;
@@ -353,11 +454,13 @@ int scan_mounts(NcdDatabase *db,
         unsigned long current_time = platform_tick_ms();
 
         for (int i = 0; i < count && i < 26; i++) {
-            if (statuses[i].is_done) continue;
+            /* Use atomic read for is_done to avoid race condition */
+            if (platform_atomic_read(&statuses[i].is_done)) continue;
             all_done = false;
 
             /* Check if this mount made progress since last iteration */
-            LONG current_count = statuses[i].dir_count;
+            /* Use atomic read for dir_count */
+            LONG current_count = platform_atomic_read(&statuses[i].dir_count);
             if (current_count != prev_dir_count[i]) {
                 /* Activity detected - update last_active_ms */
                 prev_dir_count[i] = current_count;
@@ -368,7 +471,8 @@ int scan_mounts(NcdDatabase *db,
         /* Check for inactivity timeout per mount */
         bool any_timed_out = false;
         for (int i = 0; i < count && i < 26; i++) {
-            if (statuses[i].is_done) continue;
+            /* Use atomic read for is_done */
+            if (platform_atomic_read(&statuses[i].is_done)) continue;
             unsigned long inactive_ms = current_time - statuses[i].last_active_ms;
             if (inactive_ms >= timeout_ms) {
                 any_timed_out = true;
@@ -384,11 +488,12 @@ int scan_mounts(NcdDatabase *db,
                 char mount_label[16];
                 snprintf(mount_label, sizeof(mount_label), "%-12.12s", mounts[i]);
                 
-                if (s->is_done) {
+                /* Use atomic read for is_done */
+                if (platform_atomic_read(&s->is_done)) {
                     snprintf(content, sizeof(content),
                              "  [%s] COMPLETE (%d directories)",
                              mount_label, s->final_count);
-                } else if (!s->is_done &&
+                } else if (!platform_atomic_read(&s->is_done) &&
                            (current_time - s->last_active_ms) >= timeout_ms) {
                     snprintf(content, sizeof(content),
                              "  [%s] WARNING: scan timed out (inactive)",
@@ -407,10 +512,11 @@ int scan_mounts(NcdDatabase *db,
                         snprintf(path_buf, sizeof(path_buf), "%s", path);
                     }
                     
+                    /* Use atomic read for dir_count */
                     snprintf(content, sizeof(content),
                              "  [%s] %5ld scanned  %s",
                              mount_label,
-                             (long)s->dir_count,
+                             (long)platform_atomic_read(&s->dir_count),
                              path_buf);
                 }
                 /* Truncate content to console width to prevent line wrapping */
@@ -447,6 +553,24 @@ int scan_mounts(NcdDatabase *db,
     return total;
 }
 
+/* ============================================================ iterative scan helpers */
+
+/* Scan frame for iterative directory traversal - prevents stack overflow */
+typedef struct ScanFrame {
+    char path[MAX_PATH];
+    int32_t parent_id;
+#if NCD_PLATFORM_WINDOWS
+    HANDLE find_handle;
+    WIN32_FIND_DATAA find_data;
+    bool find_data_valid;  /* true if find_data has valid entry */
+#else
+    DIR *dir;
+#endif
+} ScanFrame;
+
+#define SCAN_STACK_INITIAL 1024
+#define SCAN_STACK_MAX     65536  /* Prevent runaway allocation */
+
 /* ============================================================ platform-specific scan implementations */
 
 #if NCD_PLATFORM_WINDOWS
@@ -455,123 +579,251 @@ int scan_mounts(NcdDatabase *db,
 
 static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t parent_id)
 {
-    /* Build search pattern (e.g. "C:\*") */
-    char pattern[MAX_PATH];
-    if (snprintf(pattern, sizeof(pattern), "%s*", mount_path) >= (int)sizeof(pattern))
-        return 0;
-
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileExA(pattern, FindExInfoBasic, &fd,
-                                FindExSearchLimitToDirectories, NULL,
-                                FIND_FIRST_EX_LARGE_FETCH);
-    if (h == INVALID_HANDLE_VALUE)
-        return 0;
-
+    /* Allocate stack on heap to prevent stack overflow with deeply nested dirs */
+    ScanFrame *stack = malloc(sizeof(ScanFrame) * SCAN_STACK_INITIAL);
+    if (!stack) return 0;
+    
+    int stack_cap = SCAN_STACK_INITIAL;
+    int stack_top = 0;
     int dir_count = 0;
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-            continue;
-        if (fd.cFileName[0] == '.' && (fd.cFileName[1] == '\0' ||
-            (fd.cFileName[1] == '.' && fd.cFileName[2] == '\0')))
-            continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
-            continue;
-
-        bool is_hidden = (fd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
-        bool is_system = (fd.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
-        if (is_hidden && !ctx->include_hidden)
-            continue;
-        if (is_system && !ctx->include_system)
-            continue;
-
-        int my_id = db_add_dir(ctx->drv, fd.cFileName, parent_id, is_hidden, is_system);
-        dir_count++;
-        ctx->dir_count++;
-
-        /* Build full child path */
-        char child[MAX_PATH];
-        size_t mlen = strlen(mount_path);
-        bool needs_sep = (mlen > 0 && mount_path[mlen - 1] != '\\');
-        if (snprintf(child, sizeof(child), "%s%s%s", mount_path,
-                     needs_sep ? "\\" : "", fd.cFileName) >= (int)sizeof(child))
-            continue;
-
-        platform_atomic_inc(&ctx->status->dir_count);
-        snprintf(ctx->status->current_path, sizeof(ctx->status->current_path), "%s", child);
-        if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1)
-            ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
-
-        dir_count += platform_scan_directory(ctx, child, (int32_t)my_id);
-
-    } while (FindNextFileA(h, &fd));
-
-    FindClose(h);
+    
+    /* Initialize first frame */
+    snprintf(stack[0].path, MAX_PATH, "%s", mount_path);
+    stack[0].parent_id = parent_id;
+    stack[0].find_handle = INVALID_HANDLE_VALUE;
+    stack[0].find_data_valid = false;
+    
+    while (stack_top >= 0) {
+        ScanFrame *frame = &stack[stack_top];
+        
+        /* Open directory if not already open */
+        if (frame->find_handle == INVALID_HANDLE_VALUE) {
+            char pattern[MAX_PATH];
+            size_t plen = strlen(frame->path);
+            bool needs_sep = (plen > 0 && frame->path[plen - 1] != '\\');
+            if (snprintf(pattern, sizeof(pattern), "%s%s*", frame->path,
+                         needs_sep ? "\\" : "") >= (int)sizeof(pattern)) {
+                /* Path too long, pop frame */
+                stack_top--;
+                continue;
+            }
+            
+            frame->find_handle = FindFirstFileExA(
+                pattern, FindExInfoBasic, &frame->find_data,
+                FindExSearchLimitToDirectories, NULL,
+                FIND_FIRST_EX_LARGE_FETCH);
+            
+            if (frame->find_handle == INVALID_HANDLE_VALUE) {
+                stack_top--;
+                continue;
+            }
+            frame->find_data_valid = true;
+        }
+        
+        /* Process current entry */
+        if (frame->find_data_valid) {
+            WIN32_FIND_DATAA *fd = &frame->find_data;
+            frame->find_data_valid = false;  /* Will get next after processing */
+            
+            /* Skip non-directories and special entries */
+            if (!(fd->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                continue;
+            if (fd->cFileName[0] == '.' && 
+                (fd->cFileName[1] == '\0' ||
+                 (fd->cFileName[1] == '.' && fd->cFileName[2] == '\0')))
+                continue;
+            if (fd->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                continue;
+            
+            bool is_hidden = (fd->dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+            bool is_system = (fd->dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+            
+            if (is_hidden && !ctx->include_hidden) continue;
+            if (is_system && !ctx->include_system) continue;
+            
+            /* Add directory entry */
+            int my_id = db_add_dir(ctx->drv, fd->cFileName, frame->parent_id, 
+                                   is_hidden, is_system);
+            dir_count++;
+            ctx->dir_count++;
+            
+            /* Build child path */
+            char child[MAX_PATH];
+            size_t mlen = strlen(frame->path);
+            bool needs_sep = (mlen > 0 && frame->path[mlen - 1] != '\\');
+            if (snprintf(child, sizeof(child), "%s%s%s", frame->path,
+                         needs_sep ? "\\" : "", fd->cFileName) >= (int)sizeof(child)) {
+                continue;  /* Path too long, skip */
+            }
+            
+            /* Update progress */
+            platform_atomic_inc(&ctx->status->dir_count);
+            snprintf(ctx->status->current_path, sizeof(ctx->status->current_path), "%s", child);
+            if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1)
+                ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
+            
+            /* Push child frame */
+            if (stack_top + 1 >= stack_cap) {
+                if (stack_cap >= SCAN_STACK_MAX) {
+                    fprintf(stderr, "NCD: Directory nesting too deep: %s\n", child);
+                    continue;
+                }
+                int new_cap = stack_cap * 2;
+                if (new_cap > SCAN_STACK_MAX) new_cap = SCAN_STACK_MAX;
+                
+                ScanFrame *new_stack = realloc(stack, sizeof(ScanFrame) * new_cap);
+                if (!new_stack) {
+                    fprintf(stderr, "NCD: Out of memory during scan\n");
+                    break;
+                }
+                stack = new_stack;
+                stack_cap = new_cap;
+            }
+            
+            ScanFrame *child_frame = &stack[++stack_top];
+            snprintf(child_frame->path, MAX_PATH, "%s", child);
+            child_frame->parent_id = my_id;
+            child_frame->find_handle = INVALID_HANDLE_VALUE;
+            child_frame->find_data_valid = false;
+            continue;  /* Process child frame next */
+        }
+        
+        /* Get next entry in current directory */
+        if (!FindNextFileA(frame->find_handle, &frame->find_data)) {
+            /* No more entries, close and pop */
+            FindClose(frame->find_handle);
+            stack_top--;
+        } else {
+            frame->find_data_valid = true;
+        }
+    }
+    
+    free(stack);
     return dir_count;
 }
 
 #elif NCD_PLATFORM_LINUX
 
-#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t parent_id)
 {
-    DIR *d = opendir(mount_path);
-    if (!d)
-        return 0;
-
+    /* Allocate stack on heap to prevent stack overflow with deeply nested dirs */
+    ScanFrame *stack = malloc(sizeof(ScanFrame) * SCAN_STACK_INITIAL);
+    if (!stack) return 0;
+    
+    int stack_cap = SCAN_STACK_INITIAL;
+    int stack_top = 0;
     int dir_count = 0;
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        if (ent->d_name[0] == '.' && (ent->d_name[1] == '\0' ||
-            (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
-            continue;
-
-        /* When scanning root (/), only scan whitelisted system directories */
-        if (strcmp(mount_path, "/") == 0) {
-            /* Only allow: etc, home, usr, var, root, opt */
-            if (strcmp(ent->d_name, "etc") != 0 &&
-                strcmp(ent->d_name, "home") != 0 &&
-                strcmp(ent->d_name, "usr") != 0 &&
-                strcmp(ent->d_name, "var") != 0 &&
-                strcmp(ent->d_name, "root") != 0 &&
-                strcmp(ent->d_name, "opt") != 0) {
+    
+    /* Initialize first frame */
+    snprintf(stack[0].path, MAX_PATH, "%s", mount_path);
+    stack[0].parent_id = parent_id;
+    stack[0].dir = NULL;
+    
+    while (stack_top >= 0) {
+        ScanFrame *frame = &stack[stack_top];
+        
+        /* Open directory if not already open */
+        if (frame->dir == NULL) {
+            /* When scanning root (/), only scan whitelisted system directories */
+            if (stack_top > 0 && strcmp(frame->path, "/") == 0) {
+                /* Only the initial mount should be "/" */
+                stack_top--;
+                continue;
+            }
+            
+            frame->dir = opendir(frame->path);
+            if (frame->dir == NULL) {
+                stack_top--;
                 continue;
             }
         }
-
-        char child[MAX_PATH];
-        if (snprintf(child, sizeof(child), "%s%s%s", mount_path,
-                     mount_path[strlen(mount_path) - 1] == '/' ? "" : "/",
-                     ent->d_name) >= (int)sizeof(child))
+        
+        /* Read next entry */
+        struct dirent *ent = readdir(frame->dir);
+        if (ent == NULL) {
+            /* No more entries, close and pop */
+            closedir(frame->dir);
+            stack_top--;
             continue;
-
+        }
+        
+        /* Skip special entries */
+        if (ent->d_name[0] == '.' && 
+            (ent->d_name[1] == '\0' ||
+             (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
+            continue;
+        
+        /* Build child path */
+        char child[MAX_PATH];
+        size_t mlen = strlen(frame->path);
+        bool needs_sep = (mlen == 0) || (frame->path[mlen - 1] != '/');
+        if (snprintf(child, sizeof(child), "%s%s%s", frame->path,
+                     needs_sep ? "/" : "", ent->d_name) >= (int)sizeof(child))
+            continue;
+        
+        /* Get file info */
         struct stat st;
         if (lstat(child, &st) != 0)
             continue;
         if (!S_ISDIR(st.st_mode))
             continue;
-
+        
+        /* Check for bind mount cycles using device+inode */
+        if (ctx->visited) {
+            DirId id = {st.st_dev, st.st_ino};
+            if (diridset_contains(ctx->visited, id)) {
+                /* Cycle detected - skip this directory */
+                continue;
+            }
+            diridset_add(ctx->visited, id);
+        }
+        
         bool is_hidden = (ent->d_name[0] == '.');
         bool is_system = false;
-
+        
         if (is_hidden && !ctx->include_hidden)
             continue;
-
-        int my_id = db_add_dir(ctx->drv, ent->d_name, parent_id, is_hidden, is_system);
+        
+        /* Add directory entry */
+        int my_id = db_add_dir(ctx->drv, ent->d_name, frame->parent_id, 
+                               is_hidden, is_system);
         dir_count++;
         ctx->dir_count++;
-
+        
+        /* Update progress */
         platform_atomic_inc(&ctx->status->dir_count);
         snprintf(ctx->status->current_path, sizeof(ctx->status->current_path), "%s", child);
         if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1)
             ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
-
-        dir_count += platform_scan_directory(ctx, child, (int32_t)my_id);
+        
+        /* Push child frame */
+        if (stack_top + 1 >= stack_cap) {
+            if (stack_cap >= SCAN_STACK_MAX) {
+                fprintf(stderr, "NCD: Directory nesting too deep: %s\n", child);
+                continue;
+            }
+            int new_cap = stack_cap * 2;
+            if (new_cap > SCAN_STACK_MAX) new_cap = SCAN_STACK_MAX;
+            
+            ScanFrame *new_stack = realloc(stack, sizeof(ScanFrame) * new_cap);
+            if (!new_stack) {
+                fprintf(stderr, "NCD: Out of memory during scan\n");
+                break;
+            }
+            stack = new_stack;
+            stack_cap = new_cap;
+        }
+        
+        ScanFrame *child_frame = &stack[++stack_top];
+        snprintf(child_frame->path, MAX_PATH, "%s", child);
+        child_frame->parent_id = my_id;
+        child_frame->dir = NULL;
     }
-
-    closedir(d);
+    
+    free(stack);
     return dir_count;
 }
 

@@ -38,7 +38,10 @@ SOURCES := \
     $(SRCDIR)/database.c  \
     $(SRCDIR)/scanner.c   \
     $(SRCDIR)/matcher.c   \
-    $(SRCDIR)/ui.c
+    $(SRCDIR)/ui.c        \
+    $(SRCDIR)/platform.c  \
+    $(SRCDIR)/strbuilder.c \
+    $(SRCDIR)/common.c
 
 OBJECTS := $(SOURCES:.c=.o)
 

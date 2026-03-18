@@ -76,23 +76,25 @@ typedef long          LONG;
  * Spells 'NCDB' in little-endian memory order.
  */
 #define NCD_BIN_MAGIC    0x4244434EU   /* 'N'=0x4E,'C'=0x43,'D'=0x44,'B'=0x42 */
-#define NCD_BIN_VERSION  1
+#define NCD_BIN_VERSION  2   /* Incremented: added CRC64 checksum field */
 
 /*
  * BinFileHdr  --  fixed-size header at offset 0 of a binary database file
  *
  * All integer fields are stored in host byte order (little-endian on x86).
- * sizeof(BinFileHdr) == 24; every field is naturally aligned.
+ * sizeof(BinFileHdr) == 32; every field is naturally aligned.
  */
 typedef struct {
-    uint32_t magic;        /* NCD_BIN_MAGIC                              */
-    uint16_t version;      /* NCD_BIN_VERSION                            */
-    uint8_t  show_hidden;  /* 1 or 0                                     */
-    uint8_t  show_system;  /* 1 or 0                                     */
-    int64_t  last_scan;    /* Unix timestamp (8-byte aligned @ offset 8) */
+    uint32_t magic;               /* NCD_BIN_MAGIC                              */
+    uint16_t version;             /* NCD_BIN_VERSION                            */
+    uint8_t  show_hidden;         /* 1 or 0                                     */
+    uint8_t  show_system;         /* 1 or 0                                     */
+    int64_t  last_scan;           /* Unix timestamp (8-byte aligned @ offset 8) */
     uint32_t drive_count;
-    uint32_t pad;          /* reserved, always 0                         */
-} BinFileHdr;              /* 24 bytes */
+    uint8_t  user_skipped_update; /* 1 if user declined version update        */
+    uint8_t  pad[3];              /* reserved, always 0                         */
+    uint64_t checksum;            /* CRC64 of all data after this header        */
+} BinFileHdr;                     /* 32 bytes */
 
 /*
  * BinDriveHdr  --  per-drive header; drive_count of these follow BinFileHdr
@@ -116,6 +118,7 @@ typedef struct {
  * per-drive string pool so DirEntry itself no longer carries a fixed array.
  */
 #define NCD_MAX_NAME     256
+#define NCD_MAX_GROUP_NAME 64
 #define NCD_MAX_PATH     MAX_PATH
 
 #define NCD_DB_FILENAME  "ncd.database"      /* in %LOCALAPPDATA%            */
@@ -131,6 +134,35 @@ typedef struct {
 
 #define NCD_VERSION       1
 #define NCD_RESCAN_HOURS  24   /* trigger background rescan after this many  */
+
+/* ================================================================ constants  */
+
+/* Scanner constants */
+#define NCD_SCAN_PROGRESS_INTERVAL  100     /* dirs between progress updates */
+#define NCD_SCAN_TIMEOUT_MS         300000  /* 5 minute default timeout */
+#define NCD_SCAN_INACTIVITY_MS      60000   /* 1 minute inactivity timeout */
+#define NCD_SCAN_MAX_DEPTH          65536   /* maximum directory nesting */
+
+/* UI constants */
+#define NCD_UI_MAX_LIST_ITEMS       20      /* max visible items in selector */
+#define NCD_UI_BOX_MAX_WIDTH        120     /* maximum UI box width */
+#define NCD_UI_BOX_MIN_WIDTH        40      /* minimum UI box width */
+
+/* Matcher constants */
+#define NCD_MATCHER_MAX_PARTS       32      /* max search path components */
+#define NCD_MATCHER_INITIAL_CAP     16      /* initial match array capacity */
+
+/* Database constants */
+#define NCD_NAME_POOL_INITIAL       4096    /* initial name pool size */
+#define NCD_DIRS_INITIAL_CAP        64      /* initial directory array capacity */
+#define NCD_DRIVES_INITIAL_CAP      8       /* initial drive array capacity */
+
+/* Security limits */
+#define NCD_MAX_DRIVES              64      /* Maximum drives in database */
+#define NCD_MAX_DIRS_PER_DRIVE      10000000 /* 10 million dirs per drive */
+#define NCD_MAX_POOL_SIZE           (1ULL << 30) /* 1GB name pool per drive */
+#define NCD_MAX_TOTAL_DIRS          50000000 /* 50 million total dirs */
+#define NCD_MAX_FILE_SIZE           (2ULL << 30) /* 2GB max database file */
 
 /* ----------------------------------------------------------------- types  */
 
@@ -154,6 +186,7 @@ typedef struct {
     uint32_t name_off;         /* byte offset into DriveData.name_pool       */
     uint8_t  is_hidden;
     uint8_t  is_system;
+    uint8_t  pad[2];           /* explicit padding for 4-byte alignment      */
 } DirEntry;                    /* sizeof == 12 bytes (was 268)               */
 
 /*
@@ -215,6 +248,11 @@ typedef struct {
     bool show_help;               /* /h or /? -- print help                 */
     bool show_history;            /* /f  -- show frequent history            */
     bool clear_history;           /* /fc -- clear frequent history           */
+    bool fuzzy_match;             /* /z  -- fuzzy matching with DL distance  */
+    bool group_set;               /* /g <group> -- create group for cwd      */
+    bool group_remove;            /* /g- <group> -- remove group             */
+    bool group_list;              /* /gl        -- list all groups           */
+    char group_name[NCD_MAX_GROUP_NAME]; /* Group name for /g or /g-        */
     char db_override[NCD_MAX_PATH]; /* /d <path>                             */
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
@@ -235,6 +273,46 @@ typedef struct {
 /* ---------------------------------------------------- utility macros      */
 
 #define NCD_ARRAY_SIZE(a)  (sizeof(a) / sizeof((a)[0]))
+
+/* ================================================================ memory utilities */
+
+/* Allocate memory, exit on failure */
+void *ncd_malloc(size_t size);
+void *ncd_realloc(void *ptr, size_t size);
+char *ncd_strdup(const char *s);
+void *ncd_calloc(size_t count, size_t size);
+
+/* Allocate with overflow checking */
+void *ncd_malloc_array(size_t count, size_t size);  /* count * size with overflow check */
+
+/* ================================================================ path utilities */
+
+/* Get parent directory. Returns false if already at root.
+ * Handles Windows "C:\" and Linux "/" correctly. */
+bool path_parent(const char *path, char *out, size_t out_size);
+
+/* Join base path with name using platform separator.
+ * Returns false if result would exceed buffer. */
+bool path_join(char *out, size_t out_size, const char *base, const char *name);
+
+/* Get last component of path (filename/directory name).
+ * Returns pointer into input string (not allocated). */
+const char *path_leaf(const char *path);
+
+/* Check if path is absolute */
+bool path_is_absolute(const char *path);
+
+/* Normalize path separators to platform standard */
+void path_normalize_separators(char *path);
+
+/* Get drive letter from Windows-style path (e.g., "C:\" -> 'C').
+ * Returns 0 if not a drive path. */
+char path_get_drive(const char *path);
+
+/* ================================================================ pseudo filesystem list */
+
+/* List of pseudo filesystems to skip during mount enumeration (Linux) */
+extern const char *ncd_pseudo_filesystems[];
 
 #ifdef __cplusplus
 }
