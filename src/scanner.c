@@ -524,6 +524,10 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
             continue;
 
+        /* When scanning root (/), skip /mnt to avoid scanning Windows drives twice */
+        if (strcmp(mount_path, "/") == 0 && strcmp(ent->d_name, "mnt") == 0)
+            continue;
+
         char child[MAX_PATH];
         if (snprintf(child, sizeof(child), "%s%s%s", mount_path,
                      mount_path[strlen(mount_path) - 1] == '/' ? "" : "/",
