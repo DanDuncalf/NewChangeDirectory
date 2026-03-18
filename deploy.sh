@@ -69,8 +69,14 @@ if [[ -f "${BASHRC}" ]]; then
         echo "# NCD - Norton Change Directory" >> "${BASHRC}"
         echo "${NCD_FUNC}" >> "${BASHRC}"
         echo ""
-        echo "ncd() function added to ${BASHRC}"
-        echo "Run 'source ${BASHRC}' to use ncd immediately."
+        echo "=============================================="
+        echo " ncd() function added to ${BASHRC}"
+        echo ""
+        echo " IMPORTANT: Run this command NOW:"
+        echo "   source ${BASHRC}"
+        echo ""
+        echo " Or open a new terminal."
+        echo "=============================================="
     fi
 else
     echo ""
