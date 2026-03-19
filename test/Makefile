@@ -2,12 +2,16 @@
 # This builds and runs all test suites
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g -I../src -I. -DNCD_PLATFORM_LINUX=1
+CFLAGS = -Wall -Wextra -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE
 LDFLAGS = -lpthread
 
+# Shared library sources (platform abstraction)
+SHARED_SOURCES = ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
+
 # Source files from main project (excluding platform-dependent UI/scanner for unit tests)
-DB_SOURCES = ../src/database.c ../src/common.c
-MATCHER_SOURCES = ../src/matcher.c ../src/database.c
+# Note: Using shared/common.c instead of ../src/common.c to avoid duplicate definitions
+DB_SOURCES = ../src/database.c ../src/platform.c $(SHARED_SOURCES)
+MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform.c $(SHARED_SOURCES)
 
 # Test executables
 TESTS = test_database test_matcher fuzz_database bench_matcher test_db_corruption

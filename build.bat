@@ -88,35 +88,66 @@ echo.
 :build
 set TARGET=NewChangeDirectory.exe
 set SRCDIR=src
+set SHARED=..\shared
+set OBJDIR=obj
 
-set SOURCES=^
-    %SRCDIR%\main.c       ^
-    %SRCDIR%\database.c   ^
-    %SRCDIR%\scanner.c    ^
-    %SRCDIR%\matcher.c    ^
-    %SRCDIR%\ui.c         ^
-    %SRCDIR%\platform.c   ^
-    %SRCDIR%\strbuilder.c ^
-    %SRCDIR%\common.c
+:: Create object directory
+if not exist %OBJDIR% mkdir %OBJDIR%
 
-set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR%
+set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c /Fo%OBJDIR%\
 
-set LDFLAGS=/link /SUBSYSTEM:CONSOLE kernel32.lib user32.lib
+echo Building object files...
 
-echo Building %TARGET% with MSVC...
-cl %CFLAGS% %SOURCES% /Fe:%TARGET% %LDFLAGS%
+:: Compile NCD-specific source files
+cl %CFLAGS% %SRCDIR%\main.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\database.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\scanner.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\matcher.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\ui.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\platform.c
+if errorlevel 1 goto :error
 
-if errorlevel 1 (
-    echo.
-    echo BUILD FAILED.
-    exit /b 1
-)
+:: Compile shared source files (with sh_ prefix to avoid name collision)
+cl %CFLAGS% /Fo%OBJDIR%\sh_platform.obj %SHARED%\platform.c
+if errorlevel 1 goto :error
+cl %CFLAGS% /Fo%OBJDIR%\sh_strbuilder.obj %SHARED%\strbuilder.c
+if errorlevel 1 goto :error
+cl %CFLAGS% /Fo%OBJDIR%\sh_common.obj %SHARED%\common.c
+if errorlevel 1 goto :error
+
+echo Linking %TARGET%...
+link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET% ^
+    %OBJDIR%\main.obj ^
+    %OBJDIR%\database.obj ^
+    %OBJDIR%\scanner.obj ^
+    %OBJDIR%\matcher.obj ^
+    %OBJDIR%\ui.obj ^
+    %OBJDIR%\platform.obj ^
+    %OBJDIR%\sh_platform.obj ^
+    %OBJDIR%\sh_strbuilder.obj ^
+    %OBJDIR%\sh_common.obj ^
+    kernel32.lib user32.lib
+
+if errorlevel 1 goto :error
 
 echo.
 echo Build successful: %TARGET%
 echo.
 
 :: Clean up intermediate files
-del /f /q *.obj 2>nul
+rmdir /s /q %OBJDIR% 2>nul
 
+goto :end
+
+:error
+echo.
+echo BUILD FAILED.
+exit /b 1
+
+:end
 endlocal

@@ -46,18 +46,32 @@ static void ncd_printf(const char *fmt, ...);
 
 /* ============================================================= heuristics */
 
-#define NCD_HEUR_FILE "ncd.history"
-#define NCD_HEUR_MAX  20
+/* 
+ * Global metadata container - loaded once at startup, saved as needed.
+ * The enhanced heuristics system uses consolidated metadata with:
+ *   - Frequency tracking (how many times a search->target was chosen)
+ *   - Recency tracking (timestamp of last use)
+ *   - Score-based ranking (frequency * 10 / (1 + days/7))
+ *   - Partial matching for similar searches
+ */
+static NcdMetadata *g_metadata = NULL;
 
-typedef struct {
-    char search[NCD_MAX_PATH];
-    char target[NCD_MAX_PATH];
-} NcdHeurEntry;
+/* Helper: Ensure metadata is loaded */
+static NcdMetadata* get_metadata(void)
+{
+    if (!g_metadata) {
+        g_metadata = db_metadata_load();
+    }
+    return g_metadata;
+}
 
-typedef struct {
-    NcdHeurEntry items[NCD_HEUR_MAX];
-    int          count;
-} NcdHeuristics;
+/* Helper: Save metadata if dirty */
+static void save_metadata_if_dirty(void)
+{
+    if (g_metadata && (g_metadata->heuristics_dirty || g_metadata->config_dirty)) {
+        db_metadata_save(g_metadata);
+    }
+}
 
 static void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
 {
@@ -81,94 +95,6 @@ static void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_l
     dst[j] = '\0';
 }
 
-static bool heur_path(char *out, size_t out_size)
-{
-    if (!out || out_size == 0) return false;
-    out[0] = '\0';
-
-#if NCD_PLATFORM_WINDOWS
-    char local[MAX_PATH] = {0};
-    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return false;
-
-    size_t len = strlen(local);
-    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
-    return snprintf(out, out_size, "%s%s%s", local, has_sep ? "" : "\\", NCD_HEUR_FILE)
-           < (int)out_size;
-#else
-    char base[MAX_PATH] = {0};
-    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
-        char home[MAX_PATH] = {0};
-        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
-            return false;
-        snprintf(base, sizeof(base), "%s/.local/share", home);
-    }
-    int w = snprintf(out, out_size, "%s/ncd/%s", base, NCD_HEUR_FILE);
-    return w > 0 && (size_t)w < out_size;
-#endif
-}
-
-static void heur_load(NcdHeuristics *h)
-{
-    memset(h, 0, sizeof(*h));
-
-    char path[NCD_MAX_PATH];
-    if (!heur_path(path, sizeof(path))) return;
-
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-
-    char line[(NCD_MAX_PATH * 2) + 32];
-    while (fgets(line, sizeof(line), f)) {
-        if (h->count >= NCD_HEUR_MAX) break;
-
-        line[strcspn(line, "\r\n")] = '\0';
-        if (line[0] == '\0') continue;
-
-        char *tab = strchr(line, '\t');
-        if (!tab) continue;
-        *tab = '\0';
-        const char *search = line;
-        const char *target = tab + 1;
-        if (search[0] == '\0' || target[0] == '\0') continue;
-
-        heur_sanitize(search, h->items[h->count].search,
-                      sizeof(h->items[h->count].search), true);
-        heur_sanitize(target, h->items[h->count].target,
-                      sizeof(h->items[h->count].target), false);
-        if (h->items[h->count].search[0] && h->items[h->count].target[0])
-            h->count++;
-    }
-
-    fclose(f);
-}
-
-static void heur_save(const NcdHeuristics *h)
-{
-    char path[NCD_MAX_PATH];
-    if (!heur_path(path, sizeof(path))) return;
-
-    FILE *f = fopen(path, "w");
-    if (!f) return;
-
-    for (int i = 0; i < h->count; i++)
-#if NCD_PLATFORM_WINDOWS
-        fprintf(f, "%s\t%s\r\n", h->items[i].search, h->items[i].target);
-#else
-        fprintf(f, "%s\t%s\n", h->items[i].search, h->items[i].target);
-#endif
-
-    fclose(f);
-}
-
-static int heur_find(const NcdHeuristics *h, const char *search_key)
-{
-    for (int i = 0; i < h->count; i++) {
-        if (_stricmp(h->items[i].search, search_key) == 0)
-            return i;
-    }
-    return -1;
-}
-
 static bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
 {
     if (!out_path || out_size == 0) return false;
@@ -178,13 +104,10 @@ static bool heur_get_preferred(const char *search_raw, char *out_path, size_t ou
     heur_sanitize(search_raw, key, sizeof(key), true);
     if (key[0] == '\0') return false;
 
-    NcdHeuristics h;
-    heur_load(&h);
-    int idx = heur_find(&h, key);
-    if (idx < 0) return false;
+    NcdMetadata *meta = get_metadata();
+    if (!meta) return false;
 
-    platform_strncpy_s(out_path, out_size, h.items[idx].target);
-    return out_path[0] != '\0';
+    return db_heur_get_preferred(meta, key, out_path, out_size);
 }
 
 static void heur_note_choice(const char *search_raw, const char *target_path)
@@ -195,36 +118,11 @@ static void heur_note_choice(const char *search_raw, const char *target_path)
     heur_sanitize(target_path, target, sizeof(target), false);
     if (key[0] == '\0' || target[0] == '\0') return;
 
-    NcdHeuristics h;
-    heur_load(&h);
+    NcdMetadata *meta = get_metadata();
+    if (!meta) return;
 
-    int idx = heur_find(&h, key);
-    if (idx >= 0) {
-        /* Update only if target changed. */
-        if (_stricmp(h.items[idx].target, target) == 0) return;
-
-        snprintf(h.items[idx].target, sizeof(h.items[idx].target), "%s", target);
-
-        if (idx > 0) {
-            NcdHeurEntry tmp = h.items[idx];
-            memmove(&h.items[1], &h.items[0], (size_t)idx * sizeof(NcdHeurEntry));
-            h.items[0] = tmp;
-        }
-        heur_save(&h);
-        return;
-    }
-
-    /* New unique search term: insert at front, keep max NCD_HEUR_MAX. */
-    int new_count = h.count < NCD_HEUR_MAX ? h.count + 1 : NCD_HEUR_MAX;
-    if (new_count > 1)
-        memmove(&h.items[1], &h.items[0],
-                (size_t)(new_count - 1) * sizeof(NcdHeurEntry));
-    h.count = new_count;
-
-    platform_strncpy_s(h.items[0].search, sizeof(h.items[0].search), key);
-    platform_strncpy_s(h.items[0].target, sizeof(h.items[0].target), target);
-
-    heur_save(&h);
+    db_heur_note_choice(meta, key, target);
+    save_metadata_if_dirty();
 }
 
 static void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
@@ -243,31 +141,26 @@ static void heur_promote_match(NcdMatch *matches, int count, const char *preferr
 
 static void heur_print(void)
 {
-    NcdHeuristics h;
-    heur_load(&h);
-
-    if (h.count == 0) {
-        ncd_println("NCD history: empty");
+    NcdMetadata *meta = get_metadata();
+    if (!meta) {
+        ncd_println("NCD history: error loading metadata");
         return;
     }
-
-    ncd_printf("NCD history (%d entries):\r\n", h.count);
-    for (int i = 0; i < h.count; i++)
-        ncd_printf("  %2d. %-30s -> %s\r\n",
-                   i + 1, h.items[i].search, h.items[i].target);
+    
+    db_heur_print(meta);
 }
 
 static void heur_clear(void)
 {
-    char path[NCD_MAX_PATH];
-    if (!heur_path(path, sizeof(path))) {
-        ncd_println("NCD history: could not resolve path.");
+    NcdMetadata *meta = get_metadata();
+    if (!meta) {
+        ncd_println("NCD history: error loading metadata");
         return;
     }
-    if (platform_delete_file(path) || !platform_file_exists(path))
-        ncd_println("NCD history cleared.");
-    else
-        ncd_printf("NCD history: could not clear %s\r\n", path);
+    
+    db_heur_clear(meta);
+    save_metadata_if_dirty();
+    ncd_println("NCD history cleared.");
 }
 
 /* ================================================================ output   */
@@ -931,12 +824,21 @@ next_arg:;
 #if NCD_PLATFORM_LINUX
 /*
  * Check if a filesystem type is a pseudo filesystem that should be skipped.
- * Uses the global ncd_pseudo_filesystems list defined in platform.c.
+ * Local copy of the pseudo filesystems list.
  */
+static const char *main_pseudo_filesystems[] = {
+    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
+    "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
+    "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
+    "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
+    "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
+    "fuse.portal", "fuse.gvfsd-fuse", NULL
+};
+
 static bool is_pseudo_fs(const char *fstype)
 {
-    for (int i = 0; ncd_pseudo_filesystems[i]; i++) {
-        if (strcmp(fstype, ncd_pseudo_filesystems[i]) == 0)
+    for (int i = 0; main_pseudo_filesystems[i]; i++) {
+        if (strcmp(fstype, main_pseudo_filesystems[i]) == 0)
             return true;
     }
     return false;
@@ -1052,7 +954,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
     /* On Linux, enumerate all mounts and filter by selected letters */
     char all_mount_bufs[26][MAX_PATH];
     const char *all_mount_ptrs[26];
-    int all_count = platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
+    int all_count = ncd_platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
                                               sizeof(all_mount_bufs[0]), 26);
     for (int i = 0; i < all_count && mcount < 26; i++) {
         char letter = platform_get_drive_letter(all_mount_ptrs[i]);
@@ -1211,11 +1113,16 @@ int main(int argc, char *argv[])
     
     /* ------------------------------------------------ configuration editor */
     if (opts.config_edit) {
-        NcdConfig cfg;
-        db_config_load(&cfg);  /* Load existing or init defaults */
+        NcdMetadata *meta = get_metadata();
+        if (!meta) {
+            ncd_println("Failed to load metadata.");
+            con_close();
+            return 1;
+        }
         
-        if (ui_edit_config(&cfg)) {
-            if (db_config_save(&cfg)) {
+        if (ui_edit_config(&meta->cfg)) {
+            meta->config_dirty = true;
+            if (db_metadata_save(meta)) {
                 ncd_println("Configuration saved.");
             } else {
                 ncd_println("Failed to save configuration.");
@@ -1539,7 +1446,7 @@ int main(int argc, char *argv[])
                     int mcount = 0;
                     char all_mount_bufs[26][MAX_PATH];
                     const char *all_mount_ptrs[26];
-                    int all_count = platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
+                    int all_count = ncd_platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
                                                               sizeof(all_mount_bufs[0]), 26);
                     for (int i = 0; i < rescan_count && mcount < 26; i++) {
                         for (int j = 0; j < all_count; j++) {
@@ -1766,6 +1673,13 @@ int main(int argc, char *argv[])
         ncd_printf("NCD: Database is over %d hours old -- "
                    "spawning background rescan...\r\n", NCD_RESCAN_HOURS);
         spawn_background_rescan(NULL);
+    }
+
+    /* Cleanup global metadata before exit */
+    save_metadata_if_dirty();
+    if (g_metadata) {
+        db_metadata_free(g_metadata);
+        g_metadata = NULL;
     }
 
     con_close();

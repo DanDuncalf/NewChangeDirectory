@@ -26,32 +26,9 @@ extern "C" {
 #include <time.h>
 
 /*
- * Platform / architecture detection
- *
- * Common compiler-provided macros:
- *   Windows: _WIN32 / _WIN64 (MSVC/MinGW/Clang-cl)
- *   Linux:   __linux__
- *   x64:     _WIN64 (MSVC) or __x86_64__ / __amd64__ (GCC/Clang)
+ * Platform / architecture detection - from shared library
  */
-#if defined(_WIN64)
-#define NCD_PLATFORM_WINDOWS 1
-#define NCD_PLATFORM_LINUX   0
-#define NCD_ARCH_X64         1
-#elif defined(_WIN32)
-#define NCD_PLATFORM_WINDOWS 1
-#define NCD_PLATFORM_LINUX   0
-#define NCD_ARCH_X64         0
-#elif defined(__linux__) && (defined(__x86_64__) || defined(__amd64__))
-#define NCD_PLATFORM_WINDOWS 0
-#define NCD_PLATFORM_LINUX   1
-#define NCD_ARCH_X64         1
-#elif defined(__linux__)
-#define NCD_PLATFORM_WINDOWS 0
-#define NCD_PLATFORM_LINUX   1
-#define NCD_ARCH_X64         0
-#else
-#error Unsupported platform. Expected Windows or Linux.
-#endif
+#include "../shared/platform_detect.h"
 
 #if NCD_PLATFORM_WINDOWS
 #define WIN32_LEAN_AND_MEAN
@@ -77,6 +54,31 @@ typedef long          LONG;
  */
 #define NCD_BIN_MAGIC    0x4244434EU   /* 'N'=0x4E,'C'=0x43,'D'=0x44,'B'=0x42 */
 #define NCD_BIN_VERSION  2   /* Incremented: added CRC64 checksum field */
+
+/* --------------------------------------------------------- metadata format  */
+
+/*
+ * Consolidated metadata file (ncd.metadata) replaces:
+ *   - ncd.config (configuration)
+ *   - ncd.groups (bookmarks)
+ *   - ncd.history (heuristics)
+ * 
+ * Magic: 'NCMD' = NCD Metadata
+ * Uses CRC64 for consistency with database format
+ */
+#define NCD_META_MAGIC      0x444D434EU  /* 'N' 'C' 'M' 'D' in LE */
+#define NCD_META_VERSION    1
+#define NCD_META_FILENAME   "ncd.metadata"
+
+/* Section IDs in metadata file */
+#define NCD_META_SECTION_CONFIG      0x01
+#define NCD_META_SECTION_GROUPS      0x02
+#define NCD_META_SECTION_HEURISTICS  0x03
+
+/* Enhanced heuristics constants */
+#define NCD_HEUR_MAX_ENTRIES    100     /* Max history entries (was 20) */
+#define NCD_HEUR_MAGIC          0x5255484EU  /* 'N' 'H' 'U' 'R' = NCD HeURistics */
+#define NCD_HEUR_VERSION        1
 
 /*
  * BinFileHdr  --  fixed-size header at offset 0 of a binary database file
@@ -234,20 +236,66 @@ typedef struct {
 } NcdDatabase;
 
 /*
- * NcdConfig  --  user configuration defaults (stored in ncd.config)
+ * NcdConfig  --  user configuration defaults (stored in ncd.metadata)
+ * 
+ * NOTE: Legacy ncd.config file format is deprecated. Use ncd.metadata instead.
  */
 typedef struct {
-    uint32_t magic;               /* NCD_CFG_MAGIC                           */
-    uint16_t version;             /* NCD_CFG_VERSION                         */
+    uint32_t magic;               /* NCD_CFG_MAGIC or NCD_META_MAGIC         */
+    uint16_t version;             /* NCD_CFG_VERSION or NCD_META_VERSION     */
     bool     default_show_hidden; /* Default for /i                          */
     bool     default_show_system; /* Default for /s                          */
     bool     default_fuzzy_match; /* Default for /z                          */
     int      default_timeout;     /* Default for /t (seconds, -1 = not set)  */
     bool     has_defaults;        /* true if any defaults have been set      */
+    uint8_t  pad[3];              /* Padding for alignment                   */
 } NcdConfig;
 
 #define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
 #define NCD_CFG_VERSION  1
+
+/*
+ * NcdHeurEntryV2  --  enhanced heuristics entry with frequency and recency
+ * 
+ * Scoring algorithm: score = (frequency * 10) / (1 + (days_since_last_use / 7))
+ * This gives higher scores to frequently-used and recently-used entries.
+ */
+typedef struct {
+    char     search[NCD_MAX_PATH];    /* Normalized search term              */
+    char     target[NCD_MAX_PATH];    /* Selected target path                */
+    uint32_t frequency;               /* Times this search->target chosen    */
+    time_t   last_used;               /* Timestamp of last selection         */
+    uint8_t  pad[4];                  /* Padding for 8-byte alignment        */
+} NcdHeurEntryV2;                     /* 528 bytes per entry                 */
+
+/*
+ * NcdHeuristicsV2  --  enhanced heuristics database
+ */
+typedef struct {
+    NcdHeurEntryV2 *entries;          /* Array of entries                    */
+    int             count;            /* Number of valid entries             */
+    int             capacity;         /* Allocated capacity                  */
+} NcdHeuristicsV2;
+
+/*
+ * NcdMetadata  --  consolidated metadata container
+ * 
+ * Combines config, groups, and heuristics in one file with atomic updates.
+ */
+typedef struct {
+    /* Configuration section */
+    NcdConfig cfg;
+    
+    /* Heuristics section */
+    NcdHeuristicsV2 heuristics;
+    
+    /* File path (for save operations) */
+    char file_path[NCD_MAX_PATH];
+    
+    /* Dirty flags for selective saving */
+    bool config_dirty;
+    bool heuristics_dirty;
+} NcdMetadata;
 
 /*
  * NcdOptions  --  parsed command-line options
@@ -280,6 +328,19 @@ typedef struct {
     bool test_no_checksum;        /* /test NC -- ignore checksum validation  */
     bool test_slow_mode;          /* /test SL -- pause 1s every 100 dirs     */
 #endif
+    /* Agent mode options (/agent command) */
+    bool agent_mode;              /* /agent -- agent API mode                */
+    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check  */
+    bool agent_json;              /* --json output                           */
+    int  agent_limit;             /* --limit N (default 20, 0=unlimited)     */
+    bool agent_depth_sort;        /* --depth (sort shallowest first)         */
+    int  agent_depth;             /* --depth N (for ls/tree)                 */
+    bool agent_dirs_only;         /* --dirs-only (for ls)                    */
+    bool agent_files_only;        /* --files-only (for ls)                   */
+    char agent_pattern[64];       /* --pattern <glob> (for ls)               */
+    bool agent_flat;              /* --flat (for tree)                       */
+    bool agent_check_db_age;      /* --db-age (for check)                    */
+    bool agent_check_stats;       /* --stats (for check)                     */
 } NcdOptions;
 
 /*
@@ -306,6 +367,10 @@ void *ncd_calloc(size_t count, size_t size);
 
 /* Allocate with overflow checking */
 void *ncd_malloc_array(size_t count, size_t size);  /* count * size with overflow check */
+
+/* Overflow-checked arithmetic - exit on overflow */
+size_t ncd_mul_overflow_check(size_t a, size_t b);  /* a * b with overflow check */
+size_t ncd_add_overflow_check(size_t a, size_t b);  /* a + b with overflow check */
 
 /* ================================================================ path utilities */
 
@@ -334,7 +399,7 @@ char path_get_drive(const char *path);
 /* ================================================================ pseudo filesystem list */
 
 /* List of pseudo filesystems to skip during mount enumeration (Linux) */
-extern const char *ncd_pseudo_filesystems[];
+/* Defined in src/platform.c as static - not exposed globally */
 
 #ifdef __cplusplus
 }

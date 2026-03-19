@@ -251,6 +251,9 @@ void db_group_list(const NcdGroupDb *gdb);
 /*
  * Get the path to the configuration file.
  * Returns path in buf, or NULL on failure.
+ * 
+ * DEPRECATED: Use db_metadata_path() instead for new code.
+ * Kept for backward compatibility and migration.
  */
 char *db_config_path(char *buf, size_t buf_size);
 
@@ -258,12 +261,18 @@ char *db_config_path(char *buf, size_t buf_size);
  * Load configuration from disk.
  * Returns true on success, false if file doesn't exist or is corrupt.
  * On failure, fills cfg with default values.
+ * 
+ * DEPRECATED: Use db_metadata_load() instead for new code.
+ * This function will try ncd.metadata first, then fall back to ncd.config.
  */
 bool db_config_load(NcdConfig *cfg);
 
 /*
  * Save configuration to disk.
  * Returns true on success.
+ * 
+ * DEPRECATED: Use db_metadata_save() instead for new code.
+ * This function now saves to ncd.metadata, not ncd.config.
  */
 bool db_config_save(const NcdConfig *cfg);
 
@@ -274,8 +283,130 @@ void db_config_init_defaults(NcdConfig *cfg);
 
 /*
  * Check if configuration file exists.
+ * 
+ * DEPRECATED: Use db_metadata_exists() instead.
+ * Returns true if either ncd.metadata or ncd.config exists.
  */
 bool db_config_exists(void);
+
+/* --------------------------------------------------------- consolidated metadata  */
+
+/*
+ * Get the path to the consolidated metadata file.
+ * Returns path in buf, or NULL on failure.
+ */
+char *db_metadata_path(char *buf, size_t buf_size);
+
+/*
+ * Check if consolidated metadata file exists.
+ */
+bool db_metadata_exists(void);
+
+/*
+ * Create a new empty metadata container.
+ * Call db_metadata_free() when done.
+ */
+NcdMetadata *db_metadata_create(void);
+
+/*
+ * Free a metadata container and all its contents.
+ */
+void db_metadata_free(NcdMetadata *meta);
+
+/*
+ * Load metadata from disk.
+ * Tries ncd.metadata first. If not found, migrates from legacy files
+ * (ncd.config, ncd.groups, ncd.history) and creates ncd.metadata.
+ * 
+ * Returns metadata container on success, or NULL on failure.
+ * On failure, you can still use the returned container with default values.
+ */
+NcdMetadata *db_metadata_load(void);
+
+/*
+ * Save metadata to disk (atomic rename).
+ * Returns true on success.
+ */
+bool db_metadata_save(NcdMetadata *meta);
+
+/*
+ * Migrate from legacy files to consolidated metadata.
+ * Called automatically by db_metadata_load() if ncd.metadata doesn't exist.
+ * Returns true on success, false if no legacy files found or migration failed.
+ */
+bool db_metadata_migrate(void);
+
+/*
+ * Delete legacy files after successful migration.
+ * Returns number of files deleted.
+ */
+int db_metadata_cleanup_legacy(void);
+
+/* --------------------------------------------------------- enhanced heuristics  */
+
+/*
+ * Calculate heuristic score for an entry.
+ * Formula: score = (frequency * 10) / (1 + (days_since_last_use / 7))
+ * Higher score = more relevant result.
+ */
+int db_heur_calculate_score(const NcdHeurEntryV2 *entry, time_t now);
+
+/*
+ * Find a heuristics entry by search term (case-insensitive).
+ * Returns index in meta->heuristics.entries, or -1 if not found.
+ */
+int db_heur_find(NcdMetadata *meta, const char *search);
+
+/*
+ * Find best matching heuristic entry using partial matching.
+ * Returns index of best match, or -1 if no suitable match found.
+ * 
+ * If exact_match is not NULL, sets it to true if the search term
+ * matches exactly (for priority boosting).
+ */
+int db_heur_find_best(NcdMetadata *meta, const char *search, bool *exact_match);
+
+/*
+ * Record a user choice in heuristics.
+ * Increments frequency, updates last_used, and reorders by score.
+ */
+void db_heur_note_choice(NcdMetadata *meta, const char *search, const char *target);
+
+/*
+ * Get the preferred target path for a search term.
+ * Returns true and fills out_path if a match is found.
+ */
+bool db_heur_get_preferred(NcdMetadata *meta, const char *search, 
+                           char *out_path, size_t out_size);
+
+/*
+ * Clear all heuristics entries.
+ */
+void db_heur_clear(NcdMetadata *meta);
+
+/*
+ * Print heuristics entries sorted by score.
+ */
+void db_heur_print(NcdMetadata *meta);
+
+/* --------------------------------------------------------- atomic rescan helpers  */
+
+/*
+ * Backup a drive's data before rescan.
+ * Returns a dynamically allocated DriveData that must be freed with
+ * db_drive_backup_free() when no longer needed.
+ */
+DriveData *db_drive_backup_create(const DriveData *src);
+
+/*
+ * Free a drive backup created by db_drive_backup_create().
+ */
+void db_drive_backup_free(DriveData *backup);
+
+/*
+ * Restore drive data from backup on failed rescan.
+ */
+void db_drive_restore_from_backup(DriveData *dst, const DriveData *backup);
 
 #ifdef __cplusplus
 }

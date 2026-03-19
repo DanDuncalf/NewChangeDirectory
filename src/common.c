@@ -66,3 +66,24 @@ void *ncd_malloc_array(size_t count, size_t size)
     }
     return ncd_malloc(count * size);
 }
+
+/* Overflow-checked multiplication. Exits on overflow. */
+size_t ncd_mul_overflow_check(size_t a, size_t b)
+{
+    if (a == 0 || b == 0) return 0;
+    if (a > SIZE_MAX / b) {
+        fprintf(stderr, "NCD: fatal: multiplication overflow (%zu * %zu)\n", a, b);
+        exit(1);
+    }
+    return a * b;
+}
+
+/* Overflow-checked addition. Exits on overflow. */
+size_t ncd_add_overflow_check(size_t a, size_t b)
+{
+    if (b > SIZE_MAX - a) {
+        fprintf(stderr, "NCD: fatal: addition overflow (%zu + %zu)\n", a, b);
+        exit(1);
+    }
+    return a + b;
+}

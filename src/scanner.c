@@ -574,6 +574,71 @@ typedef struct ScanFrame {
 
 /* ============================================================ platform-specific scan implementations */
 
+/* ================================================================ subdirectory scan */
+
+/*
+ * Scan a subdirectory and add it to the database.
+ * Simple implementation: just scan and add entries without removing old ones.
+ * Returns number of directories added, or -1 on error.
+ */
+int scan_subdirectory(NcdDatabase   *db,
+                      char           drive_letter,
+                      const char    *subdir_path,
+                      bool           include_hidden,
+                      bool           include_system)
+{
+    if (!subdir_path || !subdir_path[0]) return -1;
+    
+    /* Find or create the drive */
+    DriveData *drv = NULL;
+    for (int i = 0; i < db->drive_count; i++) {
+        if (db->drives[i].letter == drive_letter) {
+            drv = &db->drives[i];
+            break;
+        }
+    }
+    
+    if (!drv) {
+        drv = db_add_drive(db, drive_letter);
+#if NCD_PLATFORM_WINDOWS
+        drv->type = DRIVE_FIXED;
+        char mount_path[MAX_PATH];
+        snprintf(mount_path, sizeof(mount_path), "%c:\\", drive_letter);
+        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+#else
+        drv->type = 0;
+        char mount_path[MAX_PATH];
+        snprintf(mount_path, sizeof(mount_path), "/mnt/%c", tolower((unsigned char)drive_letter));
+        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+#endif
+    }
+    
+    /* Normalize path */
+    char norm_path[MAX_PATH];
+    platform_strncpy_s(norm_path, sizeof(norm_path), subdir_path);
+    path_normalize_separators(norm_path);
+    
+    /* Get the directory name */
+    const char *subdir_name = path_leaf(norm_path);
+    
+    /* Add the subdirectory entry */
+    int subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
+    
+    /* Create scan context */
+    ScanCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.drv = drv;
+    ctx.include_hidden = include_hidden;
+    ctx.include_system = include_system;
+    ctx.dir_count = 0;
+#if NCD_PLATFORM_LINUX
+    ctx.visited = NULL;
+#endif
+    
+    /* Scan */
+    return platform_scan_directory(&ctx, norm_path, subdir_id);
+}
+
 #if NCD_PLATFORM_WINDOWS
 
 #include <windows.h>
@@ -701,71 +766,6 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
     
     free(stack);
     return dir_count;
-}
-
-/* ================================================================ subdirectory scan */
-
-/*
- * Scan a subdirectory and add it to the database.
- * Simple implementation: just scan and add entries without removing old ones.
- * Returns number of directories added, or -1 on error.
- */
-int scan_subdirectory(NcdDatabase   *db,
-                      char           drive_letter,
-                      const char    *subdir_path,
-                      bool           include_hidden,
-                      bool           include_system)
-{
-    if (!subdir_path || !subdir_path[0]) return -1;
-    
-    /* Find or create the drive */
-    DriveData *drv = NULL;
-    for (int i = 0; i < db->drive_count; i++) {
-        if (db->drives[i].letter == drive_letter) {
-            drv = &db->drives[i];
-            break;
-        }
-    }
-    
-    if (!drv) {
-        drv = db_add_drive(db, drive_letter);
-#if NCD_PLATFORM_WINDOWS
-        drv->type = DRIVE_FIXED;
-        char mount_path[MAX_PATH];
-        snprintf(mount_path, sizeof(mount_path), "%c:\\", drive_letter);
-        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
-#else
-        drv->type = 0;
-        char mount_path[MAX_PATH];
-        snprintf(mount_path, sizeof(mount_path), "/mnt/%c", tolower((unsigned char)drive_letter));
-        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
-#endif
-    }
-    
-    /* Normalize path */
-    char norm_path[MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), subdir_path);
-    path_normalize_separators(norm_path);
-    
-    /* Get the directory name */
-    const char *subdir_name = path_leaf(norm_path);
-    
-    /* Add the subdirectory entry */
-    int subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
-    
-    /* Create scan context */
-    ScanCtx ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.drv = drv;
-    ctx.include_hidden = include_hidden;
-    ctx.include_system = include_system;
-    ctx.dir_count = 0;
-#if NCD_PLATFORM_LINUX
-    ctx.visited = NULL;
-#endif
-    
-    /* Scan */
-    return platform_scan_directory(&ctx, norm_path, subdir_id);
 }
 
 #elif NCD_PLATFORM_LINUX

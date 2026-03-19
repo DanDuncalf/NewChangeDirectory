@@ -59,6 +59,16 @@ extern int asserts_failed;
     } \
 } while(0)
 
+#define ASSERT_STR_CONTAINS(haystack, needle) do { \
+    asserts_total++; \
+    if (strstr((haystack), (needle)) == NULL) { \
+        asserts_failed++; \
+        fprintf(stderr, "  FAIL: %s:%d: Expected \"%s\" to contain \"%s\"\n", \
+                __FILE__, __LINE__, (haystack), (needle)); \
+        return 1; \
+    } \
+} while(0)
+
 /* Test function signature */
 typedef int (*test_func_t)(void);
 

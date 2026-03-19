@@ -239,7 +239,11 @@ static int read_key(void)
             case VK_RETURN: return KEY_ENTER;
             case VK_ESCAPE: return KEY_ESC;
             case 'Q': case 'q': return KEY_ESC;
-            default:        continue;
+            case ' ':       return ' ';
+            default:
+                /* Return ASCII digits directly */
+                if (vk >= '0' && vk <= '9') return vk;
+                continue;
         }
     }
 }
@@ -419,7 +423,11 @@ static int read_key(void)
         case PLATFORM_VK_BACK:  return KEY_BACKSPACE;
         case PLATFORM_VK_RETURN:return KEY_ENTER;
         case PLATFORM_VK_ESCAPE:return KEY_ESC;
-        default:                return KEY_UNKNOWN;
+        case ' ':               return ' ';
+        default:
+            /* Return ASCII digits directly */
+            if (vk >= '0' && vk <= '9') return vk;
+            return KEY_UNKNOWN;
     }
 }
 
@@ -1249,6 +1257,11 @@ typedef struct {
     int count;
     int selected;
     bool first_draw;
+    /* Input mode for numeric fields */
+    bool input_mode;
+    char input_buf[16];
+    int input_len;
+    int input_orig_value;
 } ConfigUiState;
 
 typedef struct {
@@ -1287,7 +1300,11 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     /* Help text */
     con_cursor_pos(st->top_row + 1, 0);
     con_write(BOX_V);
-    con_write_padded(" Use UP/DOWN to navigate, SPACE to toggle, +/- to adjust values ", inner);
+    if (st->input_mode) {
+        con_write_padded(" Enter/Tab=Confirm  Esc=Cancel ", inner);
+    } else {
+        con_write_padded(" UP/DOWN=Navigate  SPACE=Toggle  +/- or 0-9=Adjust ", inner);
+    }
     con_write(BOX_V);
     
     /* Separator line */
@@ -1317,9 +1334,15 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
                          item->label,
                          *item->value ? "X" : " ");
             } else {
-                snprintf(line, sizeof(line), " %s: %d ",
-                         item->label,
-                         *item->int_value);
+                /* In input mode, show the input buffer for the selected item */
+                if (is_selected_row && st->input_mode) {
+                    snprintf(line, sizeof(line), " %s: [%s] ",
+                             item->label, st->input_buf);
+                } else {
+                    snprintf(line, sizeof(line), " %s: %d ",
+                             item->label,
+                             *item->int_value);
+                }
             }
             con_write_padded(line, inner);
             
@@ -1344,7 +1367,11 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     con_write(BOX_V);
     {
         char footer[256];
-        snprintf(footer, sizeof(footer), " ENTER=Save  ESC=Cancel ");
+        if (st->input_mode) {
+            snprintf(footer, sizeof(footer), " Type timeout value (10-3600s) ");
+        } else {
+            snprintf(footer, sizeof(footer), " ENTER=Save  ESC=Cancel ");
+        }
         int pad = inner - (int)strlen(footer);
         con_write(footer);
         int i;
@@ -1433,6 +1460,51 @@ bool ui_edit_config(NcdConfig *cfg)
     
     for (;;) {
         int key = read_key();
+        
+        /* Handle input mode for numeric fields */
+        if (st.input_mode) {
+            switch (key) {
+                case KEY_ENTER:
+                case KEY_TAB:
+                    /* Confirm input */
+                    if (st.input_len > 0) {
+                        int new_val = atoi(st.input_buf);
+                        ConfigItem *item = &items[st.selected];
+                        if (new_val >= item->min_val && new_val <= item->max_val) {
+                            *item->int_value = new_val;
+                        }
+                    }
+                    st.input_mode = false;
+                    st.input_len = 0;
+                    st.input_buf[0] = '\0';
+                    break;
+                case KEY_ESC:
+                    /* Cancel input, restore original value */
+                    *items[st.selected].int_value = st.input_orig_value;
+                    st.input_mode = false;
+                    st.input_len = 0;
+                    st.input_buf[0] = '\0';
+                    break;
+                case KEY_BACKSPACE:
+                    /* Remove last digit */
+                    if (st.input_len > 0) {
+                        st.input_len--;
+                        st.input_buf[st.input_len] = '\0';
+                    }
+                    break;
+                default:
+                    /* Handle digit input (0-9) */
+                    if (key >= '0' && key <= '9' && st.input_len < 4) {
+                        st.input_buf[st.input_len++] = (char)key;
+                        st.input_buf[st.input_len] = '\0';
+                    }
+                    break;
+            }
+            draw_config_box(&st, items, item_count, cfg);
+            continue;
+        }
+        
+        /* Normal navigation mode */
         switch (key) {
             case KEY_UP:
                 if (st.selected > 0) st.selected--;
@@ -1488,13 +1560,26 @@ bool ui_edit_config(NcdConfig *cfg)
                 saved = false;
                 goto config_done;
             default:
-                continue;
+                /* Enter input mode on digit press for non-bool items */
+                if (key >= '0' && key <= '9' && !items[st.selected].is_bool) {
+                    st.input_mode = true;
+                    st.input_len = 0;
+                    st.input_buf[0] = '\0';
+                    st.input_orig_value = *items[st.selected].int_value;
+                    /* Add the first digit */
+                    st.input_buf[st.input_len++] = (char)key;
+                    st.input_buf[st.input_len] = '\0';
+                }
+                break;
         }
         draw_config_box(&st, items, item_count, cfg);
     }
     
 config_done:
-    clear_area(box_top, total_rows, bw);
+    /* Get current console size to clear properly */
+    get_console_size(&cols, &rows, &cur_row);
+    /* Clear total_rows + 1 to include the bottom border row */
+    clear_area(box_top, total_rows + 1, cols);
     con_cursor_pos(box_top, 0);
     con_show_cursor();
     ui_close_console();

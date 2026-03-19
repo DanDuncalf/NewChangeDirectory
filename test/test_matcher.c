@@ -111,6 +111,36 @@ TEST(match_empty_search) {
     return 0;
 }
 
+TEST(match_prefix_single_component) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* Should match "drivers" with prefix "driv" */
+    NcdMatch *matches = matcher_find(db, "driv", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(1, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "drivers");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_prefix_multi_component) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* Should match "System32\drivers" with "Sys\driv" */
+    NcdMatch *matches = matcher_find(db, "Sys\\driv", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(1, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "drivers");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
 void suite_matcher(void) {
     RUN_TEST(match_single_component);
     RUN_TEST(match_two_components);
@@ -118,6 +148,8 @@ void suite_matcher(void) {
     RUN_TEST(match_with_hidden_filter);
     RUN_TEST(match_no_results);
     RUN_TEST(match_empty_search);
+    RUN_TEST(match_prefix_single_component);
+    RUN_TEST(match_prefix_multi_component);
 }
 
 TEST_MAIN(

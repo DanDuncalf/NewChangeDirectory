@@ -70,6 +70,7 @@ NameIndex *name_index_build(const NcdDatabase *db)
     idx->entries = xmalloc(sizeof(NameIndexEntry) * (size_t)total_dirs);
     idx->count = 0;
     idx->bucket_count = 256;
+    idx->bucket_starts = NULL;
     
     for (int di = 0; di < db->drive_count; di++) {
         const DriveData *drv = &db->drives[di];
@@ -196,9 +197,12 @@ static SearchParts parse_search(const char *search_str)
  * Test whether dir_index in drv is the tip of a chain matching parts[].
  *
  * parts[last] must match drv->dirs[dir_index].name  (substring, CI)
- * parts[last-1] must match its parent's name, etc.
+ * parts[0] must match some ancestor's name (substring, CI)
  *
- * Returns true if all parts match as a contiguous parent chain.
+ * Intermediate directories between parts are allowed (non-contiguous matching).
+ * e.g., "Users\Downloads" matches "C:\Users\Scott\Downloads"
+ *
+ * Returns true if all parts match somewhere in the parent chain.
  */
 static bool chain_matches(const DriveData *drv,
                            int              dir_index,
@@ -206,14 +210,31 @@ static bool chain_matches(const DriveData *drv,
 {
     if (sp->count == 0) return false;
 
-    int cur = dir_index;
-    /* Walk from the deepest part (sp->parts[count-1]) upward */
-    for (int i = sp->count - 1; i >= 0; i--) {
-        if (cur < 0 || cur >= drv->dir_count) return false;
-        if (!istartswith(drv->name_pool + drv->dirs[cur].name_off, sp->parts[i])) return false;
-        cur = drv->dirs[cur].parent;   /* -1 when we reach the drive root */
+    /* Leaf (last part) must match the starting directory */
+    if (dir_index < 0 || dir_index >= drv->dir_count) return false;
+    if (!istartswith(drv->name_pool + drv->dirs[dir_index].name_off, sp->parts[sp->count - 1]))
+        return false;
+
+    /* For single-part search, leaf match is sufficient */
+    if (sp->count == 1) return true;
+
+    /* 
+     * For multi-part search, walk up the parent chain looking for matches
+     * with earlier parts. We need to find parts[count-2], then parts[count-3], etc.
+     * Intermediate directories are skipped (non-contiguous matching).
+     */
+    int parts_idx = sp->count - 2;  /* Start with second-to-last part */
+    int cur = drv->dirs[dir_index].parent;
+    
+    while (cur >= 0 && parts_idx >= 0) {
+        if (istartswith(drv->name_pool + drv->dirs[cur].name_off, sp->parts[parts_idx])) {
+            parts_idx--;  /* Found this part, move to next one */
+        }
+        cur = drv->dirs[cur].parent;
     }
-    return true;
+    
+    /* Success if we found all parts */
+    return parts_idx < 0;
 }
 
 /* ================================================================ public   */
@@ -272,8 +293,15 @@ NcdMatch *matcher_find(const NcdDatabase *db,
             m->dir_index    = (int)nie->dir_idx;
             db_full_path(drv, (int)nie->dir_idx, m->full_path, sizeof(m->full_path));
         }
-    } else {
-        /* Fall back to full scan if index not available (OOM) */
+    }
+    
+    /* 
+     * Fall back to full scan if:
+     * - Index not available (OOM), OR
+     * - Hash index returned no matches (for prefix searches like "NewCh" 
+     *   that don't match any full directory name hash)
+     */
+    if (count == 0) {
         for (int di = 0; di < db->drive_count; di++) {
             const DriveData *drv = &db->drives[di];
 

@@ -6,10 +6,12 @@
 #include "test_framework.h"
 #include "../src/database.h"
 #include "../src/ncd.h"
+#include "platform.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <stddef.h>  /* for offsetof */
 
 static const char *TEST_FILE = "corrupt_test.tmp";
 
@@ -263,10 +265,10 @@ TEST(corrupt_dir_count_overflow) {
     
     unsigned char *buf;
     size_t size = read_file(&buf);
-    ASSERT_TRUE(size > 24 + 80); /* File header + drive header */
+    ASSERT_TRUE(size > sizeof(BinFileHdr) + sizeof(BinDriveHdr));
     
-    /* Drive header: dir_count at offset 72 (after letter[1], pad[3], type[4], label[64]) */
-    int dir_count_offset = 24 + 72;
+    /* dir_count is at offset 72 within BinDriveHdr (after letter[1], pad[3], type[4], label[64]) */
+    size_t dir_count_offset = sizeof(BinFileHdr) + offsetof(BinDriveHdr, dir_count);
     if (size > dir_count_offset + 4) {
         buf[dir_count_offset] = 0xFF;
         buf[dir_count_offset + 1] = 0xFF;

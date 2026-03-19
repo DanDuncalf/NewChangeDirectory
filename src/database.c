@@ -122,13 +122,13 @@ void db_free(NcdDatabase *db)
 
 char *db_default_path(char *buf, size_t buf_size)
 {
-    if (platform_db_default_path(buf, buf_size)) return buf;
+    if (ncd_platform_db_default_path(buf, buf_size)) return buf;
     return NULL;
 }
 
 char *db_drive_path(char letter, char *buf, size_t buf_size)
 {
-    if (platform_db_drive_path(letter, buf, buf_size)) return buf;
+    if (ncd_platform_db_drive_path(letter, buf, buf_size)) return buf;
     return NULL;
 }
 
@@ -1829,4 +1829,925 @@ bool db_set_skip_update_flag(const char *path)
         return false;
     }
     return true;
+}
+
+/* ============================================================= path helpers  */
+
+/*
+ * Get the path to the legacy history file.
+ * Used for migration from old format.
+ */
+static char *db_history_path(char *buf, size_t buf_size)
+{
+    if (!buf || buf_size == 0) return NULL;
+    buf[0] = '\0';
+    
+#if NCD_PLATFORM_WINDOWS
+    char local[MAX_PATH] = {0};
+    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
+    
+    size_t len = strlen(local);
+    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
+    snprintf(buf, buf_size, "%s%sncd.history", local, has_sep ? "" : "\\");
+#else
+    char base[MAX_PATH] = {0};
+    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
+        char home[MAX_PATH] = {0};
+        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
+            return NULL;
+        snprintf(base, sizeof(base), "%s/.local/share", home);
+    }
+    snprintf(buf, buf_size, "%s/ncd/ncd.history", base);
+#endif
+    return buf;
+}
+
+/*
+ * Atomic file write helper.
+ * Writes data to a temp file, then atomically renames to target.
+ * Creates a .old backup of the previous file if it exists.
+ * 
+ * Pattern: write to .tmp -> backup existing to .old -> rename .tmp to final
+ * 
+ * Returns true on success, false on failure.
+ */
+static bool db_file_write_atomic(const char *path, const void *data, size_t len)
+{
+    if (!path || !data || len == 0) return false;
+    
+    /* Ensure directory exists */
+    char dir_path[MAX_PATH];
+    platform_strncpy_s(dir_path, sizeof(dir_path), path);
+    char *last_sep = strrchr(dir_path, '\\');
+    if (!last_sep) last_sep = strrchr(dir_path, '/');
+    if (last_sep) {
+        *last_sep = '\0';
+#if NCD_PLATFORM_WINDOWS
+        CreateDirectoryA(dir_path, NULL);
+#else
+        struct stat st = {0};
+        if (stat(dir_path, &st) != 0) {
+            char cmd[MAX_PATH + 32];
+            snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir_path);
+            system(cmd);
+        }
+#endif
+    }
+    
+    /* Atomic write pattern: .tmp -> .old -> final */
+    char tmp_path[MAX_PATH];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    
+    FILE *f = fopen(tmp_path, "wb");
+    if (!f) return false;
+    
+    size_t wr = fwrite(data, 1, len, f);
+    fflush(f);
+    fclose(f);
+    
+    if (wr != len) {
+        platform_delete_file(tmp_path);
+        return false;
+    }
+    
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    platform_delete_file(old_path);
+    
+    if (platform_file_exists(path)) {
+        if (!platform_move_file(path, old_path)) {
+            platform_delete_file(path);
+        }
+    }
+    
+    if (!platform_move_file(tmp_path, path)) {
+        platform_move_file(old_path, path);
+        return false;
+    }
+    
+    return true;
+}
+
+/* ============================================================= metadata  */
+
+char *db_metadata_path(char *buf, size_t buf_size)
+{
+    if (!buf || buf_size == 0) return NULL;
+    buf[0] = '\0';
+    
+#if NCD_PLATFORM_WINDOWS
+    char local[MAX_PATH] = {0};
+    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
+    
+    size_t len = strlen(local);
+    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
+    snprintf(buf, buf_size, "%s%sNCD\\%s", local, has_sep ? "" : "\\", NCD_META_FILENAME);
+#else
+    char base[MAX_PATH] = {0};
+    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
+        char home[MAX_PATH] = {0};
+        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
+            return NULL;
+        snprintf(base, sizeof(base), "%s/.local/share", home);
+    }
+    snprintf(buf, buf_size, "%s/ncd/%s", base, NCD_META_FILENAME);
+#endif
+    return buf;
+}
+
+bool db_metadata_exists(void)
+{
+    char path[MAX_PATH];
+    if (!db_metadata_path(path, sizeof(path))) return false;
+    return platform_file_exists(path);
+}
+
+NcdMetadata *db_metadata_create(void)
+{
+    NcdMetadata *meta = ncd_malloc(sizeof(NcdMetadata));
+    memset(meta, 0, sizeof(NcdMetadata));
+    
+    db_config_init_defaults(&meta->cfg);
+    
+    meta->heuristics.entries = NULL;
+    meta->heuristics.count = 0;
+    meta->heuristics.capacity = 0;
+    
+    meta->config_dirty = false;
+    meta->heuristics_dirty = false;
+    
+    return meta;
+}
+
+void db_metadata_free(NcdMetadata *meta)
+{
+    if (!meta) return;
+    
+    if (meta->heuristics.entries) {
+        free(meta->heuristics.entries);
+    }
+    
+    free(meta);
+}
+
+/* Metadata header size: 20 bytes (magic + version + section_count + reserved + reserved2 + CRC64) */
+#define NCD_META_HEADER_SIZE 20
+
+bool db_metadata_save(NcdMetadata *meta)
+{
+    if (!meta) return false;
+    
+    char path[MAX_PATH];
+    if (!db_metadata_path(path, sizeof(path))) return false;
+    
+    /* Calculate sizes with overflow checking */
+    size_t config_size = sizeof(NcdConfig);
+    size_t heur_entries_size = ncd_mul_overflow_check(
+        (size_t)meta->heuristics.count, sizeof(NcdHeurEntryV2));
+    size_t heur_size = sizeof(uint32_t) + heur_entries_size;
+    
+    /* Header: magic(4) + version(2) + section_count(1) + reserved(1) + reserved(4) + crc64(8) = 20 bytes */
+    size_t header_size = NCD_META_HEADER_SIZE;
+    size_t section_overhead = 16; /* 2 section headers @ 8 bytes each */
+    
+    /* Check total size doesn't overflow */
+    size_t total_size = header_size;
+    total_size = ncd_add_overflow_check(total_size, section_overhead);
+    total_size = ncd_add_overflow_check(total_size, config_size);
+    total_size = ncd_add_overflow_check(total_size, heur_size);
+    
+    uint8_t *buf = ncd_malloc(total_size);
+    size_t pos = 0;
+    
+    /* Write header */
+    uint32_t magic = NCD_META_MAGIC;
+    memcpy(buf + pos, &magic, 4); pos += 4;
+    uint16_t version = NCD_META_VERSION;
+    memcpy(buf + pos, &version, 2); pos += 2;
+    uint8_t section_count = 2;  /* config + heuristics */
+    memcpy(buf + pos, &section_count, 1); pos += 1;
+    buf[pos++] = 0; /* reserved */
+    pos += 4; /* skip CRC for now */
+    
+    /* Write config section */
+    uint8_t section_id = NCD_META_SECTION_CONFIG;
+    memcpy(buf + pos, &section_id, 1); pos += 1;
+    uint32_t config_data_size = (uint32_t)config_size;
+    memcpy(buf + pos, &config_data_size, 4); pos += 4;
+    uint8_t config_pad = 0;
+    memcpy(buf + pos, &config_pad, 1); pos += 1;
+    memcpy(buf + pos, &meta->cfg, config_size); pos += config_size;
+    
+    /* Write heuristics section */
+    section_id = NCD_META_SECTION_HEURISTICS;
+    memcpy(buf + pos, &section_id, 1); pos += 1;
+    uint32_t heur_data_size = (uint32_t)heur_size;
+    memcpy(buf + pos, &heur_data_size, 4); pos += 4;
+    uint8_t heur_pad = 0;
+    memcpy(buf + pos, &heur_pad, 1); pos += 1;
+    uint32_t heur_count = (uint32_t)meta->heuristics.count;
+    memcpy(buf + pos, &heur_count, 4); pos += 4;
+    for (int i = 0; i < meta->heuristics.count; i++) {
+        memcpy(buf + pos, &meta->heuristics.entries[i], sizeof(NcdHeurEntryV2));
+        pos += sizeof(NcdHeurEntryV2);
+    }
+    
+    /* Compute and write CRC64 over data after the header (CRC64 is at offset 12) */
+    uint64_t crc = platform_crc64(buf + header_size, pos - header_size);
+    memcpy(buf + 12, &crc, sizeof(crc));
+    
+    /* Ensure directory exists */
+    char dir_path[MAX_PATH];
+    platform_strncpy_s(dir_path, sizeof(dir_path), path);
+    char *last_sep = strrchr(dir_path, '\\');
+    if (!last_sep) last_sep = strrchr(dir_path, '/');
+    if (last_sep) {
+        *last_sep = '\0';
+#if NCD_PLATFORM_WINDOWS
+        CreateDirectoryA(dir_path, NULL);
+#else
+        struct stat st = {0};
+        if (stat(dir_path, &st) != 0) {
+            char cmd[MAX_PATH + 32];
+            snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir_path);
+            system(cmd);
+        }
+#endif
+    }
+    
+    /* Atomic write */
+    char tmp_path[MAX_PATH];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    
+    FILE *f = fopen(tmp_path, "wb");
+    if (!f) { free(buf); return false; }
+    
+    size_t wr = fwrite(buf, 1, pos, f);
+    fflush(f);
+    fclose(f);
+    free(buf);
+    
+    if (wr != pos) { platform_delete_file(tmp_path); return false; }
+    
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    platform_delete_file(old_path);
+    if (platform_file_exists(path)) {
+        if (!platform_move_file(path, old_path)) {
+            platform_delete_file(path);
+        }
+    }
+    if (!platform_move_file(tmp_path, path)) {
+        platform_move_file(old_path, path);
+        return false;
+    }
+    
+    meta->config_dirty = false;
+    meta->heuristics_dirty = false;
+    return true;
+}
+
+NcdMetadata *db_metadata_load(void)
+{
+    NcdMetadata *meta = db_metadata_create();
+    
+    char path[MAX_PATH];
+    if (!db_metadata_path(path, sizeof(path))) {
+        /* Try to migrate from legacy files */
+        db_metadata_migrate();
+        if (!db_metadata_path(path, sizeof(path))) return meta;
+    }
+    
+    /* Check if we need to migrate from legacy files */
+    if (!platform_file_exists(path)) {
+        db_metadata_migrate();
+    }
+    
+    if (!platform_file_exists(path)) {
+        /* No metadata file and no legacy files - return empty metadata */
+        return meta;
+    }
+    
+    platform_strncpy_s(meta->file_path, sizeof(meta->file_path), path);
+    
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        /* Try to load from legacy config as fallback */
+        db_config_load(&meta->cfg);
+        return meta;
+    }
+    
+    /* Read header (20 bytes total) */
+    uint32_t magic;
+    uint16_t version;
+    uint8_t section_count;
+    uint8_t reserved;
+    uint32_t reserved2;
+    uint64_t stored_crc;
+    
+    if (fread(&magic, 4, 1, f) != 1 ||
+        fread(&version, 2, 1, f) != 1 ||
+        fread(&section_count, 1, 1, f) != 1 ||
+        fread(&reserved, 1, 1, f) != 1 ||
+        fread(&reserved2, 4, 1, f) != 1 ||
+        fread(&stored_crc, 8, 1, f) != 1) {
+        fclose(f);
+        db_config_load(&meta->cfg);
+        return meta;
+    }
+    
+    if (magic != NCD_META_MAGIC || version != NCD_META_VERSION) {
+        fclose(f);
+        /* Try legacy migration */
+        db_metadata_migrate();
+        db_config_load(&meta->cfg);
+        return meta;
+    }
+    
+    /* Get file size for CRC verification */
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, NCD_META_HEADER_SIZE, SEEK_SET); /* Skip header */
+    
+    size_t data_size = file_size - NCD_META_HEADER_SIZE;
+    uint8_t *data = malloc(data_size);
+    if (!data) {
+        fclose(f);
+        return meta;
+    }
+    
+    if (fread(data, 1, data_size, f) != data_size) {
+        free(data);
+        fclose(f);
+        db_config_load(&meta->cfg);
+        return meta;
+    }
+    fclose(f);
+    
+    /* Verify CRC64 over data after header */
+    uint64_t computed_crc = platform_crc64(data, data_size);
+    
+    if (computed_crc != stored_crc) {
+        /* CRC mismatch - try legacy files */
+        free(data);
+        db_metadata_migrate();
+        db_config_load(&meta->cfg);
+        return meta;
+    }
+    
+    /* Parse sections */
+    size_t pos = 0;
+    for (int s = 0; s < section_count && pos < data_size; s++) {
+        if (pos + 6 > data_size) break;
+        
+        uint8_t section_id = data[pos++];
+        uint32_t section_size;
+        memcpy(&section_size, data + pos, 4); pos += 4;
+        pos++; /* skip padding */
+        
+        if (pos + section_size > data_size) break;
+        
+        switch (section_id) {
+            case NCD_META_SECTION_CONFIG:
+                if (section_size >= sizeof(NcdConfig)) {
+                    memcpy(&meta->cfg, data + pos, sizeof(NcdConfig));
+                }
+                break;
+                
+            case NCD_META_SECTION_HEURISTICS:
+                if (section_size >= 4) {
+                    uint32_t count;
+                    memcpy(&count, data + pos, 4);
+                    if (count > 0 && count <= NCD_HEUR_MAX_ENTRIES) {
+                        meta->heuristics.capacity = (int)count;
+                        meta->heuristics.entries = ncd_malloc_array(
+                            count, sizeof(NcdHeurEntryV2));
+                        size_t entry_offset = pos + 4;
+                        for (uint32_t i = 0; i < count && i < NCD_HEUR_MAX_ENTRIES; i++) {
+                            if (entry_offset + sizeof(NcdHeurEntryV2) <= pos + section_size) {
+                                memcpy(&meta->heuristics.entries[i], 
+                                       data + entry_offset + i * sizeof(NcdHeurEntryV2),
+                                       sizeof(NcdHeurEntryV2));
+                                meta->heuristics.count++;
+                            }
+                        }
+                    }
+                }
+                break;
+        }
+        
+        pos += section_size;
+    }
+    
+    free(data);
+    return meta;
+}
+
+/* Legacy heuristics entry (for migration) */
+typedef struct {
+    char search[NCD_MAX_PATH];
+    char target[NCD_MAX_PATH];
+} NcdHeurEntryOld;
+
+bool db_metadata_migrate(void)
+{
+    if (db_metadata_exists()) return true;  /* Already migrated */
+    
+    NcdMetadata *meta = db_metadata_create();
+    bool any_migrated = false;
+    
+    /* Migrate config */
+    NcdConfig cfg;
+    if (db_config_load(&cfg)) {
+        meta->cfg = cfg;
+        meta->config_dirty = true;
+        any_migrated = true;
+    }
+    
+    /* Migrate groups */
+    NcdGroupDb *gdb = db_group_load();
+    if (gdb) {
+        /* Groups are now stored in a separate section - skip for now */
+        db_group_free(gdb);
+    }
+    
+    /* Migrate heuristics from legacy history file */
+    char hist_path[MAX_PATH];
+    if (!db_history_path(hist_path, sizeof(hist_path))) {
+        /* No history path available - skip migration */
+    }
+    
+    FILE *f = (hist_path[0]) ? fopen(hist_path, "r") : NULL;
+    if (f) {
+        char line[(NCD_MAX_PATH * 2) + 32];
+        while (fgets(line, sizeof(line), f)) {
+            if (meta->heuristics.count >= NCD_HEUR_MAX_ENTRIES) break;
+            
+            line[strcspn(line, "\r\n")] = '\0';
+            if (line[0] == '\0') continue;
+            
+            char *tab = strchr(line, '\t');
+            if (!tab) continue;
+            *tab = '\0';
+            const char *search = line;
+            const char *target = tab + 1;
+            if (search[0] == '\0' || target[0] == '\0') continue;
+            
+            /* Normalize and add */
+            char norm_search[NCD_MAX_PATH];
+            char norm_target[NCD_MAX_PATH];
+            
+            /* Simple lowercase normalization for search */
+            size_t i;
+            for (i = 0; i < NCD_MAX_PATH - 1 && search[i]; i++) {
+                norm_search[i] = (char)tolower((unsigned char)search[i]);
+            }
+            norm_search[i] = '\0';
+            platform_strncpy_s(norm_target, sizeof(norm_target), target);
+            
+            /* 
+             * Check for duplicates (O(n) scan, but n <= 100 during migration).
+             * This is acceptable for a one-time migration from legacy format.
+             */
+            bool found = false;
+            for (int j = 0; j < meta->heuristics.count; j++) {
+                if (_stricmp(meta->heuristics.entries[j].search, norm_search) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                if (meta->heuristics.count >= meta->heuristics.capacity) {
+                    int new_cap = meta->heuristics.capacity ? meta->heuristics.capacity * 2 : 16;
+                    if (new_cap > NCD_HEUR_MAX_ENTRIES) new_cap = NCD_HEUR_MAX_ENTRIES;
+                    meta->heuristics.entries = ncd_realloc(meta->heuristics.entries,
+                        sizeof(NcdHeurEntryV2) * new_cap);
+                    meta->heuristics.capacity = new_cap;
+                }
+                
+                NcdHeurEntryV2 *entry = &meta->heuristics.entries[meta->heuristics.count++];
+                memset(entry, 0, sizeof(NcdHeurEntryV2));
+                platform_strncpy_s(entry->search, sizeof(entry->search), norm_search);
+                platform_strncpy_s(entry->target, sizeof(entry->target), norm_target);
+                entry->frequency = 1;
+                entry->last_used = time(NULL);
+            }
+            
+            any_migrated = true;
+        }
+        fclose(f);
+    }
+    
+    if (any_migrated) {
+        db_metadata_save(meta);
+    }
+    
+    db_metadata_free(meta);
+    return any_migrated;
+}
+
+int db_metadata_cleanup_legacy(void)
+{
+    int count = 0;
+    
+    /* Delete ncd.config */
+    char path[MAX_PATH];
+    if (db_config_path(path, sizeof(path)) && platform_file_exists(path)) {
+        if (platform_delete_file(path)) count++;
+    }
+    
+    /* Delete ncd.history */
+    if (db_history_path(path, sizeof(path)) && platform_file_exists(path)) {
+        if (platform_delete_file(path)) count++;
+    }
+    
+    return count;
+}
+
+/* ============================================================= enhanced heuristics  */
+
+int db_heur_calculate_score(const NcdHeurEntryV2 *entry, time_t now)
+{
+    if (!entry) return 0;
+    
+    double days_since_use = difftime(now, entry->last_used) / (24.0 * 3600.0);
+    if (days_since_use < 0) days_since_use = 0;
+    
+    /* Score formula: (frequency * 10) / (1 + (days_since_last_use / 7)) */
+    double score = (entry->frequency * 10.0) / (1.0 + (days_since_use / 7.0));
+    
+    return (int)(score + 0.5);  /* Round to nearest integer */
+}
+
+int db_heur_find(NcdMetadata *meta, const char *search)
+{
+    if (!meta || !search || !search[0]) return -1;
+    
+    char norm_search[NCD_MAX_PATH];
+    size_t i;
+    for (i = 0; i < NCD_MAX_PATH - 1 && search[i]; i++) {
+        norm_search[i] = (char)tolower((unsigned char)search[i]);
+    }
+    norm_search[i] = '\0';
+    
+    for (int j = 0; j < meta->heuristics.count; j++) {
+        if (_stricmp(meta->heuristics.entries[j].search, norm_search) == 0) {
+            return j;
+        }
+    }
+    return -1;
+}
+
+/* Partial match penalty: 70% of original score (30% reduction) */
+#define HEUR_PARTIAL_MATCH_PENALTY 70
+
+int db_heur_find_best(NcdMetadata *meta, const char *search, bool *exact_match)
+{
+    if (!meta || !search || !search[0]) return -1;
+    
+    char norm_search[NCD_MAX_PATH];
+    size_t i;
+    for (i = 0; i < NCD_MAX_PATH - 1 && search[i]; i++) {
+        norm_search[i] = (char)tolower((unsigned char)search[i]);
+    }
+    norm_search[i] = '\0';
+    
+    /* Pre-compute search length once to avoid O(n^2) strlen calls */
+    size_t search_len = strlen(norm_search);
+    
+    int best_idx = -1;
+    int best_score = -1;
+    time_t now = time(NULL);
+    bool exact = false;
+    
+    for (int j = 0; j < meta->heuristics.count; j++) {
+        NcdHeurEntryV2 *entry = &meta->heuristics.entries[j];
+        
+        /* Check for exact match */
+        if (_stricmp(entry->search, norm_search) == 0) {
+            int score = db_heur_calculate_score(entry, now);
+            if (score > best_score) {
+                best_score = score;
+                best_idx = j;
+                exact = true;
+            }
+            continue;
+        }
+        
+        /* Check for partial match (only if no exact match found yet) */
+        if (!exact) {
+            /* 
+             * Partial matching strategy:
+             * 1. Check if search is a prefix of entry (e.g., "down" matches "downloads")
+             * 2. Check if entry is a prefix of search (e.g., "downloads" matches "down")
+             * 3. Check if either contains the other (substring match)
+             */
+            size_t entry_len = strlen(entry->search);
+            
+            bool partial = false;
+            if (search_len <= entry_len) {
+                if (strncmp(entry->search, norm_search, search_len) == 0) {
+                    partial = true;
+                }
+            } else {
+                if (strncmp(norm_search, entry->search, entry_len) == 0) {
+                    partial = true;
+                }
+            }
+            
+            /* Also check if search contains entry or vice versa */
+            if (!partial) {
+                if (strstr(entry->search, norm_search) != NULL ||
+                    strstr(norm_search, entry->search) != NULL) {
+                    partial = true;
+                }
+            }
+            
+            if (partial) {
+                int score = db_heur_calculate_score(entry, now);
+                /* Apply partial match penalty */
+                score = score * HEUR_PARTIAL_MATCH_PENALTY / 100;
+                if (score > best_score) {
+                    best_score = score;
+                    best_idx = j;
+                }
+            }
+        }
+    }
+    
+    if (exact_match) *exact_match = exact;
+    return best_idx;
+}
+
+void db_heur_note_choice(NcdMetadata *meta, const char *search, const char *target)
+{
+    if (!meta || !search || !target) return;
+    
+    char norm_search[NCD_MAX_PATH];
+    char norm_target[NCD_MAX_PATH];
+    
+    size_t i;
+    for (i = 0; i < NCD_MAX_PATH - 1 && search[i]; i++) {
+        norm_search[i] = (char)tolower((unsigned char)search[i]);
+    }
+    norm_search[i] = '\0';
+    platform_strncpy_s(norm_target, sizeof(norm_target), target);
+    
+    int idx = db_heur_find(meta, norm_search);
+    time_t now = time(NULL);
+    
+    if (idx >= 0) {
+        /* Update existing entry */
+        NcdHeurEntryV2 *entry = &meta->heuristics.entries[idx];
+        
+        if (_stricmp(entry->target, norm_target) != 0) {
+            /* Different target - update it */
+            platform_strncpy_s(entry->target, sizeof(entry->target), norm_target);
+        }
+        
+        entry->frequency++;
+        entry->last_used = now;
+        
+        /* Move to front (MRU ordering within same score) */
+        if (idx > 0) {
+            NcdHeurEntryV2 tmp = meta->heuristics.entries[idx];
+            memmove(&meta->heuristics.entries[1], &meta->heuristics.entries[0],
+                    (size_t)idx * sizeof(NcdHeurEntryV2));
+            meta->heuristics.entries[0] = tmp;
+        }
+    } else {
+        /* New entry - insert with eviction if at capacity */
+        if (meta->heuristics.count >= NCD_HEUR_MAX_ENTRIES) {
+            /* 
+             * Eviction policy: Remove the lowest-scored entry.
+             * 
+             * This is O(n) but n <= NCD_HEUR_MAX_ENTRIES (100), so it's acceptable.
+             * Alternative: Random eviction would be O(1) but may remove high-value entries.
+             * We chose score-based eviction to preserve frequently/recently used entries.
+             */
+            int min_score = INT_MAX;
+            int min_idx = 0;
+            for (int i = 0; i < meta->heuristics.count; i++) {
+                int score = db_heur_calculate_score(&meta->heuristics.entries[i], now);
+                if (score < min_score) {
+                    min_score = score;
+                    min_idx = i;
+                }
+            }
+            /* Remove min_idx by shifting remaining entries down */
+            memmove(&meta->heuristics.entries[min_idx], 
+                    &meta->heuristics.entries[min_idx + 1],
+                    (size_t)(meta->heuristics.count - min_idx - 1) * sizeof(NcdHeurEntryV2));
+            meta->heuristics.count--;
+        }
+        
+        /* Ensure capacity */
+        if (meta->heuristics.count >= meta->heuristics.capacity) {
+            int new_cap = meta->heuristics.capacity ? meta->heuristics.capacity * 2 : 16;
+            if (new_cap > NCD_HEUR_MAX_ENTRIES) new_cap = NCD_HEUR_MAX_ENTRIES;
+            meta->heuristics.entries = ncd_realloc(meta->heuristics.entries,
+                sizeof(NcdHeurEntryV2) * new_cap);
+            meta->heuristics.capacity = new_cap;
+        }
+        
+        /* Insert at front */
+        memmove(&meta->heuristics.entries[1], &meta->heuristics.entries[0],
+                (size_t)meta->heuristics.count * sizeof(NcdHeurEntryV2));
+        
+        NcdHeurEntryV2 *entry = &meta->heuristics.entries[0];
+        memset(entry, 0, sizeof(NcdHeurEntryV2));
+        platform_strncpy_s(entry->search, sizeof(entry->search), norm_search);
+        platform_strncpy_s(entry->target, sizeof(entry->target), norm_target);
+        entry->frequency = 1;
+        entry->last_used = now;
+        
+        meta->heuristics.count++;
+    }
+    
+    meta->heuristics_dirty = true;
+}
+
+bool db_heur_get_preferred(NcdMetadata *meta, const char *search,
+                           char *out_path, size_t out_size)
+{
+    if (!meta || !search || !out_path || out_size == 0) return false;
+    out_path[0] = '\0';
+    
+    bool exact = false;
+    int idx = db_heur_find_best(meta, search, &exact);
+    
+    if (idx >= 0) {
+        /* Only use exact matches or high-scoring partial matches */
+        time_t now = time(NULL);
+        int score = db_heur_calculate_score(&meta->heuristics.entries[idx], now);
+        
+        if (exact || score >= 5) {
+            platform_strncpy_s(out_path, out_size, meta->heuristics.entries[idx].target);
+            return out_path[0] != '\0';
+        }
+    }
+    
+    return false;
+}
+
+void db_heur_clear(NcdMetadata *meta)
+{
+    if (!meta) return;
+    
+    meta->heuristics.count = 0;
+    meta->heuristics_dirty = true;
+}
+
+typedef struct {
+    int idx;
+    int score;
+} HeurSortEntry;
+
+static int compare_heur_desc(const void *a, const void *b)
+{
+    const HeurSortEntry *ha = (const HeurSortEntry *)a;
+    const HeurSortEntry *hb = (const HeurSortEntry *)b;
+    return hb->score - ha->score;  /* descending */
+}
+
+void db_heur_print(NcdMetadata *meta)
+{
+    if (!meta) return;
+    
+    if (meta->heuristics.count == 0) {
+        printf("NCD history: empty\n");
+        return;
+    }
+    
+    /* Sort by score */
+    HeurSortEntry *sorted = ncd_malloc(sizeof(HeurSortEntry) * meta->heuristics.count);
+    time_t now = time(NULL);
+    
+    for (int i = 0; i < meta->heuristics.count; i++) {
+        sorted[i].idx = i;
+        sorted[i].score = db_heur_calculate_score(&meta->heuristics.entries[i], now);
+    }
+    
+    qsort(sorted, (size_t)meta->heuristics.count, sizeof(HeurSortEntry), compare_heur_desc);
+    
+    printf("NCD history (%d entries, sorted by relevance):\n", meta->heuristics.count);
+    printf("  %-4s %-20s %-30s %s\n", "Rank", "Search", "Target", "Score");
+    printf("  %s\n", "---------------------------------------------------------------");
+    
+    for (int i = 0; i < meta->heuristics.count && i < 20; i++) {
+        NcdHeurEntryV2 *entry = &meta->heuristics.entries[sorted[i].idx];
+        /* Truncate long strings for display */
+        char search_disp[21];
+        char target_disp[31];
+        
+        if (strlen(entry->search) > 20) {
+            snprintf(search_disp, sizeof(search_disp), "%.17s...", entry->search);
+        } else {
+            snprintf(search_disp, sizeof(search_disp), "%s", entry->search);
+        }
+        
+        if (strlen(entry->target) > 30) {
+            snprintf(target_disp, sizeof(target_disp), "...%.27s", 
+                     entry->target + strlen(entry->target) - 27);
+        } else {
+            snprintf(target_disp, sizeof(target_disp), "%s", entry->target);
+        }
+        
+        printf("  %-4d %-20s %-30s %d\n", i + 1, search_disp, target_disp, sorted[i].score);
+    }
+    
+    free(sorted);
+}
+
+/* ============================================================= atomic rescan helpers  */
+
+/*
+ * Create a deep copy of a DriveData structure for backup purposes.
+ * 
+ * This is used by the atomic rescan mechanism to preserve the existing
+ * drive data before attempting a rescan. If the rescan fails, the backup
+ * can be restored.
+ * 
+ * The returned backup must be freed with db_drive_backup_free().
+ * 
+ * Note: The backup stores exact sizes (not capacities) to minimize memory usage.
+ */
+DriveData *db_drive_backup_create(const DriveData *src)
+{
+    if (!src) return NULL;
+    
+    DriveData *backup = ncd_malloc(sizeof(DriveData));
+    memcpy(backup, src, sizeof(DriveData));
+    
+    /* Deep copy dirs array - allocate exact size needed */
+    if (src->dir_count > 0 && src->dirs) {
+        size_t dirs_bytes = (size_t)src->dir_count * sizeof(DirEntry);
+        backup->dirs = ncd_malloc(dirs_bytes);
+        memcpy(backup->dirs, src->dirs, dirs_bytes);
+    } else {
+        backup->dirs = NULL;
+    }
+    
+    /* Deep copy name pool - allocate exact size needed */
+    if (src->name_pool_len > 0 && src->name_pool) {
+        backup->name_pool = ncd_malloc(src->name_pool_len);
+        memcpy(backup->name_pool, src->name_pool, src->name_pool_len);
+    } else {
+        backup->name_pool = NULL;
+    }
+    
+    /* Store actual sizes, not capacities (backup is immutable) */
+    backup->dir_capacity = src->dir_count;
+    backup->name_pool_cap = src->name_pool_len;
+    
+    return backup;
+}
+
+void db_drive_backup_free(DriveData *backup)
+{
+    if (!backup) return;
+    
+    if (backup->dirs) free(backup->dirs);
+    if (backup->name_pool) free(backup->name_pool);
+    free(backup);
+}
+
+/*
+ * Restore a DriveData structure from a backup.
+ * 
+ * This is used by the atomic rescan mechanism to restore the original
+ * drive data when a rescan fails.
+ * 
+ * Note: This function frees the current data in dst and replaces it with
+ * deep copies from the backup. The backup remains valid and must be freed
+ * separately by the caller.
+ */
+void db_drive_restore_from_backup(DriveData *dst, const DriveData *backup)
+{
+    if (!dst || !backup) return;
+    
+    /* Free current data in destination */
+    if (dst->dirs) free(dst->dirs);
+    if (dst->name_pool) free(dst->name_pool);
+    
+    /* Copy metadata from backup */
+    memcpy(dst, backup, sizeof(DriveData));
+    
+    /* Deep copy dirs from backup */
+    if (backup->dir_count > 0 && backup->dirs) {
+        size_t dirs_bytes = (size_t)backup->dir_count * sizeof(DirEntry);
+        dst->dirs = ncd_malloc(dirs_bytes);
+        memcpy(dst->dirs, backup->dirs, dirs_bytes);
+    } else {
+        dst->dirs = NULL;
+    }
+    
+    /* Deep copy name pool from backup */
+    if (backup->name_pool_len > 0 && backup->name_pool) {
+        dst->name_pool = ncd_malloc(backup->name_pool_len);
+        memcpy(dst->name_pool, backup->name_pool, backup->name_pool_len);
+    } else {
+        dst->name_pool = NULL;
+    }
 }
