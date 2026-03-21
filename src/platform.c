@@ -14,8 +14,8 @@
 #include <errno.h>
 #endif
 
-/* NCD-specific pseudo filesystems list (from original platform.c) */
-static const char *ncd_pseudo_filesystems[] = {
+/* NCD-specific pseudo filesystems list */
+static const char *pseudo_filesystems[] = {
     "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
     "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
     "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
@@ -23,6 +23,16 @@ static const char *ncd_pseudo_filesystems[] = {
     "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
     "fuse.portal", "fuse.gvfsd-fuse", NULL
 };
+
+/* Check if a filesystem type is a pseudo filesystem */
+bool platform_is_pseudo_fs(const char *fstype)
+{
+    for (int i = 0; pseudo_filesystems[i]; i++) {
+        if (strcmp(fstype, pseudo_filesystems[i]) == 0)
+            return true;
+    }
+    return false;
+}
 
 /* ================================================================ NCD-specific database paths */
 
@@ -112,15 +122,8 @@ int ncd_platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
         if (sscanf(line, "%255s %4095s %63s", device, mountpoint, fstype) != 3)
             continue;
 
-        /* Skip pseudo filesystems using NCD's list */
-        bool is_pseudo = false;
-        for (int i = 0; ncd_pseudo_filesystems[i]; i++) {
-            if (strcmp(fstype, ncd_pseudo_filesystems[i]) == 0) {
-                is_pseudo = true;
-                break;
-            }
-        }
-        if (is_pseudo) continue;
+        /* Skip pseudo filesystems */
+        if (platform_is_pseudo_fs(fstype)) continue;
 
         if (strncmp(mountpoint, "/proc", 5) == 0) continue;
         if (strncmp(mountpoint, "/sys", 4) == 0) continue;
@@ -143,4 +146,145 @@ int ncd_platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
     fclose(mf);
     return count;
 #endif
+}
+
+/* ================================================================ NCD-specific platform abstractions */
+
+const char *platform_get_app_title(void)
+{
+#if NCD_PLATFORM_WINDOWS
+    return "NewChangeDirectory (NCD) -- Nifty CD for Windows 64-bit";
+#else
+    return "NewChangeDirectory (NCD) -- Nifty CD for Linux 64-bit";
+#endif
+}
+
+int platform_write_help_suffix(char *buf, size_t buf_size)
+{
+#if NCD_PLATFORM_LINUX
+    return snprintf(buf, buf_size,
+        "\r\n"
+        "Linux/WSL Specific:\r\n"
+        "  /r /        Rescan root filesystem only (excludes /mnt/*)\r\n"
+        "  X: or X:\\   Navigate Windows drive X: via /mnt/X\r\n");
+#else
+    (void)buf;
+    (void)buf_size;
+    return 0;
+#endif
+}
+
+char platform_parse_drive_from_search(const char *search, char *out_search, size_t out_size)
+{
+    if (!search || !out_search || out_size == 0) return 0;
+    
+#if NCD_PLATFORM_WINDOWS
+    if (isalpha((unsigned char)search[0]) && search[1] == ':') {
+        char drive = (char)toupper((unsigned char)search[0]);
+        platform_strncpy_s(out_search, out_size, search + 2);
+        return drive;
+    } else {
+        char cwd[MAX_PATH] = {0};
+        platform_get_current_dir(cwd, sizeof(cwd));
+        char drive = (char)toupper((unsigned char)cwd[0]);
+        platform_strncpy_s(out_search, out_size, search);
+        return drive;
+    }
+#else
+    /* On Linux/WSL: if search starts with "X:" treat X as Windows drive letter */
+    if (isalpha((unsigned char)search[0]) && search[1] == ':') {
+        char drive = (char)toupper((unsigned char)search[0]);
+        platform_strncpy_s(out_search, out_size, search + 2);
+        return drive;
+    } else {
+        /* Default to first available mount */
+        return '\x01';
+    }
+#endif
+}
+
+bool platform_build_mount_path(char letter, char *out_path, size_t out_size)
+{
+    if (!out_path || out_size == 0) return false;
+    
+#if NCD_PLATFORM_WINDOWS
+    if (!isalpha((unsigned char)letter)) return false;
+    snprintf(out_path, out_size, "%c:\\", (char)toupper((unsigned char)letter));
+    return true;
+#else
+    /* On Linux, find the mount point for this letter */
+    char mnt_bufs[26][MAX_PATH];
+    const char *mnt_ptrs[26];
+    int count = ncd_platform_enumerate_mounts(mnt_bufs, mnt_ptrs, MAX_PATH, 26);
+    
+    for (int i = 0; i < count; i++) {
+        char mnt_letter = platform_get_drive_letter(mnt_ptrs[i]);
+        if (mnt_letter == letter) {
+            snprintf(out_path, out_size, "%s", mnt_ptrs[i]);
+            return true;
+        }
+    }
+    return false;
+#endif
+}
+
+bool platform_is_drive_specifier(const char *str)
+{
+    if (!str || !str[0]) return false;
+    
+#if NCD_PLATFORM_WINDOWS
+    return isalpha((unsigned char)str[0]) && str[1] == ':' &&
+           (str[2] == '\0' || ((str[2] == '\\' || str[2] == '/') && str[3] == '\0'));
+#else
+    (void)str;
+    return false;
+#endif
+}
+
+int platform_get_available_drives(char *out_drives, int max_drives)
+{
+    if (!out_drives || max_drives <= 0) return 0;
+    
+#if NCD_PLATFORM_WINDOWS
+    DWORD mask = GetLogicalDrives();
+    int count = 0;
+    for (int i = 0; i < 26 && count < max_drives; i++) {
+        if (mask & (1u << i)) {
+            out_drives[count++] = (char)('A' + i);
+        }
+    }
+    return count;
+#else
+    /* On Linux, enumerate mounts and return assigned letters */
+    char mnt_bufs[26][MAX_PATH];
+    const char *mnt_ptrs[26];
+    int count = ncd_platform_enumerate_mounts(mnt_bufs, mnt_ptrs, MAX_PATH, max_drives);
+    
+    for (int i = 0; i < count && i < max_drives; i++) {
+        char letter = platform_get_drive_letter(mnt_ptrs[i]);
+        out_drives[i] = letter ? letter : (char)(i + 1);
+    }
+    return count;
+#endif
+}
+
+int platform_filter_available_drives(const char *in_drives, int in_count,
+                                      const bool skip_mask[26],
+                                      char *out_drives, int max_out)
+{
+    if (!in_drives || !out_drives || max_out <= 0) return 0;
+    
+    int out_idx = 0;
+    for (int i = 0; i < in_count && out_idx < max_out; i++) {
+        char letter = in_drives[i];
+        int idx = -1;
+        if (isalpha((unsigned char)letter)) {
+            idx = (int)(char)toupper((unsigned char)letter) - 'A';
+        } else if (letter >= 1 && letter <= 26) {
+            idx = (int)letter - 1;
+        }
+        if (idx >= 0 && idx < 26 && skip_mask[idx]) continue;
+        out_drives[out_idx++] = letter;
+    }
+    return out_idx;
 }

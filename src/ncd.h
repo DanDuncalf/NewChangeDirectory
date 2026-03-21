@@ -70,10 +70,26 @@ typedef long          LONG;
 #define NCD_META_VERSION    1
 #define NCD_META_FILENAME   "ncd.metadata"
 
+/*
+ * MetaFileHdr  --  fixed-size header at offset 0 of a metadata file
+ *
+ * sizeof(MetaFileHdr) == 20; every field is naturally aligned.
+ */
+typedef struct {
+    uint32_t magic;            /* NCD_META_MAGIC                              */
+    uint16_t version;          /* NCD_META_VERSION                            */
+    uint8_t  section_count;    /* number of sections that follow              */
+    uint8_t  reserved;         /* always 0                                    */
+    uint32_t reserved2;        /* always 0                                    */
+    uint64_t checksum;         /* CRC64 of all data after this header         */
+} MetaFileHdr;                 /* 20 bytes */
+
 /* Section IDs in metadata file */
 #define NCD_META_SECTION_CONFIG      0x01
 #define NCD_META_SECTION_GROUPS      0x02
 #define NCD_META_SECTION_HEURISTICS  0x03
+#define NCD_META_SECTION_EXCLUSIONS  0x04
+#define NCD_META_SECTION_DIR_HISTORY 0x05  /* Circular list of last 9 directories */
 
 /* Enhanced heuristics constants */
 #define NCD_HEUR_MAX_ENTRIES    100     /* Max history entries (was 20) */
@@ -93,7 +109,7 @@ typedef struct {
     uint8_t  show_system;         /* 1 or 0                                     */
     int64_t  last_scan;           /* Unix timestamp (8-byte aligned @ offset 8) */
     uint32_t drive_count;
-    uint8_t  user_skipped_update; /* 1 if user declined version update        */
+    uint8_t  skipped_rescan; /* 1 if user declined rescan after format change */
     uint8_t  pad[3];              /* reserved, always 0                         */
     uint64_t checksum;            /* CRC64 of all data after this header        */
 } BinFileHdr;                     /* 32 bytes */
@@ -210,6 +226,9 @@ typedef struct {
 /*
  * NcdDatabase  --  the full in-memory representation of ncd.database
  */
+/* Forward declaration for name index caching */
+struct NameIndex;
+
 typedef struct {
     int        version;
     bool       default_show_hidden;
@@ -233,6 +252,15 @@ typedef struct {
      */
     void      *blob_buf;              /* NULL unless is_blob                */
     bool       is_blob;               /* true  => dirs/pools point in blob  */
+    
+    /*
+     * Cached name index for fast searches.
+     * Built on first call to matcher_find(), invalidated when database changes.
+     * Uses void* to avoid including matcher.h here (circular dependency).
+     * Cast to NameIndex* when used in matcher.c.
+     */
+    void *name_index;                 /* NULL until built (actually NameIndex*) */
+    int   name_index_generation;      /* Incremented on modification */
 } NcdDatabase;
 
 /*
@@ -271,30 +299,125 @@ typedef struct {
 /*
  * NcdHeuristicsV2  --  enhanced heuristics database
  */
+
+/* Hash bucket for heuristics hash map (separate chaining) */
+typedef struct HeurHashBucket {
+    int entry_idx;                    /* Index into entries array            */
+    struct HeurHashBucket *next;      /* Next bucket in chain                */
+} HeurHashBucket;
+
 typedef struct {
     NcdHeurEntryV2 *entries;          /* Array of entries                    */
     int             count;            /* Number of valid entries             */
     int             capacity;         /* Allocated capacity                  */
+    
+    /* Hash map for O(1) lookup by search term */
+    HeurHashBucket **hash_buckets;    /* Array of bucket pointers            */
+    int              hash_bucket_count; /* Size of hash table (power of 2)   */
 } NcdHeuristicsV2;
+
+/*
+ * NcdGroupEntry - single group mapping
+ */
+typedef struct {
+    char name[NCD_MAX_GROUP_NAME];  /* Group name (e.g., "@home") */
+    char path[NCD_MAX_PATH];        /* Full directory path */
+    time_t created;                 /* When group was created */
+} NcdGroupEntry;
+
+/*
+ * NcdGroupDb - group database
+ */
+typedef struct {
+    NcdGroupEntry *groups;
+    int count;
+    int capacity;
+} NcdGroupDb;
+
+/*
+ * NcdExclusionEntry - single exclusion pattern
+ * 
+ * Pattern syntax:
+ *   - Windows: [drive:]path with * wildcards (e.g., C:Windows, *:$recycle.bin)
+ *   - Linux: path with * wildcards (e.g., proc, node_modules)
+ *   - Drive letter * means all drives
+ *   - Leading backslash or slash means match from root only
+ *   - ParentChild pattern matches only when parent contains child
+ *   - * alone is invalid, but .*foo*bar* is valid
+ */
+typedef struct {
+    char pattern[NCD_MAX_PATH];   /* Original pattern string */
+    char drive;                   /* Drive letter (0 = all drives, 'A'-'Z' = specific) */
+    bool match_from_root;         /* Pattern starts with path separator */
+    bool has_parent_match;        /* Pattern contains parent\child syntax */
+    uint8_t pad[2];
+} NcdExclusionEntry;
+
+/*
+ * NcdExclusionList - exclusion database
+ */
+typedef struct {
+    NcdExclusionEntry *entries;
+    int count;
+    int capacity;
+} NcdExclusionList;
+
+/* Default exclusion patterns (auto-added on first run) */
+#define NCD_DEFAULT_EXCLUSIONS_WINDOWS "$recycle.bin"
+#define NCD_DEFAULT_EXCLUSIONS_WIN_C   "\Windows"
+
+/*
+ * NcdDirHistoryEntry - single directory history entry
+ */
+typedef struct {
+    char path[NCD_MAX_PATH];      /* Full directory path */
+    char drive;                   /* Drive letter */
+    time_t timestamp;             /* When this entry was added */
+} NcdDirHistoryEntry;
+
+#define NCD_DIR_HISTORY_MAX 9     /* Maximum entries in directory history */
+
+/*
+ * NcdDirHistory - circular list of recently visited directories
+ * 
+ * entries[0] is the most recent, entries[count-1] is the oldest
+ * When adding to a full list, entries[NCD_DIR_HISTORY_MAX-1] is discarded
+ */
+typedef struct {
+    NcdDirHistoryEntry entries[NCD_DIR_HISTORY_MAX];
+    int count;                    /* Number of valid entries (0-9) */
+} NcdDirHistory;
 
 /*
  * NcdMetadata  --  consolidated metadata container
  * 
- * Combines config, groups, and heuristics in one file with atomic updates.
+ * Combines config, groups, heuristics, exclusions, and dir history in one file with atomic updates.
  */
 typedef struct {
     /* Configuration section */
     NcdConfig cfg;
     
+    /* Groups section */
+    NcdGroupDb groups;
+    
     /* Heuristics section */
     NcdHeuristicsV2 heuristics;
+    
+    /* Exclusion list section */
+    NcdExclusionList exclusions;
+    
+    /* Directory history section */
+    NcdDirHistory dir_history;
     
     /* File path (for save operations) */
     char file_path[NCD_MAX_PATH];
     
     /* Dirty flags for selective saving */
     bool config_dirty;
+    bool groups_dirty;
     bool heuristics_dirty;
+    bool exclusions_dirty;
+    bool dir_history_dirty;
 } NcdMetadata;
 
 /*
@@ -341,6 +464,17 @@ typedef struct {
     bool agent_flat;              /* --flat (for tree)                       */
     bool agent_check_db_age;      /* --db-age (for check)                    */
     bool agent_check_stats;       /* --stats (for check)                     */
+    
+    /* Exclusion list options */
+    bool exclusion_add;           /* -x <pattern> -- add exclusion pattern   */
+    bool exclusion_remove;        /* -x- <pattern> -- remove exclusion       */
+    bool exclusion_list;          /* -xl -- list all exclusions              */
+    char exclusion_pattern[NCD_MAX_PATH]; /* Pattern for -x or -x-         */
+    
+    /* Directory history options */
+    bool history_nav;             /* /0, /1, /2, etc. -- navigate history    */
+    int  history_index;           /* 0=ping-pong, 1+=jump to Nth entry       */
+    bool history_add_current;     /* true to add current dir to history      */
 } NcdOptions;
 
 /*

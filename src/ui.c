@@ -37,6 +37,7 @@
 #define KEY_RIGHT     10
 #define KEY_TAB       11
 #define KEY_BACKSPACE 12
+#define KEY_DELETE    13
 #define KEY_UNKNOWN   0
 
 #define NAV_RESULT_CANCEL 0
@@ -1275,8 +1276,9 @@ typedef struct {
 } ConfigItem;
 
 static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count,
-                            NcdConfig *cfg)
+                            NcdMetadata *meta)
 {
+    NcdConfig *cfg = &meta->cfg;
     int w = st->box_width;
     int inner = w - 2;
     int list_start = st->top_row + 3;
@@ -1303,7 +1305,7 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     if (st->input_mode) {
         con_write_padded(" Enter/Tab=Confirm  Esc=Cancel ", inner);
     } else {
-        con_write_padded(" UP/DOWN=Navigate  SPACE=Toggle  +/- or 0-9=Adjust ", inner);
+        con_write_padded(" UP/DOWN=Navigate  SPACE=Toggle  +/- or 0-9=Adjust  X=Exclusions ", inner);
     }
     con_write(BOX_V);
     
@@ -1388,9 +1390,11 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     con_write(BOX_BR);
 }
 
-bool ui_edit_config(NcdConfig *cfg)
+bool ui_edit_config(NcdMetadata *meta)
 {
-    if (!cfg) return false;
+    if (!meta) return false;
+    
+    NcdConfig *cfg = &meta->cfg;
     
     /* Initialize defaults if not already set */
     if (cfg->magic != NCD_CFG_MAGIC) {
@@ -1454,7 +1458,7 @@ bool ui_edit_config(NcdConfig *cfg)
     };
     
     con_hide_cursor();
-    draw_config_box(&st, items, item_count, cfg);
+    draw_config_box(&st, items, item_count, meta);
     
     bool saved = false;
     
@@ -1500,7 +1504,7 @@ bool ui_edit_config(NcdConfig *cfg)
                     }
                     break;
             }
-            draw_config_box(&st, items, item_count, cfg);
+            draw_config_box(&st, items, item_count, meta);
             continue;
         }
         
@@ -1559,6 +1563,15 @@ bool ui_edit_config(NcdConfig *cfg)
                 /* Cancel */
                 saved = false;
                 goto config_done;
+            case 'x':
+            case 'X':
+                /* Open exclusion editor */
+                if (ui_edit_exclusions(meta)) {
+                    /* Exclusions were modified, will be saved with metadata */
+                }
+                /* Redraw the config box */
+                st.first_draw = true;
+                break;
             default:
                 /* Enter input mode on digit press for non-bool items */
                 if (key >= '0' && key <= '9' && !items[st.selected].is_bool) {
@@ -1572,7 +1585,7 @@ bool ui_edit_config(NcdConfig *cfg)
                 }
                 break;
         }
-        draw_config_box(&st, items, item_count, cfg);
+        draw_config_box(&st, items, item_count, meta);
     }
     
 config_done:
@@ -1584,4 +1597,357 @@ config_done:
     con_show_cursor();
     ui_close_console();
     return saved;
+}
+
+/* ============================================================= exclusion list editor  */
+
+/* Maximum exclusions to display at once */
+#define EXCLUSION_MAX_DISPLAY 20
+
+/* Maximum pattern length for editing */
+#define EXCLUSION_MAX_PATTERN 256
+
+typedef struct {
+    int top_row;
+    int box_width;
+    int selected;
+    int first_display;
+    int count;
+    bool editing;
+    char edit_buf[EXCLUSION_MAX_PATTERN];
+    int edit_len;
+    int edit_cursor;
+} ExclusionUiState;
+
+static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
+{
+    int cols, rows, cur_row;
+    get_console_size(&cols, &rows, &cur_row);
+    
+    int visible = st->count < EXCLUSION_MAX_DISPLAY ? st->count : EXCLUSION_MAX_DISPLAY;
+    if (visible < 3) visible = 3;  /* Minimum height */
+    
+    int box_height = visible + 4;  /* Header + items + footer */
+    int inner = st->box_width - 2;
+    
+    /* Title bar */
+    con_cursor_pos(st->top_row, 0);
+    con_write(BOX_TL);
+    {
+        char title[128];
+        snprintf(title, sizeof(title), " Exclusion List ");
+        int title_len = (int)strlen(title);
+        int left_pad = (inner - title_len) / 2;
+        int right_pad = inner - title_len - left_pad;
+        int i;
+        for (i = 0; i < left_pad; i++) con_write(BOX_H);
+        con_write(title);
+        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+    }
+    con_write(BOX_TR);
+    
+    /* Help text */
+    con_cursor_pos(st->top_row + 1, 0);
+    con_write(BOX_V);
+    if (st->editing) {
+        con_write_padded(" Enter=Save  Esc=Cancel ", inner);
+    } else {
+        con_write_padded(" A=Add D=Del E=Edit  Enter=Done  Esc=Cancel ", inner);
+    }
+    con_write(BOX_V);
+    
+    /* Separator */
+    con_cursor_pos(st->top_row + 2, 0);
+    con_write(BOX_ML);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_MR);
+    
+    /* Draw items */
+    for (int i = 0; i < visible; i++) {
+        int idx = st->first_display + i;
+        int row = st->top_row + 3 + i;
+        con_cursor_pos(row, 0);
+        con_write(BOX_V);
+        
+        if (idx < st->count) {
+            NcdExclusionEntry *entry = &meta->exclusions.entries[idx];
+            bool is_selected = (idx == st->selected);
+            
+            if (is_selected && g_ansi) con_write(ANSI_REVERSE);
+            
+            /* Format: [drive] pattern */
+            char line[256];
+            char drive_str[8];
+            if (entry->drive == 0) {
+                snprintf(drive_str, sizeof(drive_str), "*");
+            } else {
+                snprintf(drive_str, sizeof(drive_str), "%c:", entry->drive);
+            }
+            
+            snprintf(line, sizeof(line), " %-4s %s", drive_str, entry->pattern);
+            
+            /* Truncate if too long */
+            if ((int)strlen(line) > inner) {
+                line[inner - 3] = '.';
+                line[inner - 2] = '.';
+                line[inner - 1] = '.';
+                line[inner] = '\0';
+            }
+            
+            con_write_padded(line, inner);
+            if (is_selected && g_ansi) con_write(ANSI_RESET);
+        } else {
+            /* Empty slot */
+            con_write_padded("", inner);
+        }
+        con_write(BOX_V);
+    }
+    
+    /* Bottom border */
+    con_cursor_pos(st->top_row + 3 + visible, 0);
+    con_write(BOX_BL);
+    {
+        int i;
+        for (i = 0; i < inner; i++) con_write(BOX_H);
+    }
+    con_write(BOX_BR);
+}
+
+bool ui_edit_exclusions(NcdMetadata *meta)
+{
+    if (!meta) return false;
+    
+    ui_open_console();
+#if NCD_PLATFORM_WINDOWS
+    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
+        ui_close_console();
+        return false;
+    }
+#else
+    if (g_tty_out < 0 || g_tty_in < 0) {
+        ui_close_console();
+        return false;
+    }
+#endif
+    
+    int cols, rows, cur_row;
+    get_console_size(&cols, &rows, &cur_row);
+    
+    ExclusionUiState st = {
+        .top_row = cur_row,
+        .box_width = 70,
+        .selected = 0,
+        .first_display = 0,
+        .count = meta->exclusions.count,
+        .editing = false,
+        .edit_len = 0,
+        .edit_cursor = 0
+    };
+    
+    if (st.box_width > cols - 4) st.box_width = cols - 4;
+    
+    bool saved = false;
+    bool cancelled = false;
+    
+    con_hide_cursor();
+    draw_exclusion_box(&st, meta);
+    
+    while (!cancelled && !saved) {
+        int key = read_key();
+        
+        if (st.editing) {
+            /* Edit mode - handle text input */
+            switch (key) {
+                case KEY_ENTER:
+                    /* Save edited/added pattern */
+                    if (st.edit_len > 0) {
+                        st.edit_buf[st.edit_len] = '\0';
+                        
+                        if (st.selected < st.count) {
+                            /* Edit existing - remove old, add new */
+                            db_exclusion_remove(meta, meta->exclusions.entries[st.selected].pattern);
+                            if (db_exclusion_add(meta, st.edit_buf)) {
+                                meta->exclusions_dirty = true;
+                                st.count = meta->exclusions.count;
+                            }
+                        } else {
+                            /* Add new */
+                            if (db_exclusion_add(meta, st.edit_buf)) {
+                                meta->exclusions_dirty = true;
+                                st.count = meta->exclusions.count;
+                                st.selected = st.count - 1;
+                            }
+                        }
+                    }
+                    st.editing = false;
+                    break;
+                    
+                case KEY_ESC:
+                    /* Cancel edit */
+                    st.editing = false;
+                    st.edit_len = 0;
+                    break;
+                    
+                case KEY_BACKSPACE:
+                    if (st.edit_cursor > 0) {
+                        memmove(&st.edit_buf[st.edit_cursor - 1], &st.edit_buf[st.edit_cursor],
+                                st.edit_len - st.edit_cursor);
+                        st.edit_cursor--;
+                        st.edit_len--;
+                    }
+                    break;
+                    
+                case KEY_LEFT:
+                    if (st.edit_cursor > 0) st.edit_cursor--;
+                    break;
+                    
+                case KEY_RIGHT:
+                    if (st.edit_cursor < st.edit_len) st.edit_cursor++;
+                    break;
+                    
+                case KEY_HOME:
+                    st.edit_cursor = 0;
+                    break;
+                    
+                case KEY_END:
+                    st.edit_cursor = st.edit_len;
+                    break;
+                    
+                case KEY_DELETE:
+                    if (st.edit_cursor < st.edit_len) {
+                        memmove(&st.edit_buf[st.edit_cursor], &st.edit_buf[st.edit_cursor + 1],
+                                st.edit_len - st.edit_cursor - 1);
+                        st.edit_len--;
+                    }
+                    break;
+                    
+                default:
+                    if (key >= 32 && key < 127 && st.edit_len < EXCLUSION_MAX_PATTERN - 1) {
+                        memmove(&st.edit_buf[st.edit_cursor + 1], &st.edit_buf[st.edit_cursor],
+                                st.edit_len - st.edit_cursor);
+                        st.edit_buf[st.edit_cursor] = (char)key;
+                        st.edit_cursor++;
+                        st.edit_len++;
+                    }
+                    break;
+            }
+        } else {
+            /* Normal mode - navigation */
+            switch (key) {
+                case KEY_UP:
+                    if (st.selected > 0) {
+                        st.selected--;
+                        if (st.selected < st.first_display) {
+                            st.first_display = st.selected;
+                        }
+                    }
+                    break;
+                    
+                case KEY_DOWN:
+                    if (st.selected < st.count - 1) {
+                        st.selected++;
+                        int visible = st.count < EXCLUSION_MAX_DISPLAY ? st.count : EXCLUSION_MAX_DISPLAY;
+                        if (st.selected >= st.first_display + visible) {
+                            st.first_display = st.selected - visible + 1;
+                        }
+                    }
+                    break;
+                    
+                case KEY_HOME:
+                    st.selected = 0;
+                    st.first_display = 0;
+                    break;
+                    
+                case KEY_END:
+                    st.selected = st.count - 1;
+                    if (st.count > EXCLUSION_MAX_DISPLAY) {
+                        st.first_display = st.count - EXCLUSION_MAX_DISPLAY;
+                    }
+                    break;
+                    
+                case KEY_PGUP:
+                    st.selected -= EXCLUSION_MAX_DISPLAY;
+                    if (st.selected < 0) st.selected = 0;
+                    st.first_display = st.selected;
+                    break;
+                    
+                case KEY_PGDN:
+                    st.selected += EXCLUSION_MAX_DISPLAY;
+                    if (st.selected >= st.count) st.selected = st.count - 1;
+                    if (st.count > EXCLUSION_MAX_DISPLAY) {
+                        st.first_display = st.selected - EXCLUSION_MAX_DISPLAY + 1;
+                        if (st.first_display < 0) st.first_display = 0;
+                    }
+                    break;
+                    
+                case 'a':
+                case 'A':
+                    /* Add new pattern */
+                    st.editing = true;
+                    st.edit_len = 0;
+                    st.edit_cursor = 0;
+                    st.edit_buf[0] = '\0';
+                    /* Set selected past end to indicate "add" mode */
+                    st.selected = st.count;
+                    break;
+                    
+                case 'd':
+                case 'D':
+                    /* Delete selected pattern */
+                    if (st.selected < st.count) {
+                        db_exclusion_remove(meta, meta->exclusions.entries[st.selected].pattern);
+                        meta->exclusions_dirty = true;
+                        st.count = meta->exclusions.count;
+                        if (st.selected >= st.count && st.selected > 0) {
+                            st.selected--;
+                        }
+                        if (st.first_display > 0 && st.count <= EXCLUSION_MAX_DISPLAY) {
+                            st.first_display = 0;
+                        }
+                    }
+                    break;
+                    
+                case 'e':
+                case 'E':
+                    /* Edit selected pattern */
+                    if (st.selected < st.count) {
+                        st.editing = true;
+                        platform_strncpy_s(st.edit_buf, sizeof(st.edit_buf),
+                                          meta->exclusions.entries[st.selected].pattern);
+                        st.edit_len = (int)strlen(st.edit_buf);
+                        st.edit_cursor = st.edit_len;
+                    }
+                    break;
+                    
+                case KEY_ENTER:
+                    /* Done - save changes */
+                    saved = true;
+                    break;
+                    
+                case KEY_ESC:
+                case 'q':
+                case 'Q':
+                    /* Cancel */
+                    cancelled = true;
+                    break;
+            }
+        }
+        
+        draw_exclusion_box(&st, meta);
+    }
+    
+    /* Cleanup */
+    get_console_size(&cols, &rows, &cur_row);
+    int visible = st.count < EXCLUSION_MAX_DISPLAY ? st.count : EXCLUSION_MAX_DISPLAY;
+    if (visible < 3) visible = 3;
+    int box_height = visible + 4;
+    clear_area(st.top_row, box_height + 1, cols);
+    con_cursor_pos(st.top_row, 0);
+    con_show_cursor();
+    ui_close_console();
+    
+    return saved && !cancelled;
 }

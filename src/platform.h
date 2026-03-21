@@ -37,6 +37,56 @@ int ncd_platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
                                   size_t buf_size,
                                   int max_mounts);
 
+/* Check if a filesystem type is a pseudo filesystem (proc, sysfs, tmpfs, etc.) */
+bool platform_is_pseudo_fs(const char *fstype);
+
+/* ================================================================ NCD-specific platform abstractions
+ *
+ * These functions abstract platform-specific operations to reduce #if blocks in main code.
+ */
+
+/* 
+ * Parse drive letter from search string and extract clean search term.
+ * Returns drive letter (A-Z on Windows, 0x01-0x1A on Linux) and writes clean search to out_search.
+ */
+char platform_parse_drive_from_search(const char *search, char *out_search, size_t out_size);
+
+/*
+ * Build mount path from drive letter.
+ * Windows: "C:\", Linux: "/mnt/X" or the actual mount point
+ */
+bool platform_build_mount_path(char letter, char *out_path, size_t out_size);
+
+/*
+ * Check if the string specifies a drive root (e.g., "C:" or "C:\" on Windows).
+ */
+bool platform_is_drive_specifier(const char *str);
+
+/*
+ * Get the list of available drives as character codes.
+ * Returns number of drives written to out_drives (max 26).
+ */
+int platform_get_available_drives(char *out_drives, int max_drives);
+
+/*
+ * Filter available drives based on skip mask.
+ * Takes input drives from platform_get_available_drives and filters them.
+ */
+int platform_filter_available_drives(const char *in_drives, int in_count, 
+                                      const bool skip_mask[26],
+                                      char *out_drives, int max_out);
+
+/*
+ * Get the application title string for help/version display.
+ */
+const char *platform_get_app_title(void);
+
+/*
+ * Write the platform-specific help suffix (e.g., Linux-specific options).
+ * Returns number of characters written, or 0 if none.
+ */
+int platform_write_help_suffix(char *buf, size_t buf_size);
+
 #ifdef __cplusplus
 }
 #endif

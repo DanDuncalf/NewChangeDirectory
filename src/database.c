@@ -54,6 +54,7 @@ bool g_test_slow_mode = false;
 #include "database.h"
 #include "platform.h"
 #include "strbuilder.h"
+#include "matcher.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,11 +64,31 @@ bool g_test_slow_mode = false;
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
+#include <errno.h>
 
 #if NCD_PLATFORM_LINUX
 #include <sys/stat.h>
 #include <sys/types.h>
 #endif
+
+/* ================================================================ error handling */
+
+/* Thread-local error buffer for database operations */
+static _Thread_local char db_last_error[512] = {0};
+
+/* Set an error message with context */
+static void db_set_error(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(db_last_error, sizeof(db_last_error), fmt, ap);
+    va_end(ap);
+}
+
+const char *db_get_last_error(void)
+{
+    return db_last_error[0] ? db_last_error : "Unknown database error";
+}
 
 /* ================================================================ helpers */
 
@@ -100,6 +121,10 @@ NcdDatabase *db_create(void)
 void db_free(NcdDatabase *db)
 {
     if (!db) return;
+    /* Free cached name index if present */
+    if (db->name_index) {
+        name_index_free((NameIndex *)db->name_index);
+    }
     if (db->is_blob) {
         /*
          * Binary-blob load: dirs[] and name_pool pointers inside each
@@ -157,18 +182,19 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     hdr.last_scan   = (int64_t)db->last_scan;
     hdr.drive_count = 1;
     
-    /* Preserve user_skipped_update flag from existing file if present */
+    /* Preserve skipped_rescan flag from existing file if present */
     FILE *existing = fopen(path, "rb");
     if (existing) {
-        uint8_t sig[4];
-        if (fread(sig, 1, 4, existing) == 4 &&
-            sig[0] == 0x4E && sig[1] == 0x43 &&
-            sig[2] == 0x44 && sig[3] == 0x42) {
-            /* Valid binary file - read skip flag at offset 16 */
+        uint32_t magic = 0;
+        if (fread(&magic, sizeof(magic), 1, existing) == 1 &&
+            magic == NCD_BIN_MAGIC) {
+            /* Valid binary file - preserve skip flag from old file */
             uint8_t skip_flag = 0;
-            fseek(existing, 4 + 2 + 1 + 1 + 8 + 4, SEEK_SET); /* magic+version+hidden+system+last_scan+drive_count */
-            fread(&skip_flag, 1, 1, existing);
-            hdr.user_skipped_update = skip_flag;
+            if (fseek(existing, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+                if (fread(&skip_flag, 1, 1, existing) == 1) {
+                    hdr.skipped_rescan = skip_flag;
+                }
+            }
         }
         fclose(existing);
     }
@@ -196,6 +222,10 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     size_t padded = (pos + 3) & ~(size_t)3;
     while (pos < padded) buf[pos++] = 0;
 
+    /* ---- compute CRC64 checksum over all data after the header ---- */
+    uint64_t checksum = platform_crc64(buf + sizeof(hdr), pos - sizeof(hdr));
+    memcpy(buf + offsetof(BinFileHdr, checksum), &checksum, sizeof(checksum));
+
     /* ---- atomic write (.tmp -> rename) ---- */
     char tmp_path[MAX_PATH];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
@@ -204,11 +234,21 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     if (!f) { free(buf); return false; }
 
     size_t written = fwrite(buf, 1, pos, f);
-    fflush(f);  /* Ensure data is written to OS before closing */
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush database to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     free(buf);
 
-    if (written != pos) { platform_delete_file(tmp_path); return false; }
+    if (written != pos) { 
+        db_set_error("Failed to write database: incomplete write");
+        platform_delete_file(tmp_path); 
+        return false; 
+    }
 
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
@@ -327,28 +367,14 @@ bool db_config_save(const NcdConfig *cfg)
     if (!db_config_path(path, sizeof(path))) return false;
     
     /* Ensure directory exists */
-#if NCD_PLATFORM_WINDOWS
     char dir[MAX_PATH];
     platform_strncpy_s(dir, sizeof(dir), path);
     char *last_sep = strrchr(dir, '\\');
     if (!last_sep) last_sep = strrchr(dir, '/');
     if (last_sep) {
         *last_sep = '\0';
-        /* Try to create directory - ignore errors (may already exist) */
-        CreateDirectoryA(dir, NULL);
+        platform_create_dir(dir);
     }
-#else
-    char dir[MAX_PATH];
-    platform_strncpy_s(dir, sizeof(dir), path);
-    char *last_sep = strrchr(dir, '/');
-    if (last_sep) {
-        *last_sep = '\0';
-        /* Try to create directory - ignore errors */
-        char cmd[MAX_PATH + 32];
-        snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir);
-        system(cmd);
-    }
-#endif
     
     /* Write with atomic rename pattern */
     char tmp_path[MAX_PATH];
@@ -358,10 +384,16 @@ bool db_config_save(const NcdConfig *cfg)
     if (!f) return false;
     
     size_t wr = fwrite(cfg, 1, sizeof(NcdConfig), f);
-    fflush(f);
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush config to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     
     if (wr != sizeof(NcdConfig)) {
+        db_set_error("Failed to write config: incomplete write");
         platform_delete_file(tmp_path);
         return false;
     }
@@ -507,11 +539,7 @@ bool db_group_save(const NcdGroupDb *gdb)
     if (!last_sep) last_sep = strrchr(dir_path, '/');
     if (last_sep) {
         *last_sep = '\0';
-#if NCD_PLATFORM_WINDOWS
-        CreateDirectoryA(dir_path, NULL);
-#else
-        mkdir(dir_path, 0755);
-#endif
+        platform_create_dir(dir_path);
     }
     
     /* Write to temp file */
@@ -573,9 +601,11 @@ bool db_group_save(const NcdGroupDb *gdb)
     return true;
 }
 
-bool db_group_set(NcdGroupDb *gdb, const char *name, const char *path)
+bool db_group_set(NcdMetadata *meta, const char *name, const char *path)
 {
-    if (!gdb || !name || !path) return false;
+    if (!meta || !name || !path) return false;
+    
+    NcdGroupDb *gdb = &meta->groups;
     
     /* Check if group already exists */
     for (int i = 0; i < gdb->count; i++) {
@@ -583,6 +613,7 @@ bool db_group_set(NcdGroupDb *gdb, const char *name, const char *path)
             /* Update existing group */
             platform_strncpy_s(gdb->groups[i].path, sizeof(gdb->groups[i].path), path);
             gdb->groups[i].created = time(NULL);
+            meta->groups_dirty = true;
             return true;
         }
     }
@@ -601,13 +632,16 @@ bool db_group_set(NcdGroupDb *gdb, const char *name, const char *path)
     platform_strncpy_s(entry->name, sizeof(entry->name), name);
     platform_strncpy_s(entry->path, sizeof(entry->path), path);
     entry->created = time(NULL);
+    meta->groups_dirty = true;
     
     return true;
 }
 
-bool db_group_remove(NcdGroupDb *gdb, const char *name)
+bool db_group_remove(NcdMetadata *meta, const char *name)
 {
-    if (!gdb || !name) return false;
+    if (!meta || !name) return false;
+    
+    NcdGroupDb *gdb = &meta->groups;
     
     for (int i = 0; i < gdb->count; i++) {
         if (_stricmp(gdb->groups[i].name, name) == 0) {
@@ -615,6 +649,7 @@ bool db_group_remove(NcdGroupDb *gdb, const char *name)
             memmove(&gdb->groups[i], &gdb->groups[i + 1],
                     (size_t)(gdb->count - i - 1) * sizeof(NcdGroupEntry));
             gdb->count--;
+            meta->groups_dirty = true;
             return true;
         }
     }
@@ -622,9 +657,11 @@ bool db_group_remove(NcdGroupDb *gdb, const char *name)
     return false;  /* Group not found */
 }
 
-const NcdGroupEntry *db_group_get(const NcdGroupDb *gdb, const char *name)
+const NcdGroupEntry *db_group_get(NcdMetadata *meta, const char *name)
 {
-    if (!gdb || !name) return NULL;
+    if (!meta || !name) return NULL;
+    
+    NcdGroupDb *gdb = &meta->groups;
     
     for (int i = 0; i < gdb->count; i++) {
         if (_stricmp(gdb->groups[i].name, name) == 0) {
@@ -635,17 +672,117 @@ const NcdGroupEntry *db_group_get(const NcdGroupDb *gdb, const char *name)
     return NULL;
 }
 
-void db_group_list(const NcdGroupDb *gdb)
+void db_group_list(NcdMetadata *meta)
 {
-    if (!gdb || gdb->count == 0) {
+    if (!meta || meta->groups.count == 0) {
         printf("No groups defined.\n");
         return;
     }
     
-    printf("Groups (%d):\n", gdb->count);
-    for (int i = 0; i < gdb->count; i++) {
-        printf("  %-20s -> %s\n", gdb->groups[i].name, gdb->groups[i].path);
+    printf("Groups (%d):\n", meta->groups.count);
+    for (int i = 0; i < meta->groups.count; i++) {
+        printf("  %-20s -> %s\n", meta->groups.groups[i].name, meta->groups.groups[i].path);
     }
+}
+
+/* ============================================================= dir history */
+
+bool db_dir_history_add(NcdMetadata *meta, const char *path, char drive)
+{
+    if (!meta || !path) return false;
+    
+    NcdDirHistory *hist = &meta->dir_history;
+    
+    /* Check if this path is already at the top - no change needed */
+    if (hist->count > 0 && _stricmp(hist->entries[0].path, path) == 0) {
+        return true;
+    }
+    
+    /* Check if this path exists elsewhere in the list - remove it */
+    int existing_idx = -1;
+    for (int i = 0; i < hist->count; i++) {
+        if (_stricmp(hist->entries[i].path, path) == 0) {
+            existing_idx = i;
+            break;
+        }
+    }
+    
+    if (existing_idx >= 0) {
+        /* Remove existing entry by shifting */
+        memmove(&hist->entries[existing_idx], &hist->entries[existing_idx + 1],
+                (size_t)(hist->count - existing_idx - 1) * sizeof(NcdDirHistoryEntry));
+        hist->count--;
+    }
+    
+    /* If list is full, drop the last entry */
+    if (hist->count >= NCD_DIR_HISTORY_MAX) {
+        hist->count = NCD_DIR_HISTORY_MAX - 1;
+    }
+    
+    /* Shift all entries down by one */
+    memmove(&hist->entries[1], &hist->entries[0],
+            (size_t)hist->count * sizeof(NcdDirHistoryEntry));
+    
+    /* Add new entry at top */
+    platform_strncpy_s(hist->entries[0].path, sizeof(hist->entries[0].path), path);
+    hist->entries[0].drive = drive;
+    hist->entries[0].timestamp = time(NULL);
+    hist->count++;
+    
+    meta->dir_history_dirty = true;
+    return true;
+}
+
+const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index)
+{
+    if (!meta || index < 0 || index >= meta->dir_history.count) return NULL;
+    return &meta->dir_history.entries[index];
+}
+
+void db_dir_history_swap_first_two(NcdMetadata *meta)
+{
+    if (!meta || meta->dir_history.count < 2) return;
+    
+    NcdDirHistoryEntry temp;
+    memcpy(&temp, &meta->dir_history.entries[0], sizeof(NcdDirHistoryEntry));
+    memcpy(&meta->dir_history.entries[0], &meta->dir_history.entries[1], sizeof(NcdDirHistoryEntry));
+    memcpy(&meta->dir_history.entries[1], &temp, sizeof(NcdDirHistoryEntry));
+    
+    meta->dir_history_dirty = true;
+}
+
+int db_dir_history_count(NcdMetadata *meta)
+{
+    if (!meta) return 0;
+    return meta->dir_history.count;
+}
+
+void db_dir_history_clear(NcdMetadata *meta)
+{
+    if (!meta) return;
+    meta->dir_history.count = 0;
+    meta->dir_history_dirty = true;
+}
+
+void db_dir_history_print(NcdMetadata *meta)
+{
+    if (!meta || meta->dir_history.count == 0) {
+        printf("Directory history: empty\n");
+        return;
+    }
+    
+    printf("Directory history (%d entries, max %d):\n", 
+           meta->dir_history.count, NCD_DIR_HISTORY_MAX);
+    for (int i = 0; i < meta->dir_history.count; i++) {
+        const NcdDirHistoryEntry *e = &meta->dir_history.entries[i];
+        printf("  /%-2d  %c:\\  %s\n", i + 1, e->drive, e->path);
+    }
+    printf("\nUsage:\n");
+    printf("  ncd       - ping-pong between last two directories\n");
+    printf("  ncd /0    - same as ncd (ping-pong)\n");
+    printf("  ncd /1    - add current directory to history\n");
+    printf("  ncd /2    - jump to 2nd entry in history\n");
+    printf("  ncd /3    - jump to 3rd entry in history\n");
 }
 
 /* ============================================================= drive mgmt */
@@ -659,6 +796,8 @@ DriveData *db_add_drive(NcdDatabase *db, char letter)
     DriveData *drv = &db->drives[db->drive_count++];
     memset(drv, 0, sizeof(DriveData));
     drv->letter = (char)toupper((unsigned char)letter);
+    /* Invalidate cached name index since database structure changed */
+    db->name_index_generation++;
     return drv;
 }
 
@@ -711,29 +850,81 @@ int db_add_dir(DriveData *drv, const char *name, int32_t parent,
 char *db_full_path(const DriveData *drv, int dir_index,
                    char *buf, size_t buf_size)
 {
+    if (!buf || buf_size == 0) return NULL;
+    
 #if NCD_PLATFORM_WINDOWS
     if (dir_index < 0 || dir_index >= drv->dir_count) {
         snprintf(buf, buf_size, "%c:\\", drv->letter);
         return buf;
     }
+#else
+    if (dir_index < 0 || dir_index >= drv->dir_count) {
+        snprintf(buf, buf_size, "%s", drv->label);
+        return buf;
+    }
+#endif
 
-    /* Walk up the parent chain collecting component pointers. */
-    const int MAX_DEPTH = 128;
-    const char *parts[128];
+    /*
+     * First pass: Count depth and detect cycles using a visited bit vector.
+     * A cycle exists if we visit the same index twice.
+     */
     int depth = 0;
-    int cur   = dir_index;
-    while (cur >= 0 && depth < MAX_DEPTH) {
-        parts[depth++] = drv->name_pool + drv->dirs[cur].name_off;
+    int cur = dir_index;
+    bool has_cycle = false;
+    
+    /* Bit vector for visited tracking - allocate on stack (8 bytes per 64 entries) */
+    int visited_words = (drv->dir_count + 63) / 64;
+    if (visited_words < 1) visited_words = 1;
+    uint64_t *visited = ncd_malloc_array((size_t)visited_words, sizeof(uint64_t));
+    memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
+    
+    while (cur >= 0) {
+        /* Check if already visited (cycle detection) */
+        int word_idx = cur / 64;
+        int bit_idx = cur % 64;
+        if (visited[word_idx] & ((uint64_t)1 << bit_idx)) {
+            has_cycle = true;
+            break;
+        }
+        visited[word_idx] |= ((uint64_t)1 << bit_idx);
+        
+        depth++;
+        if (depth > drv->dir_count) {
+            /* Sanity check: depth can't exceed total directories */
+            has_cycle = true;
+            break;
+        }
         cur = drv->dirs[cur].parent;
     }
-
-    /* Build "X:\comp[n-1]\...\comp[0]" */
+    
+    free(visited);
+    
+    if (has_cycle) {
+        /* Return empty string to indicate error */
+        buf[0] = '\0';
+        return NULL;
+    }
+    
+    /*
+     * Second pass: Collect path components.
+     * Use alloca for dynamic array sized by actual depth.
+     */
+    const char **parts = ncd_malloc_array((size_t)depth, sizeof(char *));
+    cur = dir_index;
+    int idx = 0;
+    while (cur >= 0 && idx < depth) {
+        parts[idx++] = drv->name_pool + drv->dirs[cur].name_off;
+        cur = drv->dirs[cur].parent;
+    }
+    
+    /* Build the path string */
     size_t pos = 0;
+#if NCD_PLATFORM_WINDOWS
     pos += (size_t)snprintf(buf + pos, buf_size - pos, "%c:\\", drv->letter);
     for (int i = depth - 1; i >= 0 && pos < buf_size - 1; i--) {
         if (i < depth - 1) {
             buf[pos++] = '\\';
-            buf[pos]   = '\0';
+            buf[pos] = '\0';
         }
         size_t part_len = strlen(parts[i]);
         if (pos + part_len >= buf_size) part_len = buf_size - pos - 1;
@@ -741,52 +932,29 @@ char *db_full_path(const DriveData *drv, int dir_index,
         pos += part_len;
         buf[pos] = '\0';
     }
-    return buf;
-
 #else /* NCD_PLATFORM_LINUX */
-    /*
-     * On Linux the mount root path is stored in drv->label.
-     * dir_index == -1 means the mount root itself.
-     */
-    if (dir_index < 0 || dir_index >= drv->dir_count) {
-        snprintf(buf, buf_size, "%s", drv->label);
-        return buf;
-    }
-
-    /* Walk up the parent chain collecting component pointers. */
-    const int MAX_DEPTH = 128;
-    const char *parts[128];
-    int depth = 0;
-    int cur   = dir_index;
-    while (cur >= 0 && depth < MAX_DEPTH) {
-        parts[depth++] = drv->name_pool + drv->dirs[cur].name_off;
-        cur = drv->dirs[cur].parent;
-    }
-
-    /* Start with the mount root (e.g. "/" or "/home"). */
-    size_t pos = 0;
     size_t root_len = strlen(drv->label);
     if (root_len >= buf_size) root_len = buf_size - 1;
     memcpy(buf, drv->label, root_len);
     pos = root_len;
     buf[pos] = '\0';
-
-    /* Remove trailing slash from root so we don't double up. */
+    
     if (pos > 0 && buf[pos - 1] == '/')
         pos--;
-
-    /* Append "/comp[n-1]/.../comp[0]" */
+    
     for (int i = depth - 1; i >= 0 && pos < buf_size - 1; i--) {
         buf[pos++] = '/';
-        buf[pos]   = '\0';
+        buf[pos] = '\0';
         size_t part_len = strlen(parts[i]);
         if (pos + part_len >= buf_size) part_len = buf_size - pos - 1;
         memcpy(buf + pos, parts[i], part_len);
         pos += part_len;
         buf[pos] = '\0';
     }
-    return buf;
 #endif
+    
+    free(parts);
+    return buf;
 }
 
 /* ================================================================== load  */
@@ -795,10 +963,20 @@ static char *read_file(const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NULL;
+    }
     long sz = ftell(f);
-    rewind(f);
-    if (sz <= 0) { fclose(f); return NULL; }
+    if (sz < 0 || (size_t)sz > NCD_MAX_FILE_SIZE) {
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    if (sz == 0) { fclose(f); return NULL; }
     char *buf = malloc((size_t)sz + 1);
     if (!buf)  { fclose(f); return NULL; }
     size_t rd = fread(buf, 1, (size_t)sz, f);
@@ -1163,12 +1341,21 @@ bool db_save(const NcdDatabase *db, const char *path)
     if (!f) { free(sb.buf); return false; }
 
     size_t written = fwrite(sb.buf, 1, sb.len, f);
-    fflush(f);  /* Ensure data is written to OS before closing */
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush groups to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        free(sb.buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
-    bool ok = (written == sb.len);
     free(sb.buf);
 
-    if (!ok) { platform_delete_file(tmp_path); return false; }
+    if (written != sb.len) {
+        db_set_error("Failed to write groups: incomplete write");
+        platform_delete_file(tmp_path);
+        return false;
+    }
 
     /* Rotate: current -> .old, .tmp -> current */
     char old_path[MAX_PATH];
@@ -1278,11 +1465,21 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     if (!f) { free(buf); return false; }
 
     size_t written = fwrite(buf, 1, pos, f);
-    fflush(f);  /* Ensure data is written to OS before closing */
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush binary database to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     free(buf);
 
-    if (written != pos) { platform_delete_file(tmp_path); return false; }
+    if (written != pos) {
+        db_set_error("Failed to write binary database: incomplete write");
+        platform_delete_file(tmp_path);
+        return false;
+    }
 
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
@@ -1550,21 +1747,19 @@ NcdDatabase *db_load_auto(const char *path)
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
-    uint8_t sig[4] = {0};
-    size_t  rd = fread(sig, 1, sizeof(sig), f);
-    
-    /* Binary magic: 'N'=0x4E, 'C'=0x43, 'D'=0x44, 'B'=0x42 */
-    if (rd == 4 &&
-        sig[0] == 0x4E && sig[1] == 0x43 &&
-        sig[2] == 0x44 && sig[3] == 0x42) {
+    uint32_t magic = 0;
+    size_t  rd = fread(&magic, 1, sizeof(magic), f);
+
+    if (rd == sizeof(magic) && magic == NCD_BIN_MAGIC) {
         /* Check version and skip flag before attempting full load */
         uint16_t version = 0;
         uint8_t skip_flag = 0;
-        fseek(f, 4, SEEK_SET);
-        fread(&version, 1, sizeof(version), f);
-        /* Read skip flag at offset 16 (after magic+version+hidden+system+last_scan+drive_count) */
-        fseek(f, 4 + 2 + 1 + 1 + 8 + 4, SEEK_SET);
-        fread(&skip_flag, 1, 1, f);
+        if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
+            fread(&version, 1, sizeof(version), f);
+        }
+        if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+            fread(&skip_flag, 1, 1, f);
+        }
         fclose(f);
         
         if (version != NCD_BIN_VERSION) {
@@ -1596,11 +1791,8 @@ int db_check_file_version(const char *path)
     FILE *f = fopen(path, "rb");
     if (!f) return DB_VERSION_ERROR;
     
-    uint8_t sig[4];
-    size_t rd = fread(sig, 1, 4, f);
-    
-    if (rd != 4 || sig[0] != 0x4E || sig[1] != 0x43 || 
-        sig[2] != 0x44 || sig[3] != 0x42) {
+    uint32_t magic = 0;
+    if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != NCD_BIN_MAGIC) {
         fclose(f);
         return DB_VERSION_ERROR;
     }
@@ -1608,13 +1800,27 @@ int db_check_file_version(const char *path)
     /* Valid binary file - read version and skip flag */
     uint16_t version = 0;
     uint8_t skip_flag = 0;
+    bool read_ok = true;
     
-    fseek(f, 4, SEEK_SET);
-    fread(&version, 1, sizeof(version), f);
-    /* Read skip flag at offset 16 */
-    fseek(f, 4 + 2 + 1 + 1 + 8 + 4, SEEK_SET);
-    fread(&skip_flag, 1, 1, f);
+    if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
+        if (fread(&version, 1, sizeof(version), f) != sizeof(version)) {
+            read_ok = false;
+        }
+    } else {
+        read_ok = false;
+    }
+    if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+        if (fread(&skip_flag, 1, 1, f) != 1) {
+            read_ok = false;
+        }
+    } else {
+        read_ok = false;
+    }
     fclose(f);
+    
+    if (!read_ok) {
+        return DB_VERSION_ERROR;
+    }
     
     if (version == NCD_BIN_VERSION) {
         return DB_VERSION_OK;
@@ -1651,19 +1857,19 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
         FILE *f = fopen(path, "rb");
         if (!f) continue;
         
-        uint8_t sig[4];
-        size_t rd = fread(sig, 1, 4, f);
+        uint32_t magic = 0;
+        size_t rd = fread(&magic, sizeof(magic), 1, f);
         uint16_t version = 0;
         uint8_t skip_flag = 0;
-        
-        if (rd == 4 && sig[0] == 0x4E && sig[1] == 0x43 && 
-            sig[2] == 0x44 && sig[3] == 0x42) {
+
+        if (rd == 1 && magic == NCD_BIN_MAGIC) {
             /* Valid binary file - read version and skip flag */
-            fseek(f, 4, SEEK_SET);
-            fread(&version, 1, sizeof(version), f);
-            /* Skip show_hidden (1) + show_system (1) + last_scan (8) + drive_count (4) */
-            fseek(f, 4 + 2 + 8 + 4, SEEK_SET);
-            fread(&skip_flag, 1, 1, f);
+            if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
+                fread(&version, 1, sizeof(version), f);
+            }
+            if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+                fread(&skip_flag, 1, 1, f);
+            }
         }
         fclose(f);
         
@@ -1672,7 +1878,7 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
             out[count].letter = letter;
             platform_strncpy_s(out[count].path, sizeof(out[count].path), path);
             out[count].version = version;
-            out[count].user_skipped_update = skip_flag ? true : false;
+            out[count].skipped_rescan = skip_flag ? true : false;
             out[count].is_mounted = is_mounted;
             count++;
         }
@@ -1726,25 +1932,26 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
         FILE *f = fopen(path, "rb");
         if (!f) continue;
         
-        uint8_t sig[4];
-        size_t rd = fread(sig, 1, 4, f);
+        uint32_t magic = 0;
+        size_t rd = fread(&magic, sizeof(magic), 1, f);
         uint16_t version = 0;
         uint8_t skip_flag = 0;
-        
-        if (rd == 4 && sig[0] == 0x4E && sig[1] == 0x43 && 
-            sig[2] == 0x44 && sig[3] == 0x42) {
-            fseek(f, 4, SEEK_SET);
-            fread(&version, 1, sizeof(version), f);
-            fseek(f, 4 + 2 + 8 + 4, SEEK_SET);
-            fread(&skip_flag, 1, 1, f);
+
+        if (rd == 1 && magic == NCD_BIN_MAGIC) {
+            if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
+                fread(&version, 1, sizeof(version), f);
+            }
+            if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+                fread(&skip_flag, 1, 1, f);
+            }
         }
         fclose(f);
-        
+
         if (version != NCD_BIN_VERSION && !skip_flag && is_mounted) {
             out[count].letter = letter;
             platform_strncpy_s(out[count].path, sizeof(out[count].path), path);
             out[count].version = version;
-            out[count].user_skipped_update = skip_flag ? true : false;
+            out[count].skipped_rescan = skip_flag ? true : false;
             out[count].is_mounted = is_mounted;
             count++;
         }
@@ -1753,7 +1960,7 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
     return count;
 }
 
-bool db_set_skip_update_flag(const char *path)
+bool db_set_skipped_rescan_flag(const char *path)
 {
     if (!path || !path[0]) return false;
     
@@ -1762,9 +1969,15 @@ bool db_set_skip_update_flag(const char *path)
     if (!f) return false;
     
     /* Get file size */
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return false;
+    }
     long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
     
     if (file_size < (long)sizeof(BinFileHdr)) {
         fclose(f);
@@ -1793,8 +2006,8 @@ bool db_set_skip_update_flag(const char *path)
         return false;
     }
     
-    /* Set the skip flag (at offset 16: after magic(4)+version(2)+hidden(1)+system(1)+last_scan(8)+drive_count(4)) */
-    hdr->user_skipped_update = 1;
+    /* Set the skip flag */
+    hdr->skipped_rescan = 1;
     
     /* Write back with atomic rename */
     char tmp_path[MAX_PATH];
@@ -1807,11 +2020,18 @@ bool db_set_skip_update_flag(const char *path)
     }
     
     size_t wr = fwrite(buf, 1, file_size, f);
-    fflush(f);
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush skip flag to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     free(buf);
     
     if (wr != (size_t)file_size) {
+        db_set_error("Failed to write skip flag: incomplete write");
         platform_delete_file(tmp_path);
         return false;
     }
@@ -1882,16 +2102,7 @@ static bool db_file_write_atomic(const char *path, const void *data, size_t len)
     if (!last_sep) last_sep = strrchr(dir_path, '/');
     if (last_sep) {
         *last_sep = '\0';
-#if NCD_PLATFORM_WINDOWS
-        CreateDirectoryA(dir_path, NULL);
-#else
-        struct stat st = {0};
-        if (stat(dir_path, &st) != 0) {
-            char cmd[MAX_PATH + 32];
-            snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir_path);
-            system(cmd);
-        }
-#endif
+        platform_create_dir(dir_path);
     }
     
     /* Atomic write pattern: .tmp -> .old -> final */
@@ -1902,10 +2113,16 @@ static bool db_file_write_atomic(const char *path, const void *data, size_t len)
     if (!f) return false;
     
     size_t wr = fwrite(data, 1, len, f);
-    fflush(f);
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush file to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     
     if (wr != len) {
+        db_set_error("Failed to write file: incomplete write");
         platform_delete_file(tmp_path);
         return false;
     }
@@ -1962,6 +2179,270 @@ bool db_metadata_exists(void)
     return platform_file_exists(path);
 }
 
+/* ============================================================= exclusion list  */
+
+/* Parse a pattern and fill in the exclusion entry fields */
+static bool parse_exclusion_pattern(const char *pattern, NcdExclusionEntry *entry)
+{
+    if (!pattern || !entry) return false;
+    
+    /* Clear entry */
+    memset(entry, 0, sizeof(NcdExclusionEntry));
+    
+    /* Check for empty pattern or just '*' */
+    if (pattern[0] == '\0') return false;
+    if (pattern[0] == '*' && pattern[1] == '\0') return false;
+    
+    platform_strncpy_s(entry->pattern, sizeof(entry->pattern), pattern);
+    
+    const char *p = pattern;
+    
+    /* Parse drive letter (Windows only) */
+#if NCD_PLATFORM_WINDOWS
+    if (p[1] == ':') {
+        char d = (char)toupper((unsigned char)p[0]);
+        if (d >= 'A' && d <= 'Z') {
+            entry->drive = d;
+            p += 2;  /* Skip "C:" */
+        }
+    } else {
+        entry->drive = 0;  /* All drives */
+    }
+#else
+    entry->drive = 0;  /* Linux has no drive concept */
+#endif
+    
+    /* Check for root specifier */
+    if (p[0] == '\\' || p[0] == '/') {
+        entry->match_from_root = true;
+        p++;  /* Skip leading separator */
+    }
+    
+    /* Check for parent\child syntax */
+    if (strchr(p, '\\') || strchr(p, '/')) {
+        entry->has_parent_match = true;
+    }
+    
+    return true;
+}
+
+/* Simple wildcard match: supports * (any sequence) and ? (single char) */
+static bool wildcard_match(const char *pattern, const char *text)
+{
+    const char *p = pattern;
+    const char *t = text;
+    const char *star_p = NULL;
+    const char *star_t = NULL;
+    
+    while (*t) {
+        if (*p == '*') {
+            star_p = p++;
+            star_t = t;
+        } else if (*p == '?' || tolower((unsigned char)*p) == tolower((unsigned char)*t)) {
+            p++;
+            t++;
+        } else if (star_p) {
+            p = star_p + 1;
+            t = ++star_t;
+        } else {
+            return false;
+        }
+    }
+    
+    /* Skip trailing stars */
+    while (*p == '*') p++;
+    
+    return *p == '\0';
+}
+
+bool db_exclusion_add(NcdMetadata *meta, const char *pattern)
+{
+    if (!meta || !pattern) return false;
+    
+    /* Validate and parse pattern */
+    NcdExclusionEntry new_entry;
+    if (!parse_exclusion_pattern(pattern, &new_entry)) {
+        db_set_error("Invalid exclusion pattern: %s", pattern);
+        return false;
+    }
+    
+    /* Check for duplicates */
+    for (int i = 0; i < meta->exclusions.count; i++) {
+        if (_stricmp(meta->exclusions.entries[i].pattern, pattern) == 0) {
+            db_set_error("Pattern already exists: %s", pattern);
+            return false;
+        }
+    }
+    
+    /* Ensure capacity */
+    if (meta->exclusions.count >= meta->exclusions.capacity) {
+        int new_cap = meta->exclusions.capacity ? meta->exclusions.capacity * 2 : 16;
+        meta->exclusions.entries = ncd_realloc(meta->exclusions.entries,
+            sizeof(NcdExclusionEntry) * new_cap);
+        meta->exclusions.capacity = new_cap;
+    }
+    
+    /* Add entry */
+    meta->exclusions.entries[meta->exclusions.count++] = new_entry;
+    meta->exclusions_dirty = true;
+    
+    return true;
+}
+
+bool db_exclusion_remove(NcdMetadata *meta, const char *pattern)
+{
+    if (!meta || !pattern) return false;
+    
+    /* Find the pattern */
+    int idx = -1;
+    for (int i = 0; i < meta->exclusions.count; i++) {
+        if (_stricmp(meta->exclusions.entries[i].pattern, pattern) == 0) {
+            idx = i;
+            break;
+        }
+    }
+    
+    if (idx < 0) {
+        db_set_error("Pattern not found: %s", pattern);
+        return false;
+    }
+    
+    /* Remove by shifting remaining entries */
+    if (idx < meta->exclusions.count - 1) {
+        memmove(&meta->exclusions.entries[idx],
+                &meta->exclusions.entries[idx + 1],
+                (size_t)(meta->exclusions.count - idx - 1) * sizeof(NcdExclusionEntry));
+    }
+    meta->exclusions.count--;
+    meta->exclusions_dirty = true;
+    
+    return true;
+}
+
+bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path)
+{
+    if (!meta || !dir_path) return false;
+    
+    /* Normalize drive letter */
+#if NCD_PLATFORM_WINDOWS
+    char drive = drive_letter ? (char)toupper((unsigned char)drive_letter) : 0;
+#else
+    (void)drive_letter;
+    char drive = 0;
+#endif
+    
+    /* Normalize path for matching (use backslash on Windows, forward on Linux) */
+    char norm_path[NCD_MAX_PATH];
+    platform_strncpy_s(norm_path, sizeof(norm_path), dir_path);
+#if NCD_PLATFORM_WINDOWS
+    for (char *p = norm_path; *p; p++) {
+        if (*p == '/') *p = '\\';
+    }
+#endif
+    
+    /* Remove leading separator for comparison */
+    char *path_to_match = norm_path;
+    if (path_to_match[0] == '\\' || path_to_match[0] == '/') {
+        path_to_match++;
+    }
+    
+    for (int i = 0; i < meta->exclusions.count; i++) {
+        NcdExclusionEntry *entry = &meta->exclusions.entries[i];
+        
+        /* Check drive match (0 means all drives) */
+        if (entry->drive != 0 && entry->drive != drive) {
+            continue;
+        }
+        
+        /* Get the pattern path (skip drive letter if present) */
+        const char *pattern = entry->pattern;
+#if NCD_PLATFORM_WINDOWS
+        if (pattern[1] == ':') {
+            pattern += 2;
+        }
+#endif
+        
+        /* Handle root-only matches */
+        if (entry->match_from_root) {
+            /* Pattern starts with \ or /, must match from root */
+            if (dir_path[0] != '\\' && dir_path[0] != '/') {
+                /* Current path is not from root, skip */
+            }
+            /* Skip leading separator in pattern for matching */
+            if (pattern[0] == '\\' || pattern[0] == '/') {
+                pattern++;
+            }
+            
+            if (wildcard_match(pattern, path_to_match)) {
+                return true;
+            }
+        } else {
+            /* Check if pattern matches this path component or any parent */
+            /* First try matching the full remaining path */
+            if (wildcard_match(pattern, path_to_match)) {
+                return true;
+            }
+            
+            /* For parent\child patterns, check if any path component matches */
+            if (entry->has_parent_match) {
+                char *sep = path_to_match;
+                while ((sep = strchr(sep, '\\')) != NULL) {
+                    sep++;  /* Skip the separator */
+                    if (wildcard_match(pattern, sep)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
+void db_exclusion_print(NcdMetadata *meta)
+{
+    if (!meta) return;
+    
+    if (meta->exclusions.count == 0) {
+        printf("NCD exclusion list: empty\n");
+        return;
+    }
+    
+    printf("NCD exclusion list (%d entries):\n", meta->exclusions.count);
+    printf("  %-4s %-10s %s\n", "Num", "Drive", "Pattern");
+    printf("  %s\n", "-------------------------------------------");
+    
+    for (int i = 0; i < meta->exclusions.count; i++) {
+        NcdExclusionEntry *entry = &meta->exclusions.entries[i];
+        char drive_str[8];
+        if (entry->drive == 0) {
+            snprintf(drive_str, sizeof(drive_str), "*");
+        } else {
+            snprintf(drive_str, sizeof(drive_str), "%c:", entry->drive);
+        }
+        printf("  %-4d %-10s %s\n", i + 1, drive_str, entry->pattern);
+    }
+}
+
+void db_exclusion_init_defaults(NcdMetadata *meta)
+{
+    if (!meta) return;
+    
+    /* Only add defaults if list is empty */
+    if (meta->exclusions.count > 0) return;
+    
+#if NCD_PLATFORM_WINDOWS
+    /* $recycle.bin on all drives */
+    db_exclusion_add(meta, "*:$recycle.bin");
+    /* Windows directory on C: drive only, root only */
+    db_exclusion_add(meta, "C:\\Windows");
+#endif
+}
+
+/* Forward declarations for heuristics hash table functions */
+static void heur_hash_free(NcdHeuristicsV2 *heur);
+static void heur_hash_rebuild(NcdHeuristicsV2 *heur);
+
 NcdMetadata *db_metadata_create(void)
 {
     NcdMetadata *meta = ncd_malloc(sizeof(NcdMetadata));
@@ -1969,12 +2450,24 @@ NcdMetadata *db_metadata_create(void)
     
     db_config_init_defaults(&meta->cfg);
     
+    meta->groups.groups = NULL;
+    meta->groups.count = 0;
+    meta->groups.capacity = 0;
+    
     meta->heuristics.entries = NULL;
     meta->heuristics.count = 0;
     meta->heuristics.capacity = 0;
+    meta->heuristics.hash_buckets = NULL;
+    meta->heuristics.hash_bucket_count = 0;
+    
+    meta->exclusions.entries = NULL;
+    meta->exclusions.count = 0;
+    meta->exclusions.capacity = 0;
     
     meta->config_dirty = false;
+    meta->groups_dirty = false;
     meta->heuristics_dirty = false;
+    meta->exclusions_dirty = false;
     
     return meta;
 }
@@ -1983,15 +2476,26 @@ void db_metadata_free(NcdMetadata *meta)
 {
     if (!meta) return;
     
+    if (meta->groups.groups) {
+        free(meta->groups.groups);
+    }
+    
+    if (meta->heuristics.hash_buckets) {
+        heur_hash_free(&meta->heuristics);
+    }
     if (meta->heuristics.entries) {
         free(meta->heuristics.entries);
+    }
+    
+    if (meta->exclusions.entries) {
+        free(meta->exclusions.entries);
     }
     
     free(meta);
 }
 
-/* Metadata header size: 20 bytes (magic + version + section_count + reserved + reserved2 + CRC64) */
-#define NCD_META_HEADER_SIZE 20
+/* Metadata header size derived from struct -- no manual counting */
+#define NCD_META_HEADER_SIZE sizeof(MetaFileHdr)
 
 bool db_metadata_save(NcdMetadata *meta)
 {
@@ -2002,32 +2506,39 @@ bool db_metadata_save(NcdMetadata *meta)
     
     /* Calculate sizes with overflow checking */
     size_t config_size = sizeof(NcdConfig);
+    size_t groups_entries_size = ncd_mul_overflow_check(
+        (size_t)meta->groups.count, sizeof(NcdGroupEntry));
+    size_t groups_size = sizeof(uint32_t) + groups_entries_size;
     size_t heur_entries_size = ncd_mul_overflow_check(
         (size_t)meta->heuristics.count, sizeof(NcdHeurEntryV2));
     size_t heur_size = sizeof(uint32_t) + heur_entries_size;
+    size_t exclusion_entries_size = ncd_mul_overflow_check(
+        (size_t)meta->exclusions.count, sizeof(NcdExclusionEntry));
+    size_t exclusion_size = sizeof(uint32_t) + exclusion_entries_size;
+    size_t dir_hist_size = sizeof(uint32_t) + 
+        (size_t)meta->dir_history.count * sizeof(NcdDirHistoryEntry);
     
-    /* Header: magic(4) + version(2) + section_count(1) + reserved(1) + reserved(4) + crc64(8) = 20 bytes */
-    size_t header_size = NCD_META_HEADER_SIZE;
-    size_t section_overhead = 16; /* 2 section headers @ 8 bytes each */
-    
+    size_t section_overhead = 30; /* 5 section headers @ 6 bytes each (id + size + pad) */
+
     /* Check total size doesn't overflow */
-    size_t total_size = header_size;
+    size_t total_size = sizeof(MetaFileHdr);
     total_size = ncd_add_overflow_check(total_size, section_overhead);
     total_size = ncd_add_overflow_check(total_size, config_size);
+    total_size = ncd_add_overflow_check(total_size, groups_size);
     total_size = ncd_add_overflow_check(total_size, heur_size);
+    total_size = ncd_add_overflow_check(total_size, exclusion_size);
+    total_size = ncd_add_overflow_check(total_size, dir_hist_size);
     
     uint8_t *buf = ncd_malloc(total_size);
     size_t pos = 0;
-    
-    /* Write header */
-    uint32_t magic = NCD_META_MAGIC;
-    memcpy(buf + pos, &magic, 4); pos += 4;
-    uint16_t version = NCD_META_VERSION;
-    memcpy(buf + pos, &version, 2); pos += 2;
-    uint8_t section_count = 2;  /* config + heuristics */
-    memcpy(buf + pos, &section_count, 1); pos += 1;
-    buf[pos++] = 0; /* reserved */
-    pos += 4; /* skip CRC for now */
+
+    /* Write header (checksum filled in after sections are written) */
+    MetaFileHdr hdr = {0};
+    hdr.magic         = NCD_META_MAGIC;
+    hdr.version       = NCD_META_VERSION;
+    hdr.section_count = 5;  /* config + groups + heuristics + exclusions + dir_history */
+    memcpy(buf, &hdr, sizeof(hdr));
+    pos = sizeof(hdr);
     
     /* Write config section */
     uint8_t section_id = NCD_META_SECTION_CONFIG;
@@ -2037,6 +2548,20 @@ bool db_metadata_save(NcdMetadata *meta)
     uint8_t config_pad = 0;
     memcpy(buf + pos, &config_pad, 1); pos += 1;
     memcpy(buf + pos, &meta->cfg, config_size); pos += config_size;
+    
+    /* Write groups section */
+    section_id = NCD_META_SECTION_GROUPS;
+    memcpy(buf + pos, &section_id, 1); pos += 1;
+    uint32_t groups_data_size = (uint32_t)groups_size;
+    memcpy(buf + pos, &groups_data_size, 4); pos += 4;
+    uint8_t groups_pad = 0;
+    memcpy(buf + pos, &groups_pad, 1); pos += 1;
+    uint32_t groups_count = (uint32_t)meta->groups.count;
+    memcpy(buf + pos, &groups_count, 4); pos += 4;
+    for (int i = 0; i < meta->groups.count; i++) {
+        memcpy(buf + pos, &meta->groups.groups[i], sizeof(NcdGroupEntry));
+        pos += sizeof(NcdGroupEntry);
+    }
     
     /* Write heuristics section */
     section_id = NCD_META_SECTION_HEURISTICS;
@@ -2052,9 +2577,37 @@ bool db_metadata_save(NcdMetadata *meta)
         pos += sizeof(NcdHeurEntryV2);
     }
     
-    /* Compute and write CRC64 over data after the header (CRC64 is at offset 12) */
-    uint64_t crc = platform_crc64(buf + header_size, pos - header_size);
-    memcpy(buf + 12, &crc, sizeof(crc));
+    /* Write exclusions section */
+    section_id = NCD_META_SECTION_EXCLUSIONS;
+    memcpy(buf + pos, &section_id, 1); pos += 1;
+    uint32_t exclusion_data_size = (uint32_t)exclusion_size;
+    memcpy(buf + pos, &exclusion_data_size, 4); pos += 4;
+    uint8_t exclusion_pad = 0;
+    memcpy(buf + pos, &exclusion_pad, 1); pos += 1;
+    uint32_t exclusion_count = (uint32_t)meta->exclusions.count;
+    memcpy(buf + pos, &exclusion_count, 4); pos += 4;
+    for (int i = 0; i < meta->exclusions.count; i++) {
+        memcpy(buf + pos, &meta->exclusions.entries[i], sizeof(NcdExclusionEntry));
+        pos += sizeof(NcdExclusionEntry);
+    }
+    
+    /* Write directory history section */
+    section_id = NCD_META_SECTION_DIR_HISTORY;
+    memcpy(buf + pos, &section_id, 1); pos += 1;
+    uint32_t dir_hist_data_size = (uint32_t)dir_hist_size;
+    memcpy(buf + pos, &dir_hist_data_size, 4); pos += 4;
+    uint8_t dir_hist_pad = 0;
+    memcpy(buf + pos, &dir_hist_pad, 1); pos += 1;
+    uint32_t dir_hist_count = (uint32_t)meta->dir_history.count;
+    memcpy(buf + pos, &dir_hist_count, 4); pos += 4;
+    for (int i = 0; i < meta->dir_history.count; i++) {
+        memcpy(buf + pos, &meta->dir_history.entries[i], sizeof(NcdDirHistoryEntry));
+        pos += sizeof(NcdDirHistoryEntry);
+    }
+    
+    /* Compute and write CRC64 over data after the header */
+    uint64_t crc = platform_crc64(buf + sizeof(MetaFileHdr), pos - sizeof(MetaFileHdr));
+    memcpy(buf + offsetof(MetaFileHdr, checksum), &crc, sizeof(crc));
     
     /* Ensure directory exists */
     char dir_path[MAX_PATH];
@@ -2063,16 +2616,7 @@ bool db_metadata_save(NcdMetadata *meta)
     if (!last_sep) last_sep = strrchr(dir_path, '/');
     if (last_sep) {
         *last_sep = '\0';
-#if NCD_PLATFORM_WINDOWS
-        CreateDirectoryA(dir_path, NULL);
-#else
-        struct stat st = {0};
-        if (stat(dir_path, &st) != 0) {
-            char cmd[MAX_PATH + 32];
-            snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\" 2>/dev/null", dir_path);
-            system(cmd);
-        }
-#endif
+        platform_create_dir(dir_path);
     }
     
     /* Atomic write */
@@ -2083,11 +2627,21 @@ bool db_metadata_save(NcdMetadata *meta)
     if (!f) { free(buf); return false; }
     
     size_t wr = fwrite(buf, 1, pos, f);
-    fflush(f);
+    if (fflush(f) != 0) {
+        db_set_error("Failed to flush metadata to disk (disk full?): %s", strerror(errno));
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     fclose(f);
     free(buf);
     
-    if (wr != pos) { platform_delete_file(tmp_path); return false; }
+    if (wr != pos) {
+        db_set_error("Failed to write metadata: incomplete write");
+        platform_delete_file(tmp_path);
+        return false;
+    }
     
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
@@ -2103,7 +2657,10 @@ bool db_metadata_save(NcdMetadata *meta)
     }
     
     meta->config_dirty = false;
+    meta->groups_dirty = false;
     meta->heuristics_dirty = false;
+    meta->exclusions_dirty = false;
+    meta->dir_history_dirty = false;
     return true;
 }
 
@@ -2124,7 +2681,8 @@ NcdMetadata *db_metadata_load(void)
     }
     
     if (!platform_file_exists(path)) {
-        /* No metadata file and no legacy files - return empty metadata */
+        /* No metadata file and no legacy files - return empty metadata with defaults */
+        db_exclusion_init_defaults(meta);
         return meta;
     }
     
@@ -2137,26 +2695,15 @@ NcdMetadata *db_metadata_load(void)
         return meta;
     }
     
-    /* Read header (20 bytes total) */
-    uint32_t magic;
-    uint16_t version;
-    uint8_t section_count;
-    uint8_t reserved;
-    uint32_t reserved2;
-    uint64_t stored_crc;
-    
-    if (fread(&magic, 4, 1, f) != 1 ||
-        fread(&version, 2, 1, f) != 1 ||
-        fread(&section_count, 1, 1, f) != 1 ||
-        fread(&reserved, 1, 1, f) != 1 ||
-        fread(&reserved2, 4, 1, f) != 1 ||
-        fread(&stored_crc, 8, 1, f) != 1) {
+    /* Read header */
+    MetaFileHdr hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
         fclose(f);
         db_config_load(&meta->cfg);
         return meta;
     }
-    
-    if (magic != NCD_META_MAGIC || version != NCD_META_VERSION) {
+
+    if (hdr.magic != NCD_META_MAGIC || hdr.version != NCD_META_VERSION) {
         fclose(f);
         /* Try legacy migration */
         db_metadata_migrate();
@@ -2165,9 +2712,17 @@ NcdMetadata *db_metadata_load(void)
     }
     
     /* Get file size for CRC verification */
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        db_config_load(&meta->cfg);
+        return meta;
+    }
     long file_size = ftell(f);
-    fseek(f, NCD_META_HEADER_SIZE, SEEK_SET); /* Skip header */
+    if (fseek(f, NCD_META_HEADER_SIZE, SEEK_SET) != 0) { /* Skip header */
+        fclose(f);
+        db_config_load(&meta->cfg);
+        return meta;
+    }
     
     size_t data_size = file_size - NCD_META_HEADER_SIZE;
     uint8_t *data = malloc(data_size);
@@ -2187,7 +2742,7 @@ NcdMetadata *db_metadata_load(void)
     /* Verify CRC64 over data after header */
     uint64_t computed_crc = platform_crc64(data, data_size);
     
-    if (computed_crc != stored_crc) {
+    if (computed_crc != hdr.checksum) {
         /* CRC mismatch - try legacy files */
         free(data);
         db_metadata_migrate();
@@ -2197,7 +2752,7 @@ NcdMetadata *db_metadata_load(void)
     
     /* Parse sections */
     size_t pos = 0;
-    for (int s = 0; s < section_count && pos < data_size; s++) {
+    for (int s = 0; s < hdr.section_count && pos < data_size; s++) {
         if (pos + 6 > data_size) break;
         
         uint8_t section_id = data[pos++];
@@ -2213,6 +2768,27 @@ NcdMetadata *db_metadata_load(void)
                     memcpy(&meta->cfg, data + pos, sizeof(NcdConfig));
                 }
                 break;
+            
+            case NCD_META_SECTION_GROUPS:
+                if (section_size >= 4) {
+                    uint32_t count;
+                    memcpy(&count, data + pos, 4);
+                    if (count > 0 && count <= NCD_MAX_GROUPS) {
+                        meta->groups.capacity = (int)count;
+                        meta->groups.groups = ncd_malloc_array(
+                            count, sizeof(NcdGroupEntry));
+                        size_t entry_offset = pos + 4;
+                        for (uint32_t i = 0; i < count && i < NCD_MAX_GROUPS; i++) {
+                            if (entry_offset + (i + 1) * sizeof(NcdGroupEntry) <= pos + section_size) {
+                                memcpy(&meta->groups.groups[i], 
+                                       data + entry_offset + i * sizeof(NcdGroupEntry),
+                                       sizeof(NcdGroupEntry));
+                                meta->groups.count++;
+                            }
+                        }
+                    }
+                }
+                break;
                 
             case NCD_META_SECTION_HEURISTICS:
                 if (section_size >= 4) {
@@ -2224,11 +2800,52 @@ NcdMetadata *db_metadata_load(void)
                             count, sizeof(NcdHeurEntryV2));
                         size_t entry_offset = pos + 4;
                         for (uint32_t i = 0; i < count && i < NCD_HEUR_MAX_ENTRIES; i++) {
-                            if (entry_offset + sizeof(NcdHeurEntryV2) <= pos + section_size) {
+                            if (entry_offset + (i + 1) * sizeof(NcdHeurEntryV2) <= pos + section_size) {
                                 memcpy(&meta->heuristics.entries[i], 
                                        data + entry_offset + i * sizeof(NcdHeurEntryV2),
                                        sizeof(NcdHeurEntryV2));
                                 meta->heuristics.count++;
+                            }
+                        }
+                        /* Build hash table for fast lookups */
+                        heur_hash_rebuild(&meta->heuristics);
+                    }
+                }
+                break;
+                
+            case NCD_META_SECTION_EXCLUSIONS:
+                if (section_size >= 4) {
+                    uint32_t count;
+                    memcpy(&count, data + pos, 4);
+                    if (count > 0) {
+                        meta->exclusions.capacity = (int)count;
+                        meta->exclusions.entries = ncd_malloc_array(
+                            count, sizeof(NcdExclusionEntry));
+                        size_t entry_offset = pos + 4;
+                        for (uint32_t i = 0; i < count; i++) {
+                            if (entry_offset + (i + 1) * sizeof(NcdExclusionEntry) <= pos + section_size) {
+                                memcpy(&meta->exclusions.entries[i], 
+                                       data + entry_offset + i * sizeof(NcdExclusionEntry),
+                                       sizeof(NcdExclusionEntry));
+                                meta->exclusions.count++;
+                            }
+                        }
+                    }
+                }
+                break;
+                
+            case NCD_META_SECTION_DIR_HISTORY:
+                if (section_size >= 4) {
+                    uint32_t count;
+                    memcpy(&count, data + pos, 4);
+                    if (count > 0 && count <= NCD_DIR_HISTORY_MAX) {
+                        size_t entry_offset = pos + 4;
+                        for (uint32_t i = 0; i < count && i < NCD_DIR_HISTORY_MAX; i++) {
+                            if (entry_offset + (i + 1) * sizeof(NcdDirHistoryEntry) <= pos + section_size) {
+                                memcpy(&meta->dir_history.entries[i], 
+                                       data + entry_offset + i * sizeof(NcdDirHistoryEntry),
+                                       sizeof(NcdDirHistoryEntry));
+                                meta->dir_history.count++;
                             }
                         }
                     }
@@ -2264,10 +2881,17 @@ bool db_metadata_migrate(void)
         any_migrated = true;
     }
     
-    /* Migrate groups */
+    /* Migrate groups from legacy ncd.groups file */
     NcdGroupDb *gdb = db_group_load();
-    if (gdb) {
-        /* Groups are now stored in a separate section - skip for now */
+    if (gdb && gdb->count > 0) {
+        meta->groups.capacity = gdb->count;
+        meta->groups.groups = ncd_malloc_array(gdb->count, sizeof(NcdGroupEntry));
+        for (int i = 0; i < gdb->count && i < NCD_MAX_GROUPS; i++) {
+            memcpy(&meta->groups.groups[i], &gdb->groups[i], sizeof(NcdGroupEntry));
+            meta->groups.count++;
+        }
+        meta->groups_dirty = true;
+        any_migrated = true;
         db_group_free(gdb);
     }
     
@@ -2340,6 +2964,10 @@ bool db_metadata_migrate(void)
     }
     
     if (any_migrated) {
+        /* Build hash table after migration before saving */
+        if (meta->heuristics.count > 0) {
+            heur_hash_rebuild(&meta->heuristics);
+        }
         db_metadata_save(meta);
     }
     
@@ -2362,10 +2990,97 @@ int db_metadata_cleanup_legacy(void)
         if (platform_delete_file(path)) count++;
     }
     
+    /* Delete ncd.groups */
+    if (db_group_path(path, sizeof(path)) && platform_file_exists(path)) {
+        if (platform_delete_file(path)) count++;
+    }
+    
     return count;
 }
 
 /* ============================================================= enhanced heuristics  */
+
+/* FNV-1a hash for heuristics hash table */
+static uint32_t heur_hash_str(const char *s)
+{
+    uint32_t hash = 2166136261U;
+    while (*s) {
+        hash ^= (uint32_t)(unsigned char)tolower((unsigned char)*s);
+        hash *= 16777619U;
+        s++;
+    }
+    return hash;
+}
+
+/* Initialize hash table for heuristics */
+static void heur_hash_init(NcdHeuristicsV2 *heur)
+{
+    heur->hash_bucket_count = 64;  /* Start with 64 buckets (power of 2) */
+    heur->hash_buckets = ncd_calloc(heur->hash_bucket_count, sizeof(HeurHashBucket *));
+}
+
+/* Free all hash buckets */
+static void heur_hash_free(NcdHeuristicsV2 *heur)
+{
+    if (!heur->hash_buckets) return;
+    
+    for (int i = 0; i < heur->hash_bucket_count; i++) {
+        HeurHashBucket *bucket = heur->hash_buckets[i];
+        while (bucket) {
+            HeurHashBucket *next = bucket->next;
+            free(bucket);
+            bucket = next;
+        }
+    }
+    free(heur->hash_buckets);
+    heur->hash_buckets = NULL;
+    heur->hash_bucket_count = 0;
+}
+
+/* Insert entry index into hash table */
+static void heur_hash_insert(NcdHeuristicsV2 *heur, const char *search, int entry_idx)
+{
+    if (!heur->hash_buckets) heur_hash_init(heur);
+    
+    uint32_t hash = heur_hash_str(search);
+    int bucket_idx = (int)(hash & (uint32_t)(heur->hash_bucket_count - 1));
+    
+    HeurHashBucket *bucket = ncd_malloc(sizeof(HeurHashBucket));
+    bucket->entry_idx = entry_idx;
+    bucket->next = heur->hash_buckets[bucket_idx];
+    heur->hash_buckets[bucket_idx] = bucket;
+}
+
+/* Rebuild entire hash table (used after loading from disk) */
+static void heur_hash_rebuild(NcdHeuristicsV2 *heur)
+{
+    if (heur->hash_buckets) {
+        heur_hash_free(heur);
+    }
+    heur_hash_init(heur);
+    
+    for (int i = 0; i < heur->count; i++) {
+        heur_hash_insert(heur, heur->entries[i].search, i);
+    }
+}
+
+/* Find entry index by search term using hash table */
+static int heur_hash_find(NcdHeuristicsV2 *heur, const char *search)
+{
+    if (!heur->hash_buckets || heur->count == 0) return -1;
+    
+    uint32_t hash = heur_hash_str(search);
+    int bucket_idx = (int)(hash & (uint32_t)(heur->hash_bucket_count - 1));
+    
+    HeurHashBucket *bucket = heur->hash_buckets[bucket_idx];
+    while (bucket) {
+        if (_stricmp(heur->entries[bucket->entry_idx].search, search) == 0) {
+            return bucket->entry_idx;
+        }
+        bucket = bucket->next;
+    }
+    return -1;
+}
 
 int db_heur_calculate_score(const NcdHeurEntryV2 *entry, time_t now)
 {
@@ -2391,12 +3106,8 @@ int db_heur_find(NcdMetadata *meta, const char *search)
     }
     norm_search[i] = '\0';
     
-    for (int j = 0; j < meta->heuristics.count; j++) {
-        if (_stricmp(meta->heuristics.entries[j].search, norm_search) == 0) {
-            return j;
-        }
-    }
-    return -1;
+    /* Use hash table for O(1) lookup instead of linear scan */
+    return heur_hash_find(&meta->heuristics, norm_search);
 }
 
 /* Partial match penalty: 70% of original score (30% reduction) */
@@ -2565,6 +3276,9 @@ void db_heur_note_choice(NcdMetadata *meta, const char *search, const char *targ
         meta->heuristics.count++;
     }
     
+    /* Rebuild hash table since entry indices may have changed */
+    heur_hash_rebuild(&meta->heuristics);
+    
     meta->heuristics_dirty = true;
 }
 
@@ -2596,6 +3310,20 @@ void db_heur_clear(NcdMetadata *meta)
     if (!meta) return;
     
     meta->heuristics.count = 0;
+    
+    /* Clear hash table but keep buckets allocated for reuse */
+    if (meta->heuristics.hash_buckets) {
+        for (int i = 0; i < meta->heuristics.hash_bucket_count; i++) {
+            HeurHashBucket *bucket = meta->heuristics.hash_buckets[i];
+            while (bucket) {
+                HeurHashBucket *next = bucket->next;
+                free(bucket);
+                bucket = next;
+            }
+            meta->heuristics.hash_buckets[i] = NULL;
+        }
+    }
+    
     meta->heuristics_dirty = true;
 }
 

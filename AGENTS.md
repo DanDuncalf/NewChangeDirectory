@@ -15,6 +15,7 @@ NewChangeDirectory (NCD) is a cross-platform command-line directory navigation t
 - Group/tag system for bookmarking frequently used directories
 - Fuzzy matching with Damerau-Levenshtein distance
 - Agent mode API for LLM integration
+- Exclusion list for filtering unwanted directories
 
 ## Technology Stack
 
@@ -33,11 +34,11 @@ NewChangeDirectory/
 ├── src/                       # Source code
 │   ├── ncd.h                 # Core types, constants, platform detection macros
 │   ├── main.c                # Entry point, CLI parsing, orchestration, heuristics
-│   ├── database.c/.h         # Database load/save (binary format), groups, config
+│   ├── database.c/.h         # Database load/save (binary format), groups, config, metadata
 │   ├── scanner.c/.h          # Multi-threaded directory enumeration
 │   ├── matcher.c/.h          # Search matching algorithm (chain + fuzzy)
 │   ├── ui.c/.h               # Interactive terminal UI (selector + navigator)
-│   ├── platform.c/.h         # Platform abstraction layer (Windows/Linux)
+│   ├── platform.c/.h         # NCD-specific platform wrappers (includes ../shared/)
 │   ├── strbuilder.c/.h       # Dynamic string builder for JSON output
 │   └── common.c              # Memory allocation wrappers
 ├── test/                     # Test suite
@@ -45,6 +46,7 @@ NewChangeDirectory/
 │   ├── test_database.c       # Database module unit tests
 │   ├── test_matcher.c        # Matcher module unit tests
 │   ├── test_db_corruption.c  # Database corruption handling tests
+│   ├── test_bugs.c           # Known bug detection tests
 │   ├── fuzz_database.c       # Fuzz testing for database loading
 │   ├── bench_matcher.c       # Performance benchmarks
 │   ├── Makefile              # Test build system
@@ -63,17 +65,20 @@ NewChangeDirectory/
 └── AGENTS.md                 # This file
 ```
 
+**External Dependency:**
+The project requires a shared platform abstraction library located at `../shared/` (sibling directory). This library provides cross-platform utilities for filesystem, console I/O, threading, and string building. The build scripts reference files like `../shared/platform.c`, `../shared/platform.h`, `../shared/strbuilder.c`, and `../shared/common.c`.
+
 ## Module Organization
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
 | Core Types | Platform detection, shared structures, constants | `ncd.h` |
 | Main | CLI parsing, heuristics, result generation, orchestration | `main.c` |
-| Database | Binary DB load/save, path helpers, groups, config | `database.c/.h` |
+| Database | Binary DB load/save, path helpers, groups, config, metadata, exclusions | `database.c/.h` |
 | Scanner | Thread pool management, recursive directory scanning | `scanner.c/.h` |
-| Matcher | Chain-matching algorithm, fuzzy matching with DL distance | `matcher.c/.h` |
-| UI | Interactive selection list, filesystem navigator, dialogs | `ui.c/.h` |
-| Platform | OS abstraction: console I/O, filesystem, threading, environment | `platform.c/.h` |
+| Matcher | Chain-matching algorithm, name index, fuzzy matching with DL distance | `matcher.c/.h` |
+| UI | Interactive selection list, filesystem navigator, dialogs, config editor | `ui.c/.h` |
+| Platform | NCD-specific wrappers around shared platform library | `platform.c/.h` |
 | String Builder | Dynamic string construction, JSON escaping | `strbuilder.c/.h` |
 | Common | Memory allocation wrappers that exit on OOM | `common.c` |
 
@@ -86,9 +91,9 @@ NewChangeDirectory/
 build.bat
 
 :: Or manually from Visual Studio x64 Native Tools Command Prompt:
-cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc ^
+cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc /I../shared ^
    src\main.c src\database.c src\scanner.c src\matcher.c src\ui.c ^
-   src\platform.c src\strbuilder.c src\common.c ^
+   src\platform.c ../shared/platform.c ../shared/strbuilder.c ../shared/common.c ^
    /Fe:NewChangeDirectory.exe /link /SUBSYSTEM:CONSOLE kernel32.lib user32.lib
 ```
 
@@ -97,7 +102,7 @@ cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc ^
 ```batch
 make                    # Release build
 make debug             # Debug build with symbols
-make clean             # Remove build artifacts
+clean                  # Remove build artifacts
 make install           # Install to INSTALL_DIR (default: C:/Windows/System32)
 ```
 
@@ -130,8 +135,8 @@ make test
 **Windows (MSVC):**
 ```batch
 cd test
-cl /nologo /W3 /O2 /Isrc /I. test_database.c test_framework.c src\database.c src\common.c /Fe:test_database.exe
-cl /nologo /W3 /O2 /Isrc /I. test_matcher.c test_framework.c src\matcher.c src\database.c /Fe:test_matcher.exe
+cl /nologo /W3 /O2 /Isrc /I. /I../../shared test_database.c test_framework.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c /Fe:test_database.exe
+cl /nologo /W3 /O2 /Isrc /I. /I../../shared test_matcher.c test_framework.c ../src/matcher.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c /Fe:test_matcher.exe
 test_database.exe
 test_matcher.exe
 ```
@@ -139,8 +144,8 @@ test_matcher.exe
 **Windows (MinGW):**
 ```batch
 cd test
-gcc -Wall -Wextra -I../src -I. -o test_database.exe test_database.c test_framework.c ../src/database.c ../src/common.c -lpthread
-gcc -Wall -Wextra -I../src -I. -o test_matcher.exe test_matcher.c test_framework.c ../src/matcher.c ../src/database.c -lpthread
+gcc -Wall -Wextra -I../src -I../../shared -I. -o test_database.exe test_database.c test_framework.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c -lpthread
+gcc -Wall -Wextra -I../src -I../../shared -I. -o test_matcher.exe test_matcher.c test_framework.c ../src/matcher.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c -lpthread
 test_database.exe
 test_matcher.exe
 ```
@@ -148,7 +153,7 @@ test_matcher.exe
 ### Running Other Tests
 
 ```bash
-# Fuzz tests (10,000 iterations)
+# Fuzz tests (runs for 60 seconds max)
 cd test && make fuzz
 
 # Performance benchmarks
@@ -156,6 +161,9 @@ cd test && make bench
 
 # Database corruption tests
 cd test && make corruption
+
+# Bug detection tests
+cd test && make bugs
 
 # Recursive mount tests (Linux, requires root)
 cd test && make recursive-mount
@@ -191,7 +199,7 @@ cd test && make recursive-mount
 
 ### Platform Abstraction
 
-Platform-specific code lives in `platform.c` with these patterns:
+Platform-specific code is handled through the shared library at `../shared/`. NCD-specific platform code lives in `platform.c` with these patterns:
 
 ```c
 #if NCD_PLATFORM_WINDOWS
@@ -203,7 +211,7 @@ Platform-specific code lives in `platform.c` with these patterns:
 #endif
 ```
 
-Platform macros defined in `ncd.h`:
+Platform macros defined in `ncd.h` via `../shared/platform_detect.h`:
 - `NCD_PLATFORM_WINDOWS` / `NCD_PLATFORM_LINUX`
 - `NCD_ARCH_X64`
 
@@ -211,13 +219,15 @@ Platform macros defined in `ncd.h`:
 
 - Use `ncd_malloc()` / `ncd_realloc()` wrappers that exit on OOM
 - Use `ncd_malloc_array()` for array allocations with overflow checking
+- Use `ncd_calloc()` for zero-initialized allocations
 - Database uses string pools to reduce memory fragmentation
 - Binary loads use single blob allocation with pointer referencing
 
 ### String Safety
 
-- Always use platform wrappers: `platform_strncpy_s()`, `platform_strncat_s()`
-- These guarantee NUL-termination and report truncation
+- All string operations should use bounded copies
+- Path manipulation uses `path_join()`, `path_parent()`, `path_leaf()` utilities
+- Output escaping is handled in `write_result()` for batch/shell safety
 
 ## Key Data Structures
 
@@ -244,7 +254,24 @@ typedef struct {
     int        drive_count;
     void      *blob_buf;       // NULL unless is_blob
     bool       is_blob;        // true => dirs/pools point into blob
+    void      *name_index;     // Cached name index for fast searches
 } NcdDatabase;
+```
+
+### NcdMetadata (Consolidated)
+Single file containing config, groups, heuristics, and exclusions:
+```c
+typedef struct {
+    NcdConfig cfg;
+    NcdGroupDb groups;
+    NcdHeuristicsV2 heuristics;
+    NcdExclusionList exclusions;
+    char file_path[NCD_MAX_PATH];
+    bool config_dirty;
+    bool groups_dirty;
+    bool heuristics_dirty;
+    bool exclusions_dirty;
+} NcdMetadata;
 ```
 
 ## Usage
@@ -277,6 +304,11 @@ ncd /g @home              # Create group for current directory
 ncd /g- @home             # Remove group
 ncd /gl                   # List all groups
 ncd @home                 # Jump to group
+
+# Exclusions
+ncd -x C:Windows          # Add exclusion pattern
+ncd -x- C:Windows         # Remove exclusion pattern
+ncd -xl                   # List all exclusions
 
 # Configuration
 ncd /c                    # Edit configuration (set default options)
@@ -314,19 +346,17 @@ ncd /v                    # Version info
 
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
-- History: `%LOCALAPPDATA%\ncd.history`
-- Config: `%LOCALAPPDATA%\NCD\ncd.config`
-- Groups: `%LOCALAPPDATA%\NCD\ncd.groups`
+- Metadata: `%LOCALAPPDATA%\NCD\ncd.metadata`
+- Legacy (migrated to metadata): `%LOCALAPPDATA%\NCD\ncd.config`, `ncd.groups`, `ncd.history`
 
 **Linux:**
 - Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
-- History: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.history`
-- Config: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.config`
-- Groups: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.groups`
+- Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
 
 ### Binary Format
 
 Magic: `NCDB` (0x4244434E)
+Version: 2 (with CRC64 checksum)
 Layout:
 ```
 [BinFileHdr: 32 bytes]
@@ -335,6 +365,12 @@ Layout:
 [CRC64 checksum]
 ```
 
+### Metadata Format
+
+Magic: `NCMD` (0x444D434E)
+Version: 1
+Sections: Config (0x01), Groups (0x02), Heuristics (0x03), Exclusions (0x04)
+
 ### Atomic Writes
 
 All database writes use temp-file-then-rename pattern:
@@ -342,27 +378,6 @@ All database writes use temp-file-then-rename pattern:
 2. Move current to `.old` (backup)
 3. Move `.tmp` to final name
 4. On failure: restore from `.old`
-
-## Testing Strategy
-
-The project includes a comprehensive test suite:
-
-1. **Unit Tests:** Database and matcher module testing using custom framework
-2. **Fuzz Tests:** Random binary file loading and JSON parsing
-3. **Benchmarks:** Performance testing on databases of varying sizes
-4. **Corruption Tests:** Handling of malformed/truncated database files
-
-Manual testing matrix:
-- Build verification: Windows x64 (MSVC), Windows x64 (MinGW), Linux x64 (GCC)
-- Functional tests: Search exact/prefix chain matching, Multi-match selector UI, Selector to Navigator flow, Rescan forms, Frequent history promotion, Missing path handling, Fuzzy matching, Groups, Configuration editor
-
-## Security Considerations
-
-1. **Path escaping:** Result files escape special characters for batch/shell safety
-2. **No elevated privileges:** Tool runs as regular user
-3. **Database integrity:** Magic number, version checks, and CRC64 checksum on load
-4. **Buffer safety:** All string operations use bounded copies
-5. **Symlink handling:** On Linux, symlinks are followed; no cycle detection currently
 
 ## Architecture Decisions
 
@@ -381,6 +396,12 @@ A child process cannot change the working directory of its parent shell (OS limi
 - Allows incremental updates without rescanning everything
 - Enables fast fallback search across all drives
 - Supports removable media that may be absent
+
+### Why consolidated metadata?
+
+- Single file for config, groups, heuristics, and exclusions
+- Atomic updates (all or nothing)
+- Reduces file I/O and simplifies backup
 
 ### Why two UI modes?
 
@@ -417,54 +438,55 @@ Exit codes:
 - `0` - Success / Found
 - `1` - Not found / Error
 
-## Development Notes
+## Security Considerations
 
-### Adding a New Module
+1. **Path escaping:** Result files escape special characters for batch/shell safety
+   - Windows: Replaces `%`, `!`, quotes, control characters
+   - Linux: Rejects shell metacharacters (`$`, `` ` ``, `|`, `&`, etc.)
+2. **No elevated privileges:** Tool runs as regular user
+3. **Database integrity:** Magic number, version checks, and CRC64 checksum on load
+4. **Buffer safety:** All string operations use bounded copies
+5. **Overflow checking:** Multiplication/addition operations check for overflow
+6. **Symlink handling:** On Linux, symlinks are followed; no cycle detection currently
 
-1. Create `src/newmodule.h` with include guards and `extern "C"` wrapper
-2. Create `src/newmodule.c` with `#include "ncd.h"` at top
-3. Add to build scripts (`build.bat`, `build.sh`, `Makefile`)
-4. Add to `src/ncd.vcxproj` if using Visual Studio
+## Known Limitations
 
-### Platform-Specific Code
+1. No symlink cycle detection on Linux
+2. Windows-only: No Unicode/wide-char support (ANSI only)
+3. History limited to 100 entries (NCD_HEUR_MAX_ENTRIES)
+4. Database refresh only triggered manually or after 24 hours
+5. No network drive support on Linux (only local filesystems)
+6. Requires external `../shared/` library for building
 
-When adding platform-specific functionality:
-1. Add declaration to `platform.h` with cross-platform signature
-2. Implement in `platform.c` within appropriate `#if NCD_PLATFORM_XXX` block
-3. Keep the API surface minimal and consistent across platforms
+## File Descriptions
 
-### Version Updates
+| File | Description |
+|------|-------------|
+| `src/ncd.h` | Core types, platform detection, limits, utility macros, binary format headers |
+| `src/main.c` | CLI parsing, heuristics (history), result generation, main loop, version info |
+| `src/database.c` | Binary DB load/save, path helpers, groups, config, metadata, exclusions |
+| `src/scanner.c` | Multi-threaded filesystem scanning, mount enumeration, exclusion filtering |
+| `src/matcher.c` | Chain matching, name index, fuzzy matching with Damerau-Levenshtein |
+| `src/ui.c` | TUI implementation (selector, navigator, dialogs, config editor) |
+| `src/platform.c` | NCD-specific platform wrappers (delegates to ../shared/) |
+| `src/strbuilder.c` | Dynamic string builder with JSON escaping |
+| `src/common.c` | Memory allocation wrappers with OOM handling |
+| `test/test_framework.h` | Minimal unit testing framework macros |
+| `test/test_database.c` | Database module unit tests |
+| `test/test_matcher.c` | Matcher module unit tests |
+| `test/fuzz_database.c` | Fuzz testing for database loading |
+| `test/bench_matcher.c` | Performance benchmarks |
+| `test/test_db_corruption.c` | Database corruption handling tests |
+
+## Version History
+
+- Current binary version: 2 (added CRC64 checksum field)
+- Current metadata version: 1
+- Current heuristics version: 1
+- Current build version: 1.2
 
 When changing database format:
 1. Increment `NCD_BIN_VERSION` in `ncd.h`
 2. Update `BinFileHdr` structure if needed
 3. Ensure backward compatibility or provide migration path
 4. Update CRC64 calculation if header changes
-
-## Known Limitations
-
-1. No symlink cycle detection on Linux
-2. Windows-only: No Unicode/wide-char support (ANSI only)
-3. History limited to 20 entries
-4. Database refresh only triggered manually or after 24 hours
-5. No network drive support on Linux (only local filesystems)
-
-## File Descriptions
-
-| File | Description |
-|------|-------------|
-| `src/ncd.h` | Core types, platform detection, limits, utility macros |
-| `src/main.c` | CLI parsing, heuristics (history), result generation, main loop |
-| `src/database.c` | Binary DB load/save, path helpers, groups, config |
-| `src/scanner.c` | Multi-threaded filesystem scanning, mount enumeration |
-| `src/matcher.c` | Chain matching, name index, fuzzy matching |
-| `src/ui.c` | TUI implementation (selector, navigator, dialogs) |
-| `src/platform.c` | Platform abstraction (Windows/Linux implementations) |
-| `src/strbuilder.c` | Dynamic string builder with JSON escaping |
-| `src/common.c` | Memory allocation wrappers |
-| `test/test_framework.h` | Minimal unit testing framework macros |
-| `test/test_framework.c` | Test framework implementation |
-| `test/test_database.c` | Database module unit tests |
-| `test/test_matcher.c` | Matcher module unit tests |
-| `test/fuzz_database.c` | Fuzz testing for database loading |
-| `test/bench_matcher.c` | Performance benchmarks |

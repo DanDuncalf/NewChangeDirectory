@@ -84,6 +84,18 @@ int scan_subdirectory(NcdDatabase   *db,
                       bool           include_hidden,
                       bool           include_system);
 
+/*
+ * Check if a directory should be excluded based on exclusion list.
+ * Called by the scanner to filter directories.
+ */
+bool scan_is_excluded(char drive_letter, const char *dir_path);
+
+/*
+ * Set the exclusion list for the scanner to use.
+ * Called before scanning to provide the exclusion list from metadata.
+ */
+void scan_set_exclusion_list(const NcdExclusionList *list);
+
 #ifdef __cplusplus
 }
 #endif

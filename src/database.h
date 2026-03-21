@@ -19,6 +19,9 @@ extern bool g_test_no_checksum;
 extern bool g_test_slow_mode;
 #endif
 
+/* Get the last error message from a failed database operation. */
+const char *db_get_last_error(void);
+
 /* Allocate an empty database. */
 NcdDatabase *db_create(void);
 
@@ -92,8 +95,8 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
 /* Return codes for db_check_file_version */
 #define DB_VERSION_ERROR       0   /* File doesn't exist or error reading */
 #define DB_VERSION_OK          1   /* Version matches current */
-#define DB_VERSION_MISMATCH    2   /* Version mismatch, user NOT skipped */
-#define DB_VERSION_SKIPPED     3   /* Version mismatch, user previously skipped */
+#define DB_VERSION_MISMATCH    2   /* Version mismatch, rescan not yet skipped */
+#define DB_VERSION_SKIPPED     3   /* Version mismatch, user skipped rescan    */
 
 /*
  * Check a single database file's version.
@@ -110,7 +113,7 @@ typedef struct {
     char     letter;              /* Drive letter/mount index */
     char     path[MAX_PATH];      /* Full path to database file */
     uint16_t version;             /* Version found in file (0 if unreadable) */
-    bool     user_skipped_update; /* Flag from header */
+    bool     skipped_rescan; /* Flag from header */
     bool     is_mounted;          /* Whether drive is currently mounted */
 } DbVersionInfo;
 
@@ -123,7 +126,7 @@ typedef struct {
  * For each drive letter that has a database file, checks:
  *   - If file magic is valid
  *   - If version matches NCD_BIN_VERSION
- *   - If user_skipped_update flag is set
+ *   - If skipped_rescan flag is set
  *   - If drive is currently mounted
  * 
  * Only returns drives that need updating (wrong version AND not skipped).
@@ -131,13 +134,13 @@ typedef struct {
 int db_check_all_versions(DbVersionInfo *out, int max_entries);
 
 /*
- * Set the user_skipped_update flag on a database file without rescanning.
- * This marks the database as "user declined update" so they won't be
- * prompted again for this drive.
+ * Set the skipped_rescan flag on a database file.
+ * This marks the database as "user declined rescan after format change"
+ * so they won't be prompted again for this drive.
  * 
  * Returns true on success.
  */
-bool db_set_skip_update_flag(const char *path);
+bool db_set_skipped_rescan_flag(const char *path);
 
 /* --------------------------------------------------------- drive helpers  */
 
@@ -177,74 +180,58 @@ char *db_full_path(const DriveData *drv,
 #define NCD_MAX_GROUPS     256
 
 /*
- * NcdGroupEntry - single group mapping
- */
-typedef struct {
-    char name[NCD_MAX_GROUP_NAME];  /* Group name (e.g., "@home") */
-    char path[NCD_MAX_PATH];        /* Full directory path */
-    time_t created;                 /* When group was created */
-} NcdGroupEntry;
-
-/*
- * NcdGroupDb - group database
- */
-typedef struct {
-    NcdGroupEntry *groups;
-    int count;
-    int capacity;
-} NcdGroupDb;
-
-/*
  * Get the path to the group database file.
- * Returns path in buf, or NULL on failure.
+ * DEPRECATED: Groups are now stored in metadata. Kept for migration.
  */
 char *db_group_path(char *buf, size_t buf_size);
 
 /*
- * Create a new empty group database.
+ * Legacy: Create a new empty group database.
+ * DEPRECATED: Groups are now stored in metadata.
  */
 NcdGroupDb *db_group_create(void);
 
 /*
- * Free a group database and all its entries.
+ * Legacy: Free a group database and all its entries.
+ * DEPRECATED: Groups are now stored in metadata.
  */
 void db_group_free(NcdGroupDb *gdb);
 
 /*
- * Load group database from disk.
+ * Legacy: Load group database from disk (for migration).
  * Returns NULL if file doesn't exist or is corrupt.
  */
 NcdGroupDb *db_group_load(void);
 
 /*
- * Save group database to disk.
- * Returns true on success.
+ * Legacy: Save group database to disk.
+ * DEPRECATED: Groups are now stored in metadata.
  */
 bool db_group_save(const NcdGroupDb *gdb);
 
 /*
- * Add or update a group.
+ * Add or update a group in metadata.
  * If group already exists, updates the path.
  * Returns true on success.
  */
-bool db_group_set(NcdGroupDb *gdb, const char *name, const char *path);
+bool db_group_set(NcdMetadata *meta, const char *name, const char *path);
 
 /*
- * Remove a group by name.
+ * Remove a group by name from metadata.
  * Returns true if group was found and removed.
  */
-bool db_group_remove(NcdGroupDb *gdb, const char *name);
+bool db_group_remove(NcdMetadata *meta, const char *name);
 
 /*
- * Look up a group by name.
+ * Look up a group by name in metadata.
  * Returns pointer to entry, or NULL if not found.
  */
-const NcdGroupEntry *db_group_get(const NcdGroupDb *gdb, const char *name);
+const NcdGroupEntry *db_group_get(NcdMetadata *meta, const char *name);
 
 /*
- * List all groups to console.
+ * List all groups to console from metadata.
  */
-void db_group_list(const NcdGroupDb *gdb);
+void db_group_list(NcdMetadata *meta);
 
 /* --------------------------------------------------------- configuration  */
 
@@ -389,6 +376,39 @@ void db_heur_clear(NcdMetadata *meta);
  */
 void db_heur_print(NcdMetadata *meta);
 
+/* --------------------------------------------------------- exclusion list  */
+
+/*
+ * Add an exclusion pattern to the list.
+ * Pattern format: [drive:][\]path with * wildcards (Windows) or [/]path with * wildcards (Linux)
+ * Returns true on success, false if pattern is invalid or list is full.
+ */
+bool db_exclusion_add(NcdMetadata *meta, const char *pattern);
+
+/*
+ * Remove an exclusion pattern from the list.
+ * Returns true if pattern was found and removed, false if not found.
+ */
+bool db_exclusion_remove(NcdMetadata *meta, const char *pattern);
+
+/*
+ * Check if a directory matches any exclusion pattern.
+ * drive_letter: the drive containing the directory
+ * dir_path: full directory path (relative to drive root)
+ * Returns true if the directory should be excluded.
+ */
+bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path);
+
+/*
+ * Print all exclusion patterns.
+ */
+void db_exclusion_print(NcdMetadata *meta);
+
+/*
+ * Initialize default exclusion patterns (called on first run).
+ */
+void db_exclusion_init_defaults(NcdMetadata *meta);
+
 /* --------------------------------------------------------- atomic rescan helpers  */
 
 /*
@@ -407,6 +427,44 @@ void db_drive_backup_free(DriveData *backup);
  * Restore drive data from backup on failed rescan.
  */
 void db_drive_restore_from_backup(DriveData *dst, const DriveData *backup);
+
+/* --------------------------------------------------------- directory history  */
+
+/*
+ * Add a directory to the history list.
+ * If the path already exists in the list, it is moved to the top (position 0).
+ * If the list is full, the oldest entry is discarded.
+ * Returns true on success.
+ */
+bool db_dir_history_add(NcdMetadata *meta, const char *path, char drive);
+
+/*
+ * Get a directory from the history list by index.
+ * Index 0 is the most recent, index count-1 is the oldest.
+ * Returns pointer to entry, or NULL if index is out of range.
+ */
+const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index);
+
+/*
+ * Swap the first two entries in the history list (ping-pong).
+ * Only swaps if there are at least 2 entries.
+ */
+void db_dir_history_swap_first_two(NcdMetadata *meta);
+
+/*
+ * Get the number of entries in the history list.
+ */
+int db_dir_history_count(NcdMetadata *meta);
+
+/*
+ * Clear all history entries.
+ */
+void db_dir_history_clear(NcdMetadata *meta);
+
+/*
+ * Print the directory history list (for debugging/display).
+ */
+void db_dir_history_print(NcdMetadata *meta);
 
 #ifdef __cplusplus
 }

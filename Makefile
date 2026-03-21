@@ -33,6 +33,7 @@ CC ?= gcc
 #  Source files
 # --------------------------------------------------------------------------
 SRCDIR  := src
+OBJDIR  := obj
 SOURCES := \
     $(SRCDIR)/main.c      \
     $(SRCDIR)/database.c  \
@@ -43,7 +44,7 @@ SOURCES := \
     $(SRCDIR)/strbuilder.c \
     $(SRCDIR)/common.c
 
-OBJECTS := $(SOURCES:.c=.o)
+OBJECTS := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SOURCES))
 
 # --------------------------------------------------------------------------
 #  Flags
@@ -84,8 +85,12 @@ $(TARGET): $(OBJECTS)
 	@echo "  Build successful: $(TARGET)"
 	@echo ""
 
-$(SRCDIR)/%.o: $(SRCDIR)/%.c
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OBJDIR):
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	@mkdir -p $(OBJDIR) 2>/dev/null || true
 
 # --------------------------------------------------------------------------
 #  Dependency includes (optional -- regenerate with make deps)
@@ -100,8 +105,8 @@ deps:
 #  Clean
 # --------------------------------------------------------------------------
 clean:
-	del /f /q $(SRCDIR)\*.o $(TARGET) .depend 2>nul || \
-	rm -f $(SRCDIR)/*.o $(TARGET) .depend
+	@if exist $(OBJDIR) rmdir /s /q $(OBJDIR) 2>nul
+	@rm -rf $(OBJDIR) $(TARGET) .depend 2>/dev/null || true
 
 # --------------------------------------------------------------------------
 #  Install  (copy exe + batch wrapper to INSTALL_DIR)

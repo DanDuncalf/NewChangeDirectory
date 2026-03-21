@@ -44,6 +44,33 @@ static void ncd_print(const char *s);
 static void ncd_println(const char *s);
 static void ncd_printf(const char *fmt, ...);
 
+/* ============================================================= directory history */
+
+/*
+ * Add current working directory to the directory history.
+ * Called whenever NCD successfully navigates to a directory.
+ */
+static void add_current_dir_to_history(void)
+{
+    char cwd[MAX_PATH] = {0};
+    if (!platform_get_current_dir(cwd, sizeof(cwd))) return;
+    
+    char drive = platform_get_drive_letter(cwd);
+    if (drive == 0) {
+        drive = cwd[0];
+    }
+    
+    NcdMetadata *meta = db_metadata_load();
+    if (!meta) meta = db_metadata_create();
+    if (!meta) return;
+    
+    if (db_dir_history_add(meta, cwd, drive)) {
+        meta->dir_history_dirty = true;
+        db_metadata_save(meta);
+    }
+    db_metadata_free(meta);
+}
+
 /* ============================================================= heuristics */
 
 /* 
@@ -456,19 +483,14 @@ static void spawn_background_rescan(const char *db_path)
 
 static void print_usage(void)
 {
-#if NCD_PLATFORM_WINDOWS
-    ncd_print(
-        "NewChangeDirectory (NCD) -- Nifty CD for Windows 64-bit\r\n"
-#else
-    ncd_print(
-        "NewChangeDirectory (NCD) -- Nifty CD for Linux 64-bit\r\n"
-#endif
+    ncd_printf("%s\r\n"
         "\r\n"
         "Usage:\r\n"
         "  ncd <search>\r\n"
         "  ncd [/r|/r<drives>] [/i] [/s] [/a] [/d <dbpath>] [/t <sec>] <search>\r\n"
         "  ncd /r|/r<drives>\r\n"
         "  ncd /f | /fc\r\n"
+        "  ncd /0 | /1 | /2 | /3 ... /9\r\n"
         "  ncd /h | /?\r\n"
         "\r\n"
         "Command Key:\r\n"
@@ -476,6 +498,9 @@ static void print_usage(void)
         "  /v          Print version (continues if combined with work)\r\n"
         "  /f          Show Frequent history (last 20 unique searches)\r\n"
         "  /fc         Clear Frequent history\r\n"
+        "  /0          Ping-pong: swap between last two directories (same as no args)\r\n"
+        "  /1          Add current directory to history list\r\n"
+        "  /2 .. /9    Jump to Nth directory in history (up to 9 entries)\r\n"
         "  /r          Force rescan of all drives now\r\n"
         "  /r. or /r . Rescan current subdirectory only\r\n"
         "  /rBDE       Force rescan of specific drives only (B:,D:,E:)\r\n"
@@ -488,23 +513,31 @@ static void print_usage(void)
         "  /g <group>  Group current directory (e.g., /g @home)\r\n"
         "  /g- <group> Remove a group\r\n"
         "  /gl         List all groups\r\n"
+        "  -x <pat>    Add exclusion pattern (e.g., -x C:Windows)\r\n"
+        "  -x- <pat>   Remove exclusion pattern\r\n"
+        "  -xl         List all exclusion patterns\r\n"
         "  /c          Edit configuration (set default options)\r\n"
         "  /d <path>   Use alternate database file\r\n"
         "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
-        "  <search>    Partial path, e.g. downloads or scott\\downloads\r\n"
+        "  <search>    Partial path with optional wildcards (*, ?)\r\n"
         "              Special: '.' opens navigator from current directory\r\n"
-        "                       'X:' or 'X:\\' opens navigator from drive root\r\n"
-#if NCD_PLATFORM_LINUX
-        "\r\n"
-        "Linux/WSL Specific:\r\n"
-        "  /r /        Scan only root filesystem (/etc,/home,/usr,/var,...)\r\n"
-        "              Without this, /r scans Windows drives under /mnt/*\r\n"
-        "  Installation: Run ./deploy.sh to install to /usr/local/bin\r\n"
-#endif
+        "                       'X:' or 'X:' opens navigator from drive root\r\n",
+        platform_get_app_title());
+    
+    /* Platform-specific suffix */
+    char suffix_buf[512];
+    if (platform_write_help_suffix(suffix_buf, sizeof(suffix_buf)) > 0) {
+        ncd_print(suffix_buf);
+    }
+    
+    ncd_print(
         "\r\n"
         "Examples:\r\n"
         "  ncd downloads\r\n"
         "  ncd scott\\downloads\r\n"
+        "  ncd down*       (wildcard: matches downloads, downgrade, etc.)\r\n"
+        "  ncd *load*      (wildcard: matches downloads, uploads, etc.)\r\n"
+        "  ncd src?x64     (single char: matches src_x64, src-x64)\r\n"
         "  ncd /i scott\\appdata\r\n"
         "  ncd /f\r\n"
         "  ncd /fc\r\n"
@@ -574,6 +607,16 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
         if (_stricmp(arg, "/fc") == 0 || _stricmp(arg, "-fc") == 0) {
             opts->clear_history = true;
             continue;
+        }
+
+        /* Directory history navigation: /0, /1, /2, etc. */
+        if ((arg[0] == '/' || arg[0] == '-') && isdigit((unsigned char)arg[1])) {
+            int idx = atoi(arg + 1);
+            if (idx >= 0 && idx <= 9) {
+                opts->history_nav = true;
+                opts->history_index = idx;
+                continue;
+            }
         }
 
         /*
@@ -733,6 +776,38 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             opts->config_edit = true;
             continue;
         }
+        
+        /* Exclusion list: -xl */
+        if ((_stricmp(arg, "-xl") == 0 || _stricmp(arg, "/xl") == 0)) {
+            opts->exclusion_list = true;
+            continue;
+        }
+        
+        /* Exclusion remove: -x- <pattern> */
+        if ((_stricmp(arg, "-x-") == 0 || _stricmp(arg, "/x-") == 0)) {
+            if (i + 1 < argc) {
+                i++;
+                platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[i]);
+                opts->exclusion_remove = true;
+                continue;
+            } else {
+                ncd_println("NCD: -x- requires a pattern");
+                return false;
+            }
+        }
+        
+        /* Exclusion add: -x <pattern> */
+        if ((_stricmp(arg, "-x") == 0 || _stricmp(arg, "/x") == 0)) {
+            if (i + 1 < argc) {
+                i++;
+                platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[i]);
+                opts->exclusion_add = true;
+                continue;
+            } else {
+                ncd_println("NCD: -x requires a pattern");
+                return false;
+            }
+        }
 
 #if DEBUG
         /* Hidden test options (debug builds only, not documented) */
@@ -822,27 +897,6 @@ next_arg:;
 }
 
 #if NCD_PLATFORM_LINUX
-/*
- * Check if a filesystem type is a pseudo filesystem that should be skipped.
- * Local copy of the pseudo filesystems list.
- */
-static const char *main_pseudo_filesystems[] = {
-    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs",
-    "cgroup", "cgroup2", "pstore", "bpf", "autofs", "hugetlbfs",
-    "mqueue", "debugfs", "tracefs", "ramfs", "squashfs", "overlay",
-    "fusectl", "nsfs", "efivarfs", "configfs", "selinuxfs", "pipefs",
-    "sockfs", "rpc_pipefs", "nfsd", "sunrpc", "cpuset", "xenfs",
-    "fuse.portal", "fuse.gvfsd-fuse", NULL
-};
-
-static bool is_pseudo_fs(const char *fstype)
-{
-    for (int i = 0; main_pseudo_filesystems[i]; i++) {
-        if (strcmp(fstype, main_pseudo_filesystems[i]) == 0)
-            return true;
-    }
-    return false;
-}
 #endif
 
 #if NCD_PLATFORM_WINDOWS
@@ -870,64 +924,30 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
         return n;
     }
 
-    /* Build a drive list from the options. If opts->scan_drive_count>0 use
-     * those drives. If skip mask is specified, enumerate available drives
-     * and exclude the skipped ones. If neither is set, pass count==0 to
-     * scan_drives to scan all drives. */
-    char drives[26];
-    int dcount = 0;
-
-#if NCD_PLATFORM_LINUX
     /* Linux special: /r / scans only root filesystem */
     if (opts->scan_root_only) {
         const char *root_mount = "/";
         return scan_mounts(db, &root_mount, 1, opts->show_hidden, opts->show_system, opts->timeout_seconds);
     }
-#endif
+
+    /* Build a drive list from the options. If opts->scan_drive_count>0 use
+     * those drives. If skip mask is specified, enumerate available drives
+     * and exclude the skipped ones. If neither is set, pass count==0 to
+     * scan_mounts to scan all drives. */
+    char drives[26];
+    int dcount = 0;
 
     if (opts->scan_drive_count > 0) {
-        for (int i = 0; i < 26; i++) if (opts->scan_drive_mask[i] && !opts->skip_drive_mask[i]) drives[dcount++] = (char)('A' + i);
+        for (int i = 0; i < 26; i++) 
+            if (opts->scan_drive_mask[i] && !opts->skip_drive_mask[i]) 
+                drives[dcount++] = (char)('A' + i);
     } else if (opts->skip_drive_count > 0) {
-#if NCD_PLATFORM_WINDOWS
-        DWORD mask = GetLogicalDrives();
-        for (int i = 0; i < 26; i++) {
-            if (!(mask & (1u << i))) continue;
-            if (opts->skip_drive_mask[i]) continue;
-            drives[dcount++] = (char)('A' + i);
-        }
-#else
-        /* On Linux enumerate mounts and include those not skipped. */
-        char mnt_points[26][MAX_PATH];
-        char mnt_letters[26];
-        int nmounts = 0;
-        FILE *mf = fopen("/proc/mounts", "r");
-        if (mf) {
-            char line[1024];
-            while (fgets(line, sizeof(line), mf) && nmounts < 26) {
-                char device[256], mountpoint[MAX_PATH], fstype[64];
-                if (sscanf(line, "%255s %4095s %63s", device, mountpoint, fstype) != 3) continue;
-                if (is_pseudo_fs(fstype)) continue;
-                if (strncmp(mountpoint, "/proc", 5) == 0) continue;
-                if (strncmp(mountpoint, "/sys", 4) == 0) continue;
-                if (strncmp(mountpoint, "/dev", 4) == 0) continue;
-                if (strncmp(mountpoint, "/run", 4) == 0) continue;
-                snprintf(mnt_points[nmounts], MAX_PATH, "%s", mountpoint);
-                char assigned = (char)(nmounts + 1);
-                if (mountpoint[0] == '/' && mountpoint[1] == 'm' && mountpoint[2] == 'n' && mountpoint[3] == 't' && mountpoint[4] == '/' && isalpha((unsigned char)mountpoint[5]) && mountpoint[6] == '\0') {
-                    assigned = (char)toupper((unsigned char)mountpoint[5]);
-                }
-                mnt_letters[nmounts] = assigned;
-                nmounts++;
-            }
-            fclose(mf);
-        }
-        for (int i = 0; i < nmounts; i++) {
-            char letter = mnt_letters[i];
-            int idx = (isalpha((unsigned char)letter) ? (letter - 'A') : -1);
-            if (idx >= 0 && idx < 26 && opts->skip_drive_mask[idx]) continue;
-            drives[dcount++] = letter;
-        }
-#endif
+        /* Get available drives and filter by skip mask */
+        char all_drives[26];
+        int all_count = platform_get_available_drives(all_drives, 26);
+        dcount = platform_filter_available_drives(all_drives, all_count, 
+                                                   opts->skip_drive_mask,
+                                                   drives, 26);
     } else {
         dcount = 0; /* scan_mounts will enumerate all mounts */
     }
@@ -942,32 +962,12 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
     char mount_bufs[26][MAX_PATH];
     int mcount = 0;
 
-#if NCD_PLATFORM_WINDOWS
     for (int i = 0; i < dcount; i++) {
-        char letter = drives[i];
-        if (!isalpha((unsigned char)letter)) continue;
-        snprintf(mount_bufs[mcount], MAX_PATH, "%c:\\", letter);
-        mounts[mcount] = mount_bufs[mcount];
-        mcount++;
-    }
-#else
-    /* On Linux, enumerate all mounts and filter by selected letters */
-    char all_mount_bufs[26][MAX_PATH];
-    const char *all_mount_ptrs[26];
-    int all_count = ncd_platform_enumerate_mounts(all_mount_bufs, all_mount_ptrs,
-                                              sizeof(all_mount_bufs[0]), 26);
-    for (int i = 0; i < all_count && mcount < 26; i++) {
-        char letter = platform_get_drive_letter(all_mount_ptrs[i]);
-        for (int j = 0; j < dcount; j++) {
-            if (letter == drives[j]) {
-                snprintf(mount_bufs[mcount], MAX_PATH, "%s", all_mount_ptrs[i]);
-                mounts[mcount] = mount_bufs[mcount];
-                mcount++;
-                break;
-            }
+        if (platform_build_mount_path(drives[i], mount_bufs[mcount], MAX_PATH)) {
+            mounts[mcount] = mount_bufs[mcount];
+            mcount++;
         }
     }
-#endif
 
     if (mcount == 0) return 0;
     return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system, opts->timeout_seconds);
@@ -999,15 +999,17 @@ int main(int argc, char *argv[])
 
     /* ------------------------------------------------ first-run configuration */
     /* If no config file exists and user didn't specify /c, prompt for configuration */
-    if (!db_config_exists() && !opts.config_edit && !opts.show_help) {
+    if (!db_metadata_exists() && !opts.config_edit && !opts.show_help) {
         ncd_println("Welcome to NCD! Let's set up your default options.");
         ncd_println("(Use 'ncd /c' anytime to change these settings)\r\n");
         
-        NcdConfig cfg;
-        db_config_init_defaults(&cfg);
+        NcdMetadata *meta = db_metadata_create();
+        db_config_init_defaults(&meta->cfg);
+        db_exclusion_init_defaults(meta);
         
-        if (ui_edit_config(&cfg)) {
-            if (db_config_save(&cfg)) {
+        if (ui_edit_config(meta)) {
+            meta->config_dirty = true;
+            if (db_metadata_save(meta)) {
                 ncd_println("Configuration saved.\r\n");
             } else {
                 ncd_println("Warning: Could not save configuration.\r\n");
@@ -1015,6 +1017,7 @@ int main(int argc, char *argv[])
         } else {
             ncd_println("Using default settings. (Run 'ncd /c' to configure later)\r\n");
         }
+        db_metadata_free(meta);
     }
 
     /* ------------------------------------------------ apply config defaults */
@@ -1061,10 +1064,10 @@ int main(int argc, char *argv[])
     
     /* -------------------------------------------------- tag list command  */
     if (opts.group_list) {
-        NcdGroupDb *gdb = db_group_load();
-        if (gdb) {
-            db_group_list(gdb);
-            db_group_free(gdb);
+        NcdMetadata *meta = db_metadata_load();
+        if (meta) {
+            db_group_list(meta);
+            db_metadata_free(meta);
         } else {
             ncd_println("No groups defined.");
         }
@@ -1074,16 +1077,16 @@ int main(int argc, char *argv[])
     
     /* ----------------------------------------------- group remove command */
     if (opts.group_remove) {
-        NcdGroupDb *gdb = db_group_load();
-        if (!gdb) gdb = db_group_create();
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
         
-        if (db_group_remove(gdb, opts.group_name)) {
-            db_group_save(gdb);
+        if (db_group_remove(meta, opts.group_name)) {
+            db_metadata_save(meta);
             ncd_printf("Group '%s' removed.\r\n", opts.group_name);
         } else {
             ncd_printf("Group '%s' not found.\r\n", opts.group_name);
         }
-        db_group_free(gdb);
+        db_metadata_free(meta);
         con_close();
         return 0;
     }
@@ -1097,18 +1100,172 @@ int main(int argc, char *argv[])
             return 1;
         }
         
-        NcdGroupDb *gdb = db_group_load();
-        if (!gdb) gdb = db_group_create();
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
         
-        if (db_group_set(gdb, opts.group_name, cwd)) {
-            db_group_save(gdb);
+        if (db_group_set(meta, opts.group_name, cwd)) {
+            db_metadata_save(meta);
             ncd_printf("Group '%s' -> '%s'\r\n", opts.group_name, cwd);
         } else {
             ncd_println("Failed to set group (too many groups?).");
         }
-        db_group_free(gdb);
+        db_metadata_free(meta);
         con_close();
         return 0;
+    }
+    
+    /* ------------------------------------------------ exclusion list command */
+    if (opts.exclusion_list) {
+        NcdMetadata *meta = db_metadata_load();
+        if (meta) {
+            db_exclusion_print(meta);
+            db_metadata_free(meta);
+        } else {
+            ncd_println("Exclusion list: empty");
+        }
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ exclusion remove command */
+    if (opts.exclusion_remove) {
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        
+        if (db_exclusion_remove(meta, opts.exclusion_pattern)) {
+            db_metadata_save(meta);
+            ncd_printf("Removed exclusion: %s\r\n", opts.exclusion_pattern);
+        } else {
+            ncd_printf("Exclusion not found: %s\r\n", opts.exclusion_pattern);
+        }
+        db_metadata_free(meta);
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ exclusion add command */
+    if (opts.exclusion_add) {
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        
+        if (db_exclusion_add(meta, opts.exclusion_pattern)) {
+            db_metadata_save(meta);
+            ncd_printf("Added exclusion: %s\r\n", opts.exclusion_pattern);
+        } else {
+            const char *err = db_get_last_error();
+            ncd_printf("Failed to add exclusion: %s\r\n", err);
+        }
+        db_metadata_free(meta);
+        con_close();
+        return 0;
+    }
+
+    /* ------------------------------------------------ directory history navigation */
+    if (opts.history_nav || (!opts.has_search && argc == 1)) {
+        /* No args: treat as /0 (ping-pong) */
+        int idx = opts.history_nav ? opts.history_index : 0;
+        
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        
+        if (idx == 0) {
+            /* /0 or no args: ping-pong between [0] and [1], swapping them */
+            if (db_dir_history_count(meta) < 2) {
+                ncd_println("NCD: Not enough history entries to ping-pong.\r\n");
+                ncd_println("Run 'ncd /1' first to add current directory to history.\r\n");
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            /* Get the second entry (will become first after swap) */
+            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, 1);
+            if (!entry) {
+                result_error("History entry not found.");
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            /* Verify directory still exists */
+            if (!platform_dir_exists(entry->path)) {
+                ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            /* Swap first two entries */
+            db_dir_history_swap_first_two(meta);
+            meta->dir_history_dirty = true;
+            db_metadata_save(meta);
+            
+            /* Return the (now) first entry */
+            result_ok(entry->path, entry->drive);
+            db_metadata_free(meta);
+            con_close();
+            return 0;
+            
+        } else if (idx == 1) {
+            /* /1: add current directory to top of history */
+            char cwd[MAX_PATH] = {0};
+            if (!platform_get_current_dir(cwd, sizeof(cwd))) {
+                result_error("Could not determine current directory.");
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            char drive = platform_get_drive_letter(cwd);
+            if (drive == 0) {
+                /* On Linux, use first char or default */
+                drive = cwd[0];
+            }
+            
+            if (db_dir_history_add(meta, cwd, drive)) {
+                meta->dir_history_dirty = true;
+                db_metadata_save(meta);
+                ncd_printf("Added to history: %s\r\n", cwd);
+            } else {
+                ncd_println("Failed to add to history.");
+            }
+            db_metadata_free(meta);
+            con_close();
+            return 0;
+            
+        } else {
+            /* /2, /3, etc.: jump to Nth entry (1-indexed, so /2 = index 1) */
+            int entry_idx = idx - 1;  /* Convert to 0-indexed */
+            
+            if (entry_idx >= db_dir_history_count(meta)) {
+                ncd_printf("NCD: History entry /%d not available (only %d entries).\r\n",
+                           idx, db_dir_history_count(meta));
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, entry_idx);
+            if (!entry) {
+                result_error("History entry not found.");
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            /* Verify directory still exists */
+            if (!platform_dir_exists(entry->path)) {
+                ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            result_ok(entry->path, entry->drive);
+            db_metadata_free(meta);
+            con_close();
+            return 0;
+        }
     }
     
     /* ------------------------------------------------ configuration editor */
@@ -1120,7 +1277,7 @@ int main(int argc, char *argv[])
             return 1;
         }
         
-        if (ui_edit_config(&meta->cfg)) {
+        if (ui_edit_config(meta)) {
             meta->config_dirty = true;
             if (db_metadata_save(meta)) {
                 ncd_println("Configuration saved.");
@@ -1149,16 +1306,37 @@ int main(int argc, char *argv[])
 
     /* ------------------------------------------- forced rescan shortcut  */
     if (opts.force_rescan && !opts.has_search) {
+        /* Load metadata and set exclusion list for scanning */
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        db_exclusion_init_defaults(meta);
+        scan_set_exclusion_list(&meta->exclusions);
+        
         NcdDatabase *db = db_create();
         db->default_show_hidden = opts.show_hidden;
         db->default_show_system = opts.show_system;
         db->last_scan = time(NULL);
 
-        /* For subdirectory rescan, load existing database first */
+        /* For subdirectory rescan, load existing database first.
+         * A partial rescan merges into an existing DB, so we cannot proceed
+         * if the on-disk format is outdated -- the merge would be lost when
+         * the DB is eventually rebuilt.  Prompt for a full rescan instead. */
         if (opts.scan_subdirectory[0]) {
             char drive = platform_get_drive_letter(opts.scan_subdirectory);
             char drv_path[NCD_MAX_PATH];
             if (db_drive_path(drive, drv_path, sizeof(drv_path))) {
+                int vstatus = db_check_file_version(drv_path);
+                if (vstatus == DB_VERSION_MISMATCH || vstatus == DB_VERSION_SKIPPED) {
+                    ncd_printf("NCD: Database for %c: needs a full rescan "
+                               "(format changed).\r\n"
+                               "     Run 'ncd /r' to rebuild, then retry "
+                               "the subdirectory rescan.\r\n", drive);
+                    db_metadata_free(meta);
+                    scan_set_exclusion_list(NULL);
+                    db_free(db);
+                    con_close();
+                    return 1;
+                }
                 NcdDatabase *existing = db_load_auto(drv_path);
                 if (existing) {
                     db_free(db);
@@ -1168,6 +1346,10 @@ int main(int argc, char *argv[])
         }
 
         int n = run_requested_rescan(db, &opts);
+        
+        /* Cleanup metadata */
+        db_metadata_free(meta);
+        scan_set_exclusion_list(NULL);
         ncd_printf("  Scan complete: %d directories found across %d drive(s).\r\n",
                    n, db->drive_count);
 
@@ -1222,18 +1404,14 @@ int main(int argc, char *argv[])
             return 0;
         }
         heur_note_choice(opts.search, chosen);
+        add_current_dir_to_history();
         result_ok(chosen, (char)toupper((unsigned char)chosen[0]));
         con_close();
         return 0;
     }
 
-#if NCD_PLATFORM_WINDOWS
     /* -------------------------- drive-root navigation mode (X: / X:\)   */
-    if (isalpha((unsigned char)opts.search[0]) &&
-        opts.search[1] == ':' &&
-        (opts.search[2] == '\0' ||
-         ((opts.search[2] == '\\' || opts.search[2] == '/') &&
-          opts.search[3] == '\0'))) {
+    if (platform_is_drive_specifier(opts.search)) {
         char root[MAX_PATH] = {0};
         root[0] = (char)toupper((unsigned char)opts.search[0]);
         root[1] = ':';
@@ -1247,36 +1425,37 @@ int main(int argc, char *argv[])
             return 0;
         }
         heur_note_choice(opts.search, chosen);
+        add_current_dir_to_history();
         result_ok(chosen, root[0]);
         con_close();
         return 0;
     }
-#endif
 
     /* -------------------------------------- tag lookup (@tagname)        */
     if (opts.search[0] == '@') {
         const char *group_name = opts.search;  /* Includes the @ prefix */
         
-        NcdGroupDb *gdb = db_group_load();
-        if (gdb) {
-            const NcdGroupEntry *entry = db_group_get(gdb, group_name);
+        NcdMetadata *meta = db_metadata_load();
+        if (meta) {
+            const NcdGroupEntry *entry = db_group_get(meta, group_name);
             if (entry) {
                 /* Verify the directory still exists */
                 if (platform_dir_exists(entry->path)) {
                     char drive_letter = entry->path[0];
+                    add_current_dir_to_history();
                     result_ok(entry->path, drive_letter);
-                    db_group_free(gdb);
+                    db_metadata_free(meta);
                     con_close();
                     return 0;
                 } else {
                     ncd_printf("Group '%s' points to non-existent directory: %s\r\n",
                                group_name, entry->path);
-                    db_group_free(gdb);
+                    db_metadata_free(meta);
                     con_close();
                     return 1;
                 }
             }
-            db_group_free(gdb);
+            db_metadata_free(meta);
         }
         
         /* Group not found */
@@ -1286,41 +1465,8 @@ int main(int argc, char *argv[])
     }
 
     /* ----------------------------------------- parse drive from search   */
-    char target_drive;
     char clean_search[NCD_MAX_PATH];
-
-#if NCD_PLATFORM_WINDOWS
-    /*
-     * If the search string starts with "X:" (a drive letter), search only
-     * that drive first; otherwise use the current working directory's drive.
-     * Fall back to all drives if nothing matches on the primary drive.
-     */
-    if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-        target_drive = (char)toupper((unsigned char)opts.search[0]);
-        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search + 2);
-    } else {
-        char cwd[MAX_PATH] = {0};
-        platform_get_current_dir(cwd, sizeof(cwd));
-        target_drive = (char)toupper((unsigned char)cwd[0]);
-        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search);
-    }
-#else
-    /*
-     * On Linux / WSL: if the search starts with "X:" treat X as a Windows
-     * drive letter mapping to /mnt/X and search that database first.
-     * Otherwise start with the first available database (mount index 0x01).
-     */
-    if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-        target_drive = (char)toupper((unsigned char)opts.search[0]);
-        /* opts.search+2 is always shorter than clean_search; use explicit
-         * precision cap to let GCC prove no truncation occurs.            */
-        /* clean_search buffer is large enough; use platform_strncpy_s */
-        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search + 2);
-    } else {
-        target_drive = '\x01';
-        platform_strncpy_s(clean_search, sizeof(clean_search), opts.search);
-    }
-#endif
+    char target_drive = platform_parse_drive_from_search(opts.search, clean_search, sizeof(clean_search));
 
     /* ----------------------- resolve target drive's per-drive db path    */
     char target_db[NCD_MAX_PATH] = {0};
@@ -1335,6 +1481,21 @@ int main(int argc, char *argv[])
 
     /* -------------------- first run / forced rescan: rebuild everything  */
     if (!db_exists || opts.force_rescan) {
+        /* Subdirectory rescan with search: same version guard as the
+         * no-search path above -- a partial rescan into an outdated DB
+         * would be lost on the next full rebuild. */
+        if (opts.scan_subdirectory[0] && db_exists) {
+            int vstatus = db_check_file_version(target_db);
+            if (vstatus == DB_VERSION_MISMATCH || vstatus == DB_VERSION_SKIPPED) {
+                ncd_printf("NCD: Database for %c: needs a full rescan "
+                           "(format changed).\r\n"
+                           "     Run 'ncd /r' to rebuild, then retry "
+                           "the subdirectory rescan.\r\n", target_drive);
+                con_close();
+                return 1;
+            }
+        }
+
         if (opts.force_rescan && opts.scan_drive_count > 0)
             ncd_printf("NCD: Forced rescan -- scanning requested drives...\r\n");
         else
@@ -1345,6 +1506,16 @@ int main(int argc, char *argv[])
         scan_db->default_show_hidden = opts.show_hidden;
         scan_db->default_show_system = opts.show_system;
         scan_db->last_scan = time(NULL);
+
+        /* For subdirectory rescan, load existing database so we merge
+         * rather than replace the drive data. */
+        if (opts.scan_subdirectory[0] && db_exists) {
+            NcdDatabase *existing = db_load_auto(target_db);
+            if (existing) {
+                db_free(scan_db);
+                scan_db = existing;
+            }
+        }
 
         int n = (opts.force_rescan
                  ? run_requested_rescan(scan_db, &opts)
@@ -1392,7 +1563,7 @@ int main(int argc, char *argv[])
             if (choice == UI_UPDATE_NONE) {
                 /* User chose to skip all - set skip flags */
                 for (int i = 0; i < outdated_count; i++) {
-                    db_set_skip_update_flag(outdated[i].path);
+                    db_set_skipped_rescan_flag(outdated[i].path);
                 }
                 ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
             } else {
@@ -1409,7 +1580,7 @@ int main(int argc, char *argv[])
                     /* Set skip flag on drives user chose NOT to update */
                     for (int i = 0; i < outdated_count; i++) {
                         if (!selected[i]) {
-                            db_set_skip_update_flag(outdated[i].path);
+                            db_set_skipped_rescan_flag(outdated[i].path);
                         }
                     }
                     
@@ -1477,7 +1648,7 @@ int main(int argc, char *argv[])
                 } else {
                     /* User deselected all - treat as skip */
                     for (int i = 0; i < outdated_count; i++) {
-                        db_set_skip_update_flag(outdated[i].path);
+                        db_set_skipped_rescan_flag(outdated[i].path);
                     }
                     ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
                 }
@@ -1533,26 +1704,50 @@ int main(int argc, char *argv[])
     if (!matches || match_count == 0) {
         if (primary_db) { db_free(primary_db); primary_db = NULL; }
 
+        /* 
+         * Phase 1: Collect all available drive letters first, then load all
+         * databases before searching. This avoids the load-search-free 
+         * pattern that prevented the name index from being reused.
+         */
+        char drive_letters[26];
+        int drive_count = 0;
+        
 #if NCD_PLATFORM_WINDOWS
-        for (int i = 0; i < 26; i++) {
+        for (int i = 0; i < 26 && drive_count < 26; i++) {
             char letter = (char)('A' + i);
             if (letter == target_drive) continue;   /* already searched    */
 #else
-        /* On Linux, mount indices run from 0x01 to 0x1A. */
-        for (int i = 1; i <= 26; i++) {
+        for (int i = 1; i <= 26 && drive_count < 26; i++) {
             char letter = (char)i;
             if (letter == target_drive) continue;   /* already searched    */
 #endif
             char drv_path[NCD_MAX_PATH];
             if (!db_drive_path(letter, drv_path, sizeof(drv_path))) continue;
-            if (!platform_file_exists(drv_path))
-                continue;
-
+            if (!platform_file_exists(drv_path)) continue;
+            
+            drive_letters[drive_count++] = letter;
+        }
+        
+        /* Phase 2: Load all databases */
+        NcdDatabase *loaded_dbs[26];
+        int loaded_count = 0;
+        
+        for (int i = 0; i < drive_count; i++) {
+            char drv_path[NCD_MAX_PATH];
+            if (!db_drive_path(drive_letters[i], drv_path, sizeof(drv_path))) continue;
+            
             NcdDatabase *d = db_load_auto(drv_path);
-            if (!d) continue;
-
+            if (d) {
+                loaded_dbs[loaded_count++] = d;
+            }
+        }
+        
+        /* Phase 3: Search all loaded databases */
+        for (int i = 0; i < loaded_count; i++) {
+            NcdDatabase *d = loaded_dbs[i];
             int cnt = 0;
             NcdMatch *m;
+            
             if (opts.fuzzy_match) {
                 m = matcher_find_fuzzy(d, clean_search,
                                        opts.show_hidden, opts.show_system,
@@ -1562,7 +1757,6 @@ int main(int argc, char *argv[])
                                  opts.show_hidden, opts.show_system,
                                  &cnt);
             }
-            db_free(d);
 
             if (m && cnt > 0) {
                 NcdMatch *tmp = realloc(matches,
@@ -1576,6 +1770,11 @@ int main(int argc, char *argv[])
                 }
                 free(m);
             }
+        }
+        
+        /* Phase 4: Free all databases */
+        for (int i = 0; i < loaded_count; i++) {
+            db_free(loaded_dbs[i]);
         }
     }
 
@@ -1659,6 +1858,7 @@ int main(int argc, char *argv[])
 
     /* -------------------------------------------- write success result   */
     heur_note_choice(opts.search, resolved_path);
+    add_current_dir_to_history();
     result_ok(resolved_path, resolved_drive);
 
     free(matches);

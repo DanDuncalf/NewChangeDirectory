@@ -65,16 +65,20 @@ if errorlevel 1 goto :error
 
 echo Linking test executables...
 
-:: Database tests
-cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_database.exe test_database.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
+:: Database tests (includes matcher.obj for name_index_free)
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_database.exe test_database.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
 if errorlevel 1 goto :error
 
 :: Matcher tests
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_matcher.exe test_matcher.c %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %OBJDIR%\database.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
 if errorlevel 1 goto :error
 
-:: Corruption tests
-cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_db_corruption.exe test_db_corruption.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
+:: Corruption tests (includes matcher.obj for name_index_free)
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_db_corruption.exe test_db_corruption.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
+if errorlevel 1 goto :error
+
+:: Bug detection tests
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_bugs.exe test_bugs.c %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %OBJDIR%\database.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib
 if errorlevel 1 goto :error
 
 echo.

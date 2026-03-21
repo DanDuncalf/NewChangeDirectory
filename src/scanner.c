@@ -16,6 +16,15 @@
 #include <string.h>
 #include <ctype.h>
 
+/* Global exclusion list for scanning */
+static const NcdExclusionList *g_exclusion_list = NULL;
+
+/* Set the exclusion list for scanning */
+void scan_set_exclusion_list(const NcdExclusionList *list)
+{
+    g_exclusion_list = list;
+}
+
 #if NCD_PLATFORM_LINUX
 #include <sys/stat.h>
 #include <stdint.h>
@@ -159,7 +168,7 @@ bool find_is_reparse(const PlatformFindData *fd)
  * Per-mount context passed down the recursive call stack.
  * Keeping it in a struct avoids a long argument list at every level.
  */
-typedef struct {
+struct ScanCtx {
     DriveData  *drv;
     bool        include_hidden;
     bool        include_system;
@@ -170,7 +179,109 @@ typedef struct {
 #if NCD_PLATFORM_LINUX
     DirIdSet   *visited;          /* Track visited (dev,ino) for cycle detection */
 #endif
-} ScanCtx;
+    const NcdExclusionList *exclusions;  /* Exclusion list for filtering */
+};
+typedef struct ScanCtx ScanCtx;
+
+/* Check if a directory matches an exclusion pattern */
+static bool match_exclusion_pattern(const char *pattern, const char *dir_path, bool match_from_root)
+{
+    /* Simple wildcard matching (* and ?) */
+    const char *p = pattern;
+    const char *d = dir_path;
+    
+    /* Skip leading separators in pattern for non-root matches */
+    if (!match_from_root && (p[0] == '\\' || p[0] == '/')) {
+        p++;
+    }
+    
+    while (*p && *d) {
+        if (*p == '*') {
+            /* Try to match the rest of the pattern against the rest of the path */
+            p++;
+            if (!*p) return true;  /* Pattern ends with *, matches everything */
+            
+            while (*d) {
+                if (match_exclusion_pattern(p, d, match_from_root)) {
+                    return true;
+                }
+                d++;
+            }
+            return false;
+        } else if (*p == '?') {
+            p++;
+            d++;
+        } else if (tolower((unsigned char)*p) == tolower((unsigned char)*d)) {
+            p++;
+            d++;
+        } else {
+            return false;
+        }
+    }
+    
+    /* Skip trailing wildcards */
+    while (*p == '*') p++;
+    
+    return *p == '\0' && (*d == '\0' || *d == '\\' || *d == '/');
+}
+
+/* Check if a directory should be excluded based on the exclusion list in context */
+static bool scan_ctx_is_excluded(struct ScanCtx *ctx, char drive_letter, const char *dir_path)
+{
+    if (!ctx || !ctx->exclusions || ctx->exclusions->count == 0) {
+        return false;
+    }
+    
+    for (int i = 0; i < ctx->exclusions->count; i++) {
+        NcdExclusionEntry *entry = &ctx->exclusions->entries[i];
+        
+        /* Check drive match (0 means all drives) */
+#if NCD_PLATFORM_WINDOWS
+        if (entry->drive != 0) {
+            char d = (char)toupper((unsigned char)drive_letter);
+            if (entry->drive != d) {
+                continue;
+            }
+        }
+#else
+        (void)drive_letter;
+#endif
+        
+        /* Get pattern without drive specifier */
+        const char *pattern = entry->pattern;
+#if NCD_PLATFORM_WINDOWS
+        if (pattern[1] == ':') {
+            pattern += 2;
+        }
+#endif
+        
+        /* For root-only matches, check if path starts from root */
+        if (entry->match_from_root) {
+            /* Must match from the beginning of the path */
+            if (match_exclusion_pattern(pattern, dir_path, true)) {
+                return true;
+            }
+        } else {
+            /* Check if pattern matches anywhere in the path */
+            if (match_exclusion_pattern(pattern, dir_path, false)) {
+                return true;
+            }
+            
+            /* For patterns with parent\child syntax, check each path component */
+            if (entry->has_parent_match) {
+                const char *sep = dir_path;
+                while ((sep = strchr(sep, '\\')) != NULL || (sep = strchr(sep, '/')) != NULL) {
+                    sep++;
+                    if (match_exclusion_pattern(pattern, sep, false)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    return false;
+}
 
 /* ============================================================= threading  */
 
@@ -213,6 +324,7 @@ static unsigned long worker_thread(void *param)
 #if NCD_PLATFORM_LINUX
         .visited        = diridset_create(),
 #endif
+        .exclusions     = g_exclusion_list,
     };
 
     /* Perform platform-specific scan. */
@@ -249,8 +361,13 @@ int scan_mount(NcdDatabase   *db,
     /* Remove stale data for this mount if re-scanning. */
     for (int i = 0; i < db->drive_count; i++) {
         if (db->drives[i].letter == drive_letter) {
-            free(db->drives[i].dirs);
-            free(db->drives[i].name_pool);
+            /* Only free individual allocations if not a blob database.
+             * When is_blob is true, dirs/name_pool point into blob_buf
+             * and must not be freed individually. */
+            if (!db->is_blob) {
+                free(db->drives[i].dirs);
+                free(db->drives[i].name_pool);
+            }
             memmove(&db->drives[i], &db->drives[i + 1],
                     (size_t)(db->drive_count - i - 1) * sizeof(DriveData));
             db->drive_count--;
@@ -304,6 +421,7 @@ int scan_mount(NcdDatabase   *db,
 #if NCD_PLATFORM_LINUX
                 .visited        = diridset_create(),
 #endif
+                .exclusions     = g_exclusion_list,
             };
             total_count += platform_scan_directory(&ctx, root_dirs[i], (int32_t)dir_id);
 #if NCD_PLATFORM_LINUX
@@ -624,17 +742,25 @@ int scan_subdirectory(NcdDatabase   *db,
     /* Add the subdirectory entry */
     int subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
     
-    /* Create scan context */
+    /* Create scan context with a local DriveStatus for progress tracking.
+     * scan_mounts() provides DriveStatus arrays for each mount, but
+     * scan_subdirectory() is standalone and needs its own status struct. */
+    DriveStatus local_status;
+    memset(&local_status, 0, sizeof(local_status));
+    local_status.drive_letter = drive_letter;
+    local_status.last_active_ms = platform_tick_ms();
+
     ScanCtx ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.drv = drv;
     ctx.include_hidden = include_hidden;
     ctx.include_system = include_system;
     ctx.dir_count = 0;
+    ctx.status = &local_status;
 #if NCD_PLATFORM_LINUX
     ctx.visited = NULL;
 #endif
-    
+
     /* Scan */
     return platform_scan_directory(&ctx, norm_path, subdir_id);
 }
@@ -707,6 +833,19 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             if (is_hidden && !ctx->include_hidden) continue;
             if (is_system && !ctx->include_system) continue;
             
+            /* Build full path for exclusion check */
+            char full_path[MAX_PATH];
+            size_t mlen = strlen(frame->path);
+            bool needs_sep = (mlen > 0 && frame->path[mlen - 1] != '\\');
+            snprintf(full_path, sizeof(full_path), "%s%s%s", frame->path,
+                     needs_sep ? "\\" : "", fd->cFileName);
+            
+            /* Check exclusion list */
+            if (scan_ctx_is_excluded(ctx, ctx->drv->letter, full_path)) {
+                /* Skip this directory and all its children */
+                goto next_entry;
+            }
+            
             /* Add directory entry */
             int my_id = db_add_dir(ctx->drv, fd->cFileName, frame->parent_id, 
                                    is_hidden, is_system);
@@ -715,10 +854,10 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             
             /* Build child path */
             char child[MAX_PATH];
-            size_t mlen = strlen(frame->path);
-            bool needs_sep = (mlen > 0 && frame->path[mlen - 1] != '\\');
+            size_t child_mlen = strlen(frame->path);
+            bool child_needs_sep = (child_mlen > 0 && frame->path[child_mlen - 1] != '\\');
             if (snprintf(child, sizeof(child), "%s%s%s", frame->path,
-                         needs_sep ? "\\" : "", fd->cFileName) >= (int)sizeof(child)) {
+                         child_needs_sep ? "\\" : "", fd->cFileName) >= (int)sizeof(child)) {
                 continue;  /* Path too long, skip */
             }
             
@@ -752,6 +891,9 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             child_frame->find_handle = INVALID_HANDLE_VALUE;
             child_frame->find_data_valid = false;
             continue;  /* Process child frame next */
+            
+        next_entry:
+            ; /* Label must be followed by a statement */
         }
         
         /* Get next entry in current directory */
@@ -852,6 +994,12 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         
         if (is_hidden && !ctx->include_hidden)
             continue;
+        
+        /* Check exclusion list */
+        if (scan_ctx_is_excluded(ctx, ctx->drv->letter, child)) {
+            /* Skip this directory and all its children */
+            continue;
+        }
         
         /* Add directory entry */
         int my_id = db_add_dir(ctx->drv, ent->d_name, frame->parent_id, 

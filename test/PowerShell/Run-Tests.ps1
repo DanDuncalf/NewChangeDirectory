@@ -32,7 +32,8 @@ Write-Header "Building Tests"
 
 $TestSources = @(
     @{ Name = "test_database"; Sources = @("test_database.c", "test_framework.c", "..\src\database.c") },
-    @{ Name = "test_matcher"; Sources = @("test_matcher.c", "test_framework.c", "..\src\matcher.c", "..\src\database.c") }
+    @{ Name = "test_matcher"; Sources = @("test_matcher.c", "test_framework.c", "..\src\matcher.c", "..\src\database.c") },
+    @{ Name = "test_bugs"; Sources = @("test_bugs.c", "test_framework.c", "..\src\matcher.c", "..\src\database.c") }
 )
 
 $BuiltTests = @()

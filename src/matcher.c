@@ -153,6 +153,90 @@ static bool istartswith(const char *name, const char *prefix)
     return true;
 }
 
+/*
+ * Check if a pattern contains glob metacharacters (* or ?)
+ */
+static bool has_glob_pattern(const char *pattern)
+{
+    if (!pattern) return false;
+    for (const char *p = pattern; *p; p++) {
+        if (*p == '*' || *p == '?') return true;
+    }
+    return false;
+}
+
+/*
+ * Case-insensitive glob match: supports * (any sequence) and ? (single char)
+ * 
+ * Returns true if 'name' matches 'pattern' according to glob rules.
+ * Matching is case-insensitive.
+ * 
+ * Examples:
+ *   "downloads" matches "down*"
+ *   "test.foo" matches "*.foo"
+ *   "src_x64" matches "src?x64"
+ *   "foobar" matches "*foo*"
+ */
+static bool glob_match(const char *name, const char *pattern)
+{
+    if (!pattern || !pattern[0]) return true;
+    if (!name || !name[0]) return false;
+    
+    const char *n = name;
+    const char *p = pattern;
+    
+    /* Track position for backtracking on * wildcard */
+    const char *star_p = NULL;
+    const char *star_n = NULL;
+    
+    while (*n) {
+        char nc = (char)tolower((unsigned char)*n);
+        char pc = *p ? (char)tolower((unsigned char)*p) : '\0';
+        
+        if (pc == '*') {
+            /* * matches any sequence - remember position for backtracking */
+            star_p = p;
+            star_n = n;
+            p++;  /* Try matching * with empty sequence first */
+        } else if (pc == '?') {
+            /* ? matches exactly one character */
+            p++;
+            n++;
+        } else if (pc == nc) {
+            /* Exact match (case-insensitive) */
+            p++;
+            n++;
+        } else if (star_p) {
+            /* Mismatch, but we have a * to backtrack to */
+            p = star_p + 1;  /* Pattern after * */
+            star_n++;        /* Match * to one more character */
+            n = star_n;
+        } else {
+            /* Mismatch with no * to backtrack */
+            return false;
+        }
+    }
+    
+    /* Consume any trailing * wildcards */
+    while (*p == '*') p++;
+    
+    /* Success if we reached end of pattern */
+    return *p == '\0';
+}
+
+/*
+ * Match a name against a pattern using glob if pattern contains wildcards,
+ * otherwise use prefix matching for backward compatibility.
+ */
+static bool name_matches_pattern(const char *name, const char *pattern)
+{
+    if (has_glob_pattern(pattern)) {
+        return glob_match(name, pattern);
+    } else {
+        return istartswith(name, pattern);
+    }
+}
+
 /* ============================================= parse search into parts    */
 
 #define MAX_PARTS 32
@@ -212,7 +296,7 @@ static bool chain_matches(const DriveData *drv,
 
     /* Leaf (last part) must match the starting directory */
     if (dir_index < 0 || dir_index >= drv->dir_count) return false;
-    if (!istartswith(drv->name_pool + drv->dirs[dir_index].name_off, sp->parts[sp->count - 1]))
+    if (!name_matches_pattern(drv->name_pool + drv->dirs[dir_index].name_off, sp->parts[sp->count - 1]))
         return false;
 
     /* For single-part search, leaf match is sufficient */
@@ -227,7 +311,7 @@ static bool chain_matches(const DriveData *drv,
     int cur = drv->dirs[dir_index].parent;
     
     while (cur >= 0 && parts_idx >= 0) {
-        if (istartswith(drv->name_pool + drv->dirs[cur].name_off, sp->parts[parts_idx])) {
+        if (name_matches_pattern(drv->name_pool + drv->dirs[cur].name_off, sp->parts[parts_idx])) {
             parts_idx--;  /* Found this part, move to next one */
         }
         cur = drv->dirs[cur].parent;
@@ -239,11 +323,11 @@ static bool chain_matches(const DriveData *drv,
 
 /* ================================================================ public   */
 
-NcdMatch *matcher_find(const NcdDatabase *db,
-                        const char        *search_str,
-                        bool               include_hidden,
-                        bool               include_system,
-                        int               *out_count)
+NcdMatch *matcher_find(NcdDatabase *db,
+                        const char   *search_str,
+                        bool          include_hidden,
+                        bool          include_system,
+                        int          *out_count)
 {
     *out_count = 0;
     if (!db || !search_str || !search_str[0]) return NULL;
@@ -255,8 +339,15 @@ NcdMatch *matcher_find(const NcdDatabase *db,
     const char *leaf = sp.parts[sp.count - 1];
     uint32_t leaf_hash = fnv1a_hash(leaf);
 
-    /* Build index for this database (no caching - prevents use-after-free) */
-    NameIndex *idx = name_index_build(db);
+    /* Use cached name index if available and valid, otherwise build it */
+    NameIndex *idx = (NameIndex *)db->name_index;
+    if (!idx || db->name_index_generation != 0) {
+        /* Generation changed or no index yet - rebuild */
+        if (idx) name_index_free(idx);
+        idx = name_index_build(db);
+        db->name_index = (void *)idx;
+        db->name_index_generation = 0;
+    }
 
     int   cap     = 16;
     int   count   = 0;
@@ -276,8 +367,8 @@ NcdMatch *matcher_find(const NcdDatabase *db,
             if (e->is_hidden && !include_hidden) continue;
             if (e->is_system && !include_system) continue;
 
-            /* Verify prefix match (hash collision check) */
-            if (!istartswith(drv->name_pool + e->name_off, leaf)) continue;
+            /* Verify glob/prefix match (hash collision check) */
+            if (!name_matches_pattern(drv->name_pool + e->name_off, leaf)) continue;
 
             /* Full chain check */
             if (!chain_matches(drv, (int)nie->dir_idx, &sp)) continue;
@@ -313,7 +404,7 @@ NcdMatch *matcher_find(const NcdDatabase *db,
                 if (e->is_system && !include_system) continue;
 
                 /* Quick leaf check before full chain walk */
-                if (!istartswith(drv->name_pool + e->name_off, leaf)) continue;
+                if (!name_matches_pattern(drv->name_pool + e->name_off, leaf)) continue;
 
                 /* Full chain check */
                 if (!chain_matches(drv, ei, &sp)) continue;
@@ -332,7 +423,7 @@ NcdMatch *matcher_find(const NcdDatabase *db,
         }
     }
 
-    name_index_free(idx);
+    /* Note: name_index is now cached in db->name_index, don't free here */
 
     if (count == 0) {
         free(results);
@@ -489,7 +580,11 @@ static void free_variations(VariationList *vl)
 /*
  * Damerau-Levenshtein distance calculation
  * Handles insertions, deletions, substitutions, and transpositions
+ * 
+ * Uses stack allocation for small strings (≤128 chars) to avoid heap churn.
  */
+#define DL_MAX_STACK_LEN 128
+
 static int dl_distance(const char *s1, const char *s2)
 {
     size_t len1 = strlen(s1);
@@ -498,9 +593,26 @@ static int dl_distance(const char *s1, const char *s2)
     if (len1 == 0) return (int)len2;
     if (len2 == 0) return (int)len1;
     
-    /* Use two rows for space efficiency */
-    int *prev = xmalloc((len2 + 1) * sizeof(int));
-    int *curr = xmalloc((len2 + 1) * sizeof(int));
+    /* Use stack buffers for small strings to avoid heap allocations */
+    int stack_buf1[DL_MAX_STACK_LEN + 1];
+    int stack_buf2[DL_MAX_STACK_LEN + 1];
+    int *prev, *curr;
+    bool using_heap = false;
+    
+    if (len2 <= DL_MAX_STACK_LEN) {
+        prev = stack_buf1;
+        curr = stack_buf2;
+    } else {
+        /* Fall back to heap for very long strings */
+        prev = (int *)malloc((len2 + 1) * sizeof(int));
+        curr = (int *)malloc((len2 + 1) * sizeof(int));
+        if (!prev || !curr) {
+            free(prev);
+            free(curr);
+            return (int)(len1 > len2 ? len1 : len2);  /* Return max distance on OOM */
+        }
+        using_heap = true;
+    }
     
     /* Initialize first row */
     for (size_t j = 0; j <= len2; j++) {
@@ -544,8 +656,10 @@ static int dl_distance(const char *s1, const char *s2)
     }
     
     int result = prev[len2];
-    free(prev);
-    free(curr);
+    if (using_heap) {
+        free(prev);
+        free(curr);
+    }
     return result;
 }
 
@@ -586,7 +700,8 @@ static int compare_scored(const void *a, const void *b)
 }
 
 /*
- * Fuzzy matching with Damerau-Levenshtein distance
+ * Fuzzy matching with Damerau-Levenshtein distance.
+ * Also supports glob patterns (* and ?) as a pre-filter.
  */
 NcdMatch *matcher_find_fuzzy(const NcdDatabase *db,
                               const char        *search_str,
@@ -597,9 +712,20 @@ NcdMatch *matcher_find_fuzzy(const NcdDatabase *db,
     *out_count = 0;
     if (!db || !search_str || !search_str[0]) return NULL;
     
-    /* Layer 1: Generate variations */
-    VariationList variations = generate_variations(search_str);
-    if (variations.count == 0) return NULL;
+    /* Check if search contains glob patterns */
+    bool use_glob = has_glob_pattern(search_str);
+    
+    /* Layer 1: Generate variations (only if not using glob) */
+    VariationList variations;
+    if (!use_glob) {
+        variations = generate_variations(search_str);
+        if (variations.count == 0) return NULL;
+    } else {
+        /* For glob patterns, use the pattern directly */
+        variations.count = 1;
+        variations.variations[0] = xmalloc(strlen(search_str) + 1);
+        strcpy(variations.variations[0], search_str);
+    }
     
     /* Collect all candidates with scores */
     int cap = 64;
@@ -623,14 +749,28 @@ NcdMatch *matcher_find_fuzzy(const NcdDatabase *db,
             
             /* Find best score across all variations */
             double best_score = 0.0;
+            const char *name = drv->name_pool + e->name_off;
+            
             for (int v = 0; v < variations.count; v++) {
-                double score = dl_score(variations.variations[v], full_path);
-                if (score > best_score) best_score = score;
-                
-                /* Also try matching just the directory name */
-                const char *name = drv->name_pool + e->name_off;
-                double name_score = dl_score(variations.variations[v], name);
-                if (name_score > best_score) best_score = name_score;
+                if (use_glob) {
+                    /* Glob mode: use glob_match as pre-filter, then score */
+                    if (glob_match(name, variations.variations[v])) {
+                        double score = dl_score(variations.variations[v], name);
+                        if (score > best_score) best_score = score;
+                    }
+                    if (glob_match(full_path, variations.variations[v])) {
+                        double score = dl_score(variations.variations[v], full_path);
+                        if (score > best_score) best_score = score;
+                    }
+                } else {
+                    /* Standard fuzzy mode */
+                    double score = dl_score(variations.variations[v], full_path);
+                    if (score > best_score) best_score = score;
+                    
+                    /* Also try matching just the directory name */
+                    double name_score = dl_score(variations.variations[v], name);
+                    if (name_score > best_score) best_score = name_score;
+                }
             }
             
             /* Keep if above threshold */

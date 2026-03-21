@@ -5,18 +5,21 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE
 LDFLAGS = -lpthread
 
+# Object directory
+OBJDIR = obj
+
 # Shared library sources (platform abstraction)
 SHARED_SOURCES = ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
 
 # Source files from main project (excluding platform-dependent UI/scanner for unit tests)
 # Note: Using shared/common.c instead of ../src/common.c to avoid duplicate definitions
-DB_SOURCES = ../src/database.c ../src/platform.c $(SHARED_SOURCES)
+DB_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
 MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform.c $(SHARED_SOURCES)
 
 # Test executables
-TESTS = test_database test_matcher fuzz_database bench_matcher test_db_corruption
+TESTS = test_database test_matcher fuzz_database bench_matcher test_db_corruption test_bugs
 
-.PHONY: all test clean fuzz bench corruption recursive-mount
+.PHONY: all test clean fuzz bench corruption bugs recursive-mount features
 
 all: $(TESTS)
 
@@ -40,6 +43,10 @@ bench_matcher: bench_matcher.c $(MATCHER_SOURCES)
 test_db_corruption: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Bug detection tests (exposes known bugs without fixing them)
+test_bugs: test_bugs.c test_framework.c $(MATCHER_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
@@ -59,6 +66,12 @@ corruption: test_db_corruption
 	@echo ""
 	@echo "Corruption tests complete."
 
+bugs: test_bugs
+	@echo "Running bug detection tests..."
+	@./test_bugs
+	@echo ""
+	@echo "Bug detection tests complete."
+
 fuzz: fuzz_database
 	@echo "Running fuzz tests (quick run)..."
 	@timeout 60 ./fuzz_database || true
@@ -67,12 +80,20 @@ bench: bench_matcher
 	@echo "Running benchmarks..."
 	@./bench_matcher
 
+features:
+	@echo "Running comprehensive feature tests (requires root for ramdisk)..."
+	@sudo bash Wsl/test_features.sh
+
+features-noroot:
+	@echo "Running comprehensive feature tests (no ramdisk, using /tmp)..."
+	@bash Wsl/test_features.sh
+
 recursive-mount:
 	@echo "Running recursive mount tests (requires root)..."
 	@sudo Wsl/test_recursive_mount.sh
 
 clean:
-	rm -f $(TESTS) *.tmp *.database *.o
+	rm -rf $(OBJDIR) $(TESTS) *.tmp *.database
 
 # Windows-specific test builds
 win-test:

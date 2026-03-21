@@ -43,11 +43,11 @@ extern "C" {
  * include_hidden / include_system -- when false, entries that are
  * flagged as hidden/system are excluded even if they are in the db.
  */
-NcdMatch *matcher_find(const NcdDatabase *db,
-                        const char        *search_str,
-                        bool               include_hidden,
-                        bool               include_system,
-                        int               *out_count);
+NcdMatch *matcher_find(NcdDatabase *db,
+                        const char   *search_str,
+                        bool          include_hidden,
+                        bool          include_system,
+                        int          *out_count);
 
 /* ================================================================ name index */
 

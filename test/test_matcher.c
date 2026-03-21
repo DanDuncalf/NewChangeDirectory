@@ -141,6 +141,113 @@ TEST(match_prefix_multi_component) {
     return 0;
 }
 
+/* Glob pattern tests */
+TEST(match_glob_star_suffix) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "driv*" should match "drivers" */
+    NcdMatch *matches = matcher_find(db, "driv*", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(1, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "drivers");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_star_prefix) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "*loads" should match "Downloads" */
+    NcdMatch *matches = matcher_find(db, "*loads", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(2, count);  /* Both Scott\Downloads and Admin\Downloads */
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_star_both) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "*own*" should match "Downloads" */
+    NcdMatch *matches = matcher_find(db, "*own*", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(2, count);  /* Both Downloads entries */
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_question_single) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "Sys?em32" should match "System32" (need include_system=true since System32 is marked as system) */
+    NcdMatch *matches = matcher_find(db, "Sys?em32", false, true, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(1, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "System32");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_question_multiple) {
+    NcdDatabase *db = create_test_db();
+    DriveData *drv = &db->drives[0];
+    
+    /* Add test directories */
+    db_add_dir(drv, "src_x64", -1, false, false);
+    db_add_dir(drv, "src-x64", -1, false, false);
+    db_add_dir(drv, "srcAx64", -1, false, false);
+    db_add_dir(drv, "src__x64", -1, false, false);  /* Should NOT match */
+    
+    int count = 0;
+    /* "src?x64" should match directories with exactly one char between */
+    NcdMatch *matches = matcher_find(db, "src?x64", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(3, count);  /* src_x64, src-x64, srcAx64 */
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_in_path) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "Us*\Down*" should match Users\Scott\Downloads and Users\Admin\Downloads */
+    NcdMatch *matches = matcher_find(db, "Us*\\Down*", false, false, &count);
+    ASSERT_NOT_NULL(matches);
+    ASSERT_EQ_INT(2, count);
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(match_glob_no_match) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "xyz*" should not match anything */
+    NcdMatch *matches = matcher_find(db, "xyz*", false, false, &count);
+    ASSERT_NULL(matches);
+    ASSERT_EQ_INT(0, count);
+    
+    db_free(db);
+    return 0;
+}
+
 void suite_matcher(void) {
     RUN_TEST(match_single_component);
     RUN_TEST(match_two_components);
@@ -150,6 +257,13 @@ void suite_matcher(void) {
     RUN_TEST(match_empty_search);
     RUN_TEST(match_prefix_single_component);
     RUN_TEST(match_prefix_multi_component);
+    RUN_TEST(match_glob_star_suffix);
+    RUN_TEST(match_glob_star_prefix);
+    RUN_TEST(match_glob_star_both);
+    RUN_TEST(match_glob_question_single);
+    RUN_TEST(match_glob_question_multiple);
+    RUN_TEST(match_glob_in_path);
+    RUN_TEST(match_glob_no_match);
 }
 
 TEST_MAIN(

@@ -94,13 +94,24 @@ int ui_select_drives_for_update(const char *drives,
 /*
  * Present a TUI for editing configuration options.
  *
- * cfg - Pointer to current configuration (will be modified)
+ * meta - Pointer to current metadata (config will be modified)
  *
  * Returns:
  *   true  - User saved changes
  *   false - User cancelled
  */
-bool ui_edit_config(NcdConfig *cfg);
+bool ui_edit_config(NcdMetadata *meta);
+
+/*
+ * Present a TUI for managing exclusion list.
+ *
+ * meta - Pointer to metadata containing exclusions (will be modified)
+ *
+ * Returns:
+ *   true  - User saved changes
+ *   false - User cancelled
+ */
+bool ui_edit_exclusions(NcdMetadata *meta);
 
 #ifdef __cplusplus
 }
