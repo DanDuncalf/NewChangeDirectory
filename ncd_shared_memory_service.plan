@@ -1,0 +1,908 @@
+# NCD Shared-Memory Service Plan
+
+## Goal
+
+Implement an **optional resident state service** for NCD that keeps metadata/config and database data hot in memory, while preserving the current standalone execution model.
+
+The command-line client must support two paths:
+
+1. **Service-backed mode**
+   - Detect running service.
+   - Map shared-memory snapshot(s).
+   - Run existing matcher/UI/client behavior mostly unchanged against mapped state.
+   - Send small update/dirty notifications back to the service.
+
+2. **Standalone fallback mode**
+   - If the service is not present or shared state is invalid, load metadata/config and database(s) directly from disk exactly as NCD does today.
+
+This plan intentionally keeps **query behavior, matching, ranking, UI, agent mode, and shell integration in the client**. The service owns **state residency, snapshot publication, and lazy persistence**, not the full application. This matches the current C11, cross-platform architecture and avoids unnecessary rewrites. NCD already uses a binary database format, per-drive/per-mount databases, consolidated metadata, and blob-backed loads suitable for memory-mapped access, which makes this design a natural extension of the existing system. fileciteturn2file0L1-L21 fileciteturn2file0L287-L296 fileciteturn2file0L343-L360
+
+---
+
+## Non-Goals
+
+- Do **not** rewrite the project in C++.
+- Do **not** move matcher, UI, agent mode, or CLI orchestration into the service.
+- Do **not** require the service for normal use.
+- Do **not** introduce network transport.
+- Do **not** store process-local raw pointers inside shared memory.
+- Do **not** break current disk format or wrapper-script behavior unless versioned migration is explicitly required.
+
+---
+
+## Constraints from Existing Project
+
+- Language is **C11** and must remain so. fileciteturn2file0L14-L19
+- NCD is cross-platform on **Windows x64** and **Linux x64/WSL**. fileciteturn2file0L14-L19
+- Main orchestration currently lives in `src/main.c`; database and metadata logic live in `src/database.c/.h`; matching logic lives in `src/matcher.c/.h`; scanning in `src/scanner.c/.h`; TUI in `src/ui.c/.h`; platform wrappers in `src/platform.c/.h`. fileciteturn2file0L23-L36
+- Existing binary DB format already favors memory-mapping and compact blob-based access, with `DirEntry` using offsets into string pools and `NcdDatabase` supporting blob-backed loads. fileciteturn2file0L210-L233
+- Existing metadata file consolidates config, groups, heuristics, and exclusions, making it a good candidate for one resident metadata blob. fileciteturn2file0L234-L246
+- Existing coding rules require a detailed plan, explicit task tracking, verification before completion, and minimal-impact changes. fileciteturn2file2L1-L27
+
+---
+
+## High-Level Architecture
+
+### Overview
+
+Add a small optional **resident state service** and a **shared-memory snapshot layer**.
+
+The architecture becomes:
+
+- `ncd` / `NewChangeDirectory.exe` = client executable
+- `ncd-state-service` = background process
+- `shared snapshot format` = read-only, versioned memory image for metadata and database state
+- `control channel` = tiny local IPC for liveness checks, generation numbers, dirty/update notifications, rescan requests, and flush requests
+
+### Ownership Split
+
+#### Client owns
+- CLI parsing
+- deciding what operation is requested
+- matching and ranking
+- agent mode behavior
+- TUI and output behavior
+- result-file generation for wrapper scripts
+- local fallback when service is unavailable
+
+#### Service owns
+- loading metadata/config from disk once
+- loading database(s) from disk once
+- keeping hot state in normal process memory
+- publishing read-only shared-memory snapshots
+- receiving small mutation/update requests
+- lazy writeback to disk
+- rebuilding and republishing snapshots after state changes
+
+### Why this split
+
+This preserves the current architectural separation where `main.c` orchestrates client behavior and `database.c` owns binary/state loading, while avoiding duplicated service-side query logic. It also aligns with the project's existing binary format rationale: fast, compact, memory-mappable, per-drive/per-mount data with consolidated metadata. fileciteturn2file0L87-L100 fileciteturn2file0L343-L360
+
+---
+
+## Snapshot Design Principles
+
+### Core rule
+
+**Shared memory must never contain raw heap pointers that are expected to be valid across processes.**
+
+Everything in shared memory must be represented by:
+- fixed-size headers
+- counts
+- offsets from the mapping base
+- contiguous arrays
+- string pools / arenas
+
+### Snapshot shape
+
+Build a canonical shared snapshot format for:
+
+1. **Metadata snapshot**
+   - `NcdConfig`
+   - groups
+   - heuristics
+   - exclusions
+   - enough lookup-friendly structure to avoid reparsing text or ad-hoc sections on the client
+
+2. **Database snapshot**
+   - one or more loaded databases
+   - likely either:
+     - one combined master snapshot containing all loaded DBs, or
+     - one top-level shared snapshot header with references to per-drive/per-mount blobs
+
+### Publication model
+
+The service is the **only writer**.
+Clients are **read-only readers** of the published snapshot.
+
+Use a **publish-new-generation** model:
+- service loads/modifies live private state
+- service builds a new complete snapshot in private writable memory
+- service writes that snapshot into a fresh shared-memory object or inactive buffer
+- service atomically publishes a new generation number / active slot
+- clients map the current generation read-only
+
+Do **not** let clients mutate mapped state directly.
+
+### Safety properties
+
+- readers never see partially-written state
+- service crash cannot corrupt a published snapshot already visible to clients
+- disk writes remain under service control and can continue using temp-file-then-rename semantics already used by NCD. fileciteturn2file0L330-L341
+
+---
+
+## IPC / Platform Strategy
+
+### Shared memory
+
+#### Linux
+Use:
+- `shm_open`
+- `ftruncate`
+- `mmap`
+- `munmap`
+- `close`
+- `shm_unlink` when appropriate
+
+#### Windows
+Use:
+- `CreateFileMapping` with `INVALID_HANDLE_VALUE`
+- `OpenFileMapping`
+- `MapViewOfFile`
+- `UnmapViewOfFile`
+- `CloseHandle`
+
+### Control channel
+
+Keep it intentionally tiny.
+
+#### Linux
+Use Unix domain socket in the user runtime dir.
+
+#### Windows
+Use named pipe.
+
+### Control channel responsibilities
+
+- ping / liveness check
+- request current generation + snapshot object names
+- submit usage update / heuristic update
+- submit metadata mutation request
+- submit rescan request
+- request flush
+- request service shutdown only in dev/test mode
+
+### Why not query-over-IPC
+
+Because the project goal is to keep matching and interactive behavior client-side and unchanged. Query-over-IPC would duplicate logic and make the service own too much behavior.
+
+---
+
+## Proposed File / Module Additions
+
+Create the following new modules with minimal impact on existing files:
+
+### New headers / source files
+
+- `src/shared_state.h`
+- `src/shared_state.c`
+  - shared snapshot format
+  - offset helpers
+  - version/magic/checksum helpers
+
+- `src/shm_platform.h`
+- `src/shm_platform_win.c`
+- `src/shm_platform_posix.c`
+  - shared memory creation/open/map/unmap primitives
+
+- `src/state_backend.h`
+- `src/state_backend_local.c`
+- `src/state_backend_service.c`
+  - abstraction for getting metadata/database state from local disk or mapped snapshot
+
+- `src/control_ipc.h`
+- `src/control_ipc_win.c`
+- `src/control_ipc_posix.c`
+  - liveness + generation + mutation messages
+
+- `src/service_main.c`
+  - resident service executable entry point
+
+- `src/service_state.c`
+- `src/service_state.h`
+  - live resident state, rebuild snapshot, dirty tracking, flush scheduling
+
+- `src/service_publish.c`
+- `src/service_publish.h`
+  - generation swap / snapshot publication
+
+### Existing files likely to change
+
+- `src/main.c`
+  - add service detection and fallback path
+  - switch state acquisition through backend abstraction
+
+- `src/database.c/.h`
+  - expose helpers to load from already-mapped binary memory where possible
+  - expose helpers for constructing snapshot-ready blob representations
+  - factor out disk I/O from parse/build logic if currently interleaved
+
+- `src/platform.c/.h`
+  - helper paths for runtime directory / named object naming / per-user scoping
+
+- build files:
+  - `build.bat`
+  - `build.sh`
+  - `Makefile`
+  - `src/ncd.vcxproj`
+  - `src/ncd.sln`
+  - deployment scripts as needed
+
+### Optional test files
+
+- `test/test_shared_state.c`
+- `test/test_service_backend.c`
+- `test/test_ipc.c`
+- `test/test_snapshot_publish.c`
+- `test/test_service_fallback.c`
+
+---
+
+## Public Design Decisions the Agent Must Preserve
+
+1. **Standalone must remain first-class.**
+   - If service is absent or broken, NCD still works by loading files normally.
+
+2. **Client behavior must remain authoritative.**
+   - Same matcher, same TUI, same output semantics, same wrapper behavior.
+
+3. **Only state residency moves to the service.**
+   - No service-side matching engine.
+
+4. **Shared-memory format must be versioned and self-validating.**
+   - magic, version, sizes, generation, checksum.
+
+5. **No cross-process raw pointers.**
+   - offsets only.
+
+6. **One writer, many readers.**
+   - service only writes snapshots.
+
+7. **All current disk formats must continue to load.**
+   - any new snapshot format is additive, not a replacement for on-disk DB/metadata files, unless explicitly version-migrated.
+
+8. **Minimal code churn in matcher/UI.**
+   - adapt data acquisition, not behavior.
+
+---
+
+## Detailed Implementation Phases
+
+## Phase 0 - Baseline and Branch Preparation
+
+### Tasks
+
+- Create `tasks/todo.md` with checkable items, following project rules. fileciteturn2file2L19-L27
+- Create `tasks/lessons.md` if not present.
+- Build current project on at least one Linux toolchain and one Windows toolchain if available.
+- Run current tests to establish baseline.
+- Capture startup timings for representative scenarios:
+  - cold start, no service
+  - query against small DB
+  - query against large DB
+  - metadata-only operation
+  - agent-mode query
+- Record baseline results in `tasks/baseline.md`.
+
+### Exit criteria
+
+- Current tree builds cleanly.
+- Existing tests pass or known failures are documented.
+- Baseline timings captured.
+
+---
+
+## Phase 1 - State Access Boundary Refactor
+
+### Objective
+
+Introduce a narrow state-access abstraction without changing observable behavior.
+
+### Tasks
+
+- Define `state_backend.h` with a small interface for obtaining metadata and DB state.
+- Implement `state_backend_local.c` that uses existing disk-loading logic.
+- Refactor `main.c` to obtain metadata/database state via the backend instead of calling direct load paths inline.
+- Preserve current behavior exactly.
+- Keep matcher/UI code unchanged except for accepting state views from backend-produced objects.
+
+### Suggested interface shape
+
+```c
+typedef struct NcdStateView NcdStateView;
+
+typedef struct {
+    bool from_service;
+    uint64_t generation;
+} NcdStateSourceInfo;
+
+int state_backend_open_best_effort(NcdStateView *out, NcdStateSourceInfo *info);
+int state_backend_open_local(NcdStateView *out);
+void state_backend_close(NcdStateView *view);
+
+const NcdMetadata *state_view_metadata(const NcdStateView *view);
+const NcdDatabase *state_view_database(const NcdStateView *view);
+```
+
+The exact names may vary, but keep the interface narrow.
+
+### Constraints
+
+- No service path yet.
+- This phase is just creating the seam.
+
+### Exit criteria
+
+- NCD builds.
+- Behavior is unchanged.
+- Existing tests still pass.
+
+---
+
+## Phase 2 - Shared Snapshot Format Definition
+
+### Objective
+
+Define a canonical read-only snapshot format suitable for shared memory.
+
+### Tasks
+
+- Add `shared_state.h` describing snapshot headers and offset helpers.
+- Define magic/version/checksum structures.
+- Define top-level header for a published snapshot.
+- Decide whether metadata and databases live in one combined snapshot or separate named snapshots.
+
+### Recommendation
+
+Start with **two snapshots**:
+- one metadata snapshot
+- one database snapshot
+
+Reason:
+- metadata changes more frequently than large DB data
+- simpler invalidation behavior
+- lower republish cost when heuristics/groups/config change
+
+### Metadata snapshot contents
+
+Must include enough information for the client to consume metadata without reparsing on-disk sections.
+
+Likely include:
+- copied `NcdConfig`
+- group records in contiguous arrays + string arena
+- heuristics records in contiguous arrays + string arena
+- exclusions in contiguous arrays + string arena
+
+### Database snapshot contents
+
+Must include a canonical, read-only representation of one or more databases.
+
+Prefer a representation close to existing binary blob layout so current fast-load benefits are retained. Existing DB design already favors compact `DirEntry` arrays and name pools, which should be leveraged rather than reimagined. fileciteturn2file0L210-L233
+
+### Required helpers
+
+- base + offset access helpers
+- bounds validation helpers
+- snapshot checksum validation
+- version compatibility checks
+
+### Exit criteria
+
+- Snapshot structs defined.
+- Unit tests validate header parsing and bounds checking.
+- No client integration yet.
+
+---
+
+## Phase 3 - Platform Shared Memory Layer
+
+### Objective
+
+Implement a tiny cross-platform shared-memory wrapper.
+
+### Tasks
+
+- Add `shm_platform.h` abstraction.
+- Implement Linux mapping backend.
+- Implement Windows mapping backend.
+- Support:
+  - create writable mapping
+  - open existing read-only mapping
+  - map/unmap
+  - query size/name
+- Add per-user naming scheme to avoid collisions.
+
+### Naming requirements
+
+Object names must be scoped to current user/session as appropriate.
+
+Possible naming examples:
+- Linux: `/ncd_<uid>_meta`, `/ncd_<uid>_db`, `/ncd_<uid>_ctl`
+- Windows: `Local\\NCD_<SID>_META`, `Local\\NCD_<SID>_DB`, `\\.\\pipe\\NCD_<SID>_CTL`
+
+The exact implementation may use platform helper functions to derive user-stable names.
+
+### Exit criteria
+
+- Small test can create, map, read, unmap shared memory on both platforms.
+- Name generation is deterministic and user-scoped.
+
+---
+
+## Phase 4 - Control IPC Layer
+
+### Objective
+
+Implement the tiny control protocol used only for liveness, generation discovery, and mutation requests.
+
+### Tasks
+
+- Define `control_ipc.h` message enums and payload structs.
+- Implement Unix socket server/client.
+- Implement named pipe server/client.
+- Add message types:
+  - `PING`
+  - `GET_STATE_INFO`
+  - `SUBMIT_HEURISTIC_UPDATE`
+  - `SUBMIT_METADATA_UPDATE`
+  - `REQUEST_RESCAN`
+  - `REQUEST_FLUSH`
+- Keep protocol synchronous and simple.
+
+### Required response data
+
+`GET_STATE_INFO` should return at least:
+- service protocol version
+- metadata generation
+- database generation
+- shared-memory object names
+- optional snapshot sizes
+
+### Exit criteria
+
+- Client can detect if service exists.
+- Client can request current generation + mapping names.
+- Service can receive a trivial mutation message.
+
+---
+
+## Phase 5 - Resident Service Skeleton
+
+### Objective
+
+Create a minimal background service process that loads existing state and publishes the first snapshots.
+
+### Tasks
+
+- Add `service_main.c`.
+- On startup:
+  - load metadata from disk
+  - load database(s) from disk
+  - hold them in private live memory
+  - build initial metadata snapshot
+  - build initial database snapshot
+  - publish generation 1
+  - start control IPC loop
+- Add clean shutdown handling.
+- Log enough diagnostic info for development.
+
+### Important design choice
+
+Service-internal state may use current normal in-process structures, including pointers.
+Only published snapshots must be offset-based and pointer-free.
+
+### Exit criteria
+
+- Service starts.
+- Service publishes valid snapshots.
+- Client can detect service and map snapshots.
+
+---
+
+## Phase 6 - Client Read-Only Shared-State Integration
+
+### Objective
+
+Allow normal NCD client execution to use service-backed mapped state with minimal logic changes.
+
+### Tasks
+
+- Implement `state_backend_service.c`.
+- On startup in `main.c`:
+  - attempt liveness check
+  - if service is present, request snapshot info
+  - map metadata snapshot read-only
+  - map database snapshot read-only
+  - validate headers/checksums/versions
+  - expose mapped state through the same `NcdStateView`
+  - otherwise fall back to local backend
+- Ensure matcher and UI can consume mapped-state views with minimal or zero changes.
+
+### Critical requirement
+
+The mapped snapshot must be presented in a form that existing matcher/database traversal code can use efficiently. If existing code expects `NcdDatabase` with a blob-backed `blob_buf` and internal pointers derived from that blob, adapt the snapshot-open path to construct a lightweight in-process `NcdDatabase` view whose pointers are computed at map time but not stored back into shared memory. This leverages current blob-based fast-load architecture rather than rewriting matcher internals. fileciteturn2file0L221-L233
+
+### Exit criteria
+
+- `ncd <query>` works with service running.
+- Same query works with service absent.
+- Result ordering and TUI behavior match baseline.
+
+---
+
+## Phase 7 - Update Path Back to Service
+
+### Objective
+
+Send small updates from client back to service rather than writing metadata/database directly when service-backed mode is active.
+
+### Update classes
+
+1. **Heuristic / history updates**
+   - selected result
+   - possibly search text + chosen path
+   - counters/timestamps as needed
+
+2. **Metadata changes**
+   - add/remove group
+   - config changes
+   - add/remove exclusion
+   - clear history
+
+3. **Database-refresh requests**
+   - rescan all
+   - rescan subset / current subtree if supported
+
+### Tasks
+
+- Define mutation request structs in control IPC layer.
+- Service applies updates to its private live state.
+- Service marks dirty flags.
+- Service republishes metadata snapshot immediately or after short debounce.
+- Service keeps database snapshot generation separate from metadata generation.
+
+### Important fallback rule
+
+If service-backed update fails, the client must:
+- show meaningful error in interactive operations, or
+- fall back to direct local persistence only if that can be done safely without diverging from service state.
+
+Recommended initial behavior:
+- while service mode is active, do **not** write metadata locally behind the service’s back.
+- fail clearly instead.
+
+### Exit criteria
+
+- Picking a path updates heuristics via service.
+- Metadata-changing commands work through the service.
+- New snapshot generation becomes visible to subsequent clients.
+
+---
+
+## Phase 8 - Lazy Flush and Snapshot Republishing
+
+### Objective
+
+Add service-side durability and republish logic.
+
+### Tasks
+
+- Add dirty flags for metadata and DB.
+- Add debounce timers for flush and republish.
+- Flush metadata and database to disk using current atomic temp-file-rename patterns. fileciteturn2file0L330-L341
+- Rebuild snapshots only when relevant state changes.
+- Separate metadata republish from DB republish.
+- Expose stats for dev inspection:
+  - current generations
+  - mapped sizes
+  - dirty flags
+  - last flush time
+
+### Suggested behavior
+
+- heuristics/group/config changes => metadata snapshot republish quickly
+- rescan / DB content changes => DB snapshot republish after scan completion
+- disk flush => debounced by a few seconds to batch writes
+
+### Exit criteria
+
+- Updates survive service restart.
+- No partial/corrupt on-disk writes.
+- Snapshot generations advance predictably.
+
+---
+
+## Phase 9 - Standalone / Service Parity Verification
+
+### Objective
+
+Prove service-backed mode and standalone mode behave the same.
+
+### Tasks
+
+- Add parity tests for:
+  - search results ordering
+  - group resolution
+  - exclusions
+  - hidden/system filtering
+  - fuzzy matching
+  - agent mode query JSON output
+- Diff outputs between:
+  - standalone mode
+  - service-backed mode
+- Add scripted regression tests for both modes.
+
+### Exit criteria
+
+- Output parity demonstrated for representative commands.
+- Any intentional differences documented.
+
+---
+
+## Phase 10 - Packaging and Deployment
+
+### Objective
+
+Make the service optional and easy to run on both platforms.
+
+### Linux
+
+- Add a simple user-mode launcher script or service unit file.
+- Prefer per-user service semantics.
+- Store runtime socket under a user-writable runtime directory.
+
+### Windows
+
+- Start with a per-user background process, not necessarily SCM service.
+- Provide helper script for start/stop during development.
+- Later, optionally add a true Windows service wrapper if desired.
+
+### Tasks
+
+- update build scripts to produce service executable
+- add docs for:
+  - running standalone only
+  - starting service manually
+  - auto-start strategies
+  - debugging service
+
+### Exit criteria
+
+- User can run NCD with or without service.
+- Setup docs exist for both platforms.
+
+---
+
+## Data Structure Guidance
+
+## Top-level snapshot header
+
+Define a stable top-level header with fields like:
+- magic
+- version
+- total_size
+- generation
+- section offsets
+- section sizes
+- checksum
+
+Use fixed-width integer types.
+
+## Section organization
+
+Prefer explicit sections:
+- config section
+- groups section
+- heuristics section
+- exclusions section
+- database directory section(s)
+- string pool section(s)
+
+## Offsets and alignment
+
+- all offsets relative to base pointer
+- 8-byte alignment minimum for top-level sections
+- validate every offset/size pair before use
+
+## Mapping lifetime rules
+
+- mapped snapshot is borrowed for one client invocation
+- no persistent global raw pointers stored across remap/unmap boundaries
+- close/unmap through backend cleanup path
+
+---
+
+## Expected Behavioral Flow
+
+## Normal client startup
+
+1. parse args
+2. attempt `GET_STATE_INFO` to control channel
+3. if success:
+   - open readonly metadata snapshot
+   - open readonly DB snapshot
+   - validate
+   - create transient in-process view objects
+4. else:
+   - load metadata from disk
+   - load DB from disk
+5. run normal command
+6. if service-backed and mutation needed:
+   - send mutation request
+7. if standalone and mutation needed:
+   - persist directly as today
+8. exit
+
+## Service startup
+
+1. derive per-user object names
+2. load metadata from disk
+3. load DB(s) from disk
+4. build metadata snapshot
+5. build DB snapshot
+6. publish generation numbers
+7. accept control requests
+8. apply mutations to private live state
+9. debounce flush / republish
+
+---
+
+## Testing Plan
+
+## Unit tests
+
+Add or extend tests for:
+- snapshot header validation
+- offset bounds validation
+- checksum mismatch rejection
+- shared-memory open/map/unmap wrappers
+- IPC message serialization and parsing
+- generation handling
+- mapped database view construction
+
+## Integration tests
+
+- service start, client query, service stop
+- client fallback when service absent
+- service-backed query parity with standalone
+- metadata update through service
+- rescan request through service
+- service restart loads flushed updates
+
+## Failure tests
+
+- corrupted snapshot header
+- checksum mismatch
+- stale generation during client startup
+- service dies after liveness response but before map
+- missing shared-memory object after `GET_STATE_INFO`
+- control channel unavailable but old shared memory still exists
+
+Expected behavior in all these cases:
+- fail safe
+- fall back to standalone where possible
+- never crash or read out of bounds
+
+## Performance tests
+
+Measure:
+- client startup latency with service absent
+- client startup latency with service present
+- time to first result list display
+- agent mode query latency
+- memory use of service
+- snapshot rebuild time
+- rescan completion impact
+
+Compare against Phase 0 baseline.
+
+---
+
+## Verification Requirements
+
+Per project rules, do not mark work complete without proof. fileciteturn2file2L10-L17
+
+For each phase, require:
+- code compiles on target platform(s)
+- tests added or updated
+- manual verification notes recorded in `tasks/todo.md`
+- behavior diff checked where relevant
+
+Before final signoff, require all of:
+- existing unit tests pass
+- new tests pass
+- standalone mode verified
+- service-backed mode verified
+- parity checks documented
+- performance comparison documented
+
+---
+
+## Risks and Mitigations
+
+### Risk: existing code assumes heap-owned pointers
+**Mitigation:** keep service private state pointer-rich, but publish pointer-free snapshots; construct transient client-side views from mapped blobs.
+
+### Risk: snapshot format duplicates on-disk DB logic badly
+**Mitigation:** reuse existing binary blob layout where possible instead of inventing an unrelated in-memory format.
+
+### Risk: metadata changes force huge DB republish
+**Mitigation:** separate metadata and DB snapshots.
+
+### Risk: service/client drift in behavior
+**Mitigation:** service does not own matching/query behavior; add parity tests.
+
+### Risk: IPC/shm race conditions
+**Mitigation:** one writer only, publish-new-generation semantics, validate generation after map if necessary.
+
+### Risk: platform complexity on Windows
+**Mitigation:** start with per-user background process and named mappings/pipes; defer SCM integration.
+
+### Risk: broken service causing worse UX
+**Mitigation:** fallback to standalone must remain reliable and fast.
+
+---
+
+## Deliverables Checklist
+
+- [ ] `tasks/todo.md` created with implementation phases
+- [ ] `tasks/lessons.md` created/updated
+- [ ] state backend seam introduced
+- [ ] shared snapshot format defined
+- [ ] Linux shared-memory backend implemented
+- [ ] Windows shared-memory backend implemented
+- [ ] Linux control IPC implemented
+- [ ] Windows control IPC implemented
+- [ ] resident service executable implemented
+- [ ] client service-detection path implemented
+- [ ] service-backed readonly state path implemented
+- [ ] mutation/update path implemented
+- [ ] lazy flush implemented
+- [ ] standalone fallback verified
+- [ ] parity tests added
+- [ ] performance results documented
+- [ ] docs/build scripts updated
+
+---
+
+## Suggested Order of Actual Commits
+
+1. baseline + tasks files
+2. state backend seam only
+3. shared snapshot structs + validation tests
+4. shared-memory platform wrapper
+5. control IPC wrapper
+6. minimal service that publishes static test snapshot
+7. client reads mapped snapshot
+8. service loads real metadata/DB and publishes snapshots
+9. mutation path for heuristics only
+10. metadata mutation path
+11. rescan / DB republish path
+12. flush/debounce/persistence
+13. packaging/docs/perf cleanup
+
+---
+
+## Final Acceptance Criteria
+
+The work is done when all of the following are true:
+
+1. Running `ncd <query>` with no service behaves as before.
+2. Running `ncd <query>` with service active avoids reloading metadata/database from disk and instead uses mapped shared state.
+3. Matching, UI behavior, and agent mode output remain client-side and match standalone mode.
+4. Heuristic and metadata updates flow back to the service and persist correctly.
+5. Service publication is safe, versioned, validated, and pointer-free.
+6. Both Linux and Windows implementations work with the same high-level design.
+7. Tests and timing data prove correctness and value.
+
