@@ -16,6 +16,7 @@ NewChangeDirectory (NCD) is a cross-platform command-line directory navigation t
 - Fuzzy matching with Damerau-Levenshtein distance
 - Agent mode API for LLM integration
 - Exclusion list for filtering unwanted directories
+- Directory history for quick navigation between recent locations
 
 ## Technology Stack
 
@@ -40,7 +41,9 @@ NewChangeDirectory/
 │   ├── ui.c/.h               # Interactive terminal UI (selector + navigator)
 │   ├── platform.c/.h         # NCD-specific platform wrappers (includes ../shared/)
 │   ├── strbuilder.c/.h       # Dynamic string builder for JSON output
-│   └── common.c              # Memory allocation wrappers
+│   ├── common.c              # Memory allocation wrappers
+│   ├── ncd.vcxproj           # Visual Studio project file
+│   └── ncd.sln               # Visual Studio solution file
 ├── test/                     # Test suite
 │   ├── test_framework.h/.c   # Minimal unit testing framework
 │   ├── test_database.c       # Database module unit tests
@@ -50,7 +53,10 @@ NewChangeDirectory/
 │   ├── fuzz_database.c       # Fuzz testing for database loading
 │   ├── bench_matcher.c       # Performance benchmarks
 │   ├── Makefile              # Test build system
-│   └── TESTING.md            # Testing documentation
+│   ├── TESTING.md            # Testing documentation
+│   ├── Win/                  # Windows-specific tests
+│   ├── Wsl/                  # WSL/Linux-specific tests
+│   └── PowerShell/           # PowerShell-specific tests
 ├── ncd.bat                   # Windows wrapper script (CMD)
 ├── ncd                       # Linux wrapper script (Bash)
 ├── build.bat                 # Windows build (MSVC)
@@ -58,11 +64,7 @@ NewChangeDirectory/
 ├── Makefile                  # Cross-platform build (MinGW)
 ├── deploy.bat                # Windows deployment script
 ├── deploy.sh                 # Linux deployment script
-├── src/ncd.vcxproj           # Visual Studio project file
-├── src/ncd.sln               # Visual Studio solution file
-├── NewChangeDirectory.exe    # Built Windows binary
-├── LINUX_PORT_CHANGELIST.md  # Linux porting documentation
-└── AGENTS.md                 # This file
+└── LINUX_PORT_CHANGELIST.md  # Linux porting documentation
 ```
 
 **External Dependency:**
@@ -74,7 +76,7 @@ The project requires a shared platform abstraction library located at `../shared
 |--------|---------|-----------|
 | Core Types | Platform detection, shared structures, constants | `ncd.h` |
 | Main | CLI parsing, heuristics, result generation, orchestration | `main.c` |
-| Database | Binary DB load/save, path helpers, groups, config, metadata, exclusions | `database.c/.h` |
+| Database | Binary DB load/save, path helpers, groups, config, metadata, exclusions, history | `database.c/.h` |
 | Scanner | Thread pool management, recursive directory scanning | `scanner.c/.h` |
 | Matcher | Chain-matching algorithm, name index, fuzzy matching with DL distance | `matcher.c/.h` |
 | UI | Interactive selection list, filesystem navigator, dialogs, config editor | `ui.c/.h` |
@@ -167,6 +169,12 @@ cd test && make bugs
 
 # Recursive mount tests (Linux, requires root)
 cd test && make recursive-mount
+
+# Comprehensive feature tests (Linux, requires root)
+cd test && make features
+
+# Feature tests without root (uses /tmp)
+cd test && make features-noroot
 ```
 
 ### Test Coverage
@@ -259,18 +267,20 @@ typedef struct {
 ```
 
 ### NcdMetadata (Consolidated)
-Single file containing config, groups, heuristics, and exclusions:
+Single file containing config, groups, heuristics, exclusions, and directory history:
 ```c
 typedef struct {
     NcdConfig cfg;
     NcdGroupDb groups;
     NcdHeuristicsV2 heuristics;
     NcdExclusionList exclusions;
+    NcdDirHistory dir_history;
     char file_path[NCD_MAX_PATH];
     bool config_dirty;
     bool groups_dirty;
     bool heuristics_dirty;
     bool exclusions_dirty;
+    bool dir_history_dirty;
 } NcdMetadata;
 ```
 
@@ -317,11 +327,15 @@ ncd /c                    # Edit configuration (set default options)
 ncd /f                    # Show frequent searches
 ncd /fc                   # Clear history
 
+# Directory history navigation
+ncd /0                    # Ping-pong between two most recent directories
+ncd /1, /2, ... /9       # Jump to Nth most recent directory
+
 # Agent mode (LLM integration)
 ncd /agent query <search> [--json] [--limit N] [--depth]
 ncd /agent ls <path> [--json] [--depth N] [--dirs-only|--files-only]
 ncd /agent tree <path> [--json] [--depth N] [--flat]
-ncd /agent check <path> | --db-age | --stats
+ncd /agent check <path> | --db-age | --stats | --service-status
 
 # Help
 ncd /?                    # or /h
@@ -369,7 +383,7 @@ Layout:
 
 Magic: `NCMD` (0x444D434E)
 Version: 1
-Sections: Config (0x01), Groups (0x02), Heuristics (0x03), Exclusions (0x04)
+Sections: Config (0x01), Groups (0x02), Heuristics (0x03), Exclusions (0x04), DirHistory (0x05)
 
 ### Atomic Writes
 
@@ -399,7 +413,7 @@ A child process cannot change the working directory of its parent shell (OS limi
 
 ### Why consolidated metadata?
 
-- Single file for config, groups, heuristics, and exclusions
+- Single file for config, groups, heuristics, exclusions, and directory history
 - Atomic updates (all or nothing)
 - Reduces file I/O and simplifies backup
 
@@ -432,6 +446,9 @@ ncd /agent check --db-age
 
 # Get database statistics
 ncd /agent check --stats
+
+# Check service status (returns: READY, STARTING, or NOT_RUNNING)
+ncd /agent check --service-status
 ```
 
 Exit codes:
@@ -464,7 +481,7 @@ Exit codes:
 |------|-------------|
 | `src/ncd.h` | Core types, platform detection, limits, utility macros, binary format headers |
 | `src/main.c` | CLI parsing, heuristics (history), result generation, main loop, version info |
-| `src/database.c` | Binary DB load/save, path helpers, groups, config, metadata, exclusions |
+| `src/database.c` | Binary DB load/save, path helpers, groups, config, metadata, exclusions, history |
 | `src/scanner.c` | Multi-threaded filesystem scanning, mount enumeration, exclusion filtering |
 | `src/matcher.c` | Chain matching, name index, fuzzy matching with Damerau-Levenshtein |
 | `src/ui.c` | TUI implementation (selector, navigator, dialogs, config editor) |

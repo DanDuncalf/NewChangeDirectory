@@ -111,6 +111,20 @@ cl %CFLAGS% %SRCDIR%\ui.c
 if errorlevel 1 goto :error
 cl %CFLAGS% %SRCDIR%\platform.c
 if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\state_backend_local.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\state_backend_service.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\shared_state.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\shm_platform_win.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\control_ipc_win.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\service_state.c
+if errorlevel 1 goto :error
+cl %CFLAGS% %SRCDIR%\service_publish.c
+if errorlevel 1 goto :error
 
 :: Compile shared source files (with sh_ prefix to avoid name collision)
 cl %CFLAGS% /Fo%OBJDIR%\sh_platform.obj %SHARED%\platform.c
@@ -122,6 +136,8 @@ if errorlevel 1 goto :error
 
 echo Linking %TARGET%...
 link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET% ^
+    %OBJDIR%\service_state.obj ^
+    %OBJDIR%\service_publish.obj ^
     %OBJDIR%\main.obj ^
     %OBJDIR%\database.obj ^
     %OBJDIR%\scanner.obj ^
@@ -131,12 +147,43 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET% ^
     %OBJDIR%\sh_platform.obj ^
     %OBJDIR%\sh_strbuilder.obj ^
     %OBJDIR%\sh_common.obj ^
-    kernel32.lib user32.lib
+    %OBJDIR%\state_backend_local.obj ^
+    %OBJDIR%\state_backend_service.obj ^
+    %OBJDIR%\shared_state.obj ^
+    %OBJDIR%\shm_platform_win.obj ^
+    %OBJDIR%\control_ipc_win.obj ^
+    kernel32.lib user32.lib advapi32.lib
 
 if errorlevel 1 goto :error
 
 echo.
-echo Build successful: %TARGET%
+echo Building service executable...
+cl %CFLAGS% /Fo%OBJDIR%\service_main.obj %SRCDIR%\service_main.c
+if errorlevel 1 goto :error
+
+link /nologo /SUBSYSTEM:CONSOLE /OUT:NCDService.exe ^
+    %OBJDIR%\service_main.obj ^
+    %OBJDIR%\service_state.obj ^
+    %OBJDIR%\service_publish.obj ^
+    %OBJDIR%\state_backend_service.obj ^
+    %OBJDIR%\state_backend_local.obj ^
+    %OBJDIR%\database.obj ^
+    %OBJDIR%\scanner.obj ^
+    %OBJDIR%\matcher.obj ^
+    %OBJDIR%\platform.obj ^
+    %OBJDIR%\shared_state.obj ^
+    %OBJDIR%\shm_platform_win.obj ^
+    %OBJDIR%\control_ipc_win.obj ^
+    %OBJDIR%\state_backend_local.obj ^
+    %OBJDIR%\sh_platform.obj ^
+    %OBJDIR%\sh_strbuilder.obj ^
+    %OBJDIR%\sh_common.obj ^
+    kernel32.lib user32.lib advapi32.lib
+
+if errorlevel 1 goto :error
+
+echo.
+echo Build successful: %TARGET% and NCDService.exe
 echo.
 
 :: Clean up intermediate files

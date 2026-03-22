@@ -38,6 +38,7 @@
 #include "matcher.h"
 #include "ui.h"
 #include "platform.h"
+#include "control_ipc.h"
 
 /* forward declarations used by heuristics helpers */
 static void ncd_print(const char *s);
@@ -583,6 +584,9 @@ static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
     return saw_letter && saw_sep;
 }
 
+/* Forward declaration for agent mode argument parsing */
+static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts);
+
 static bool parse_args(int argc, char *argv[], NcdOptions *opts)
 {
     memset(opts, 0, sizeof(NcdOptions));
@@ -831,6 +835,17 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
         }
 #endif
         
+        /* Agent mode: /agent <subcommand> */
+        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0 ||
+            _stricmp(arg, "--agent") == 0) {
+            opts->agent_mode = true;
+            int consumed = 0;
+            if (!parse_agent_args(argc - i, &argv[i], &consumed, opts))
+                return false;
+            i += consumed;
+            continue;
+        }
+        
         /* Options start with / or - */
         if ((arg[0] == '/' || arg[0] == '-') && arg[1]) {
             /* Multi-char flags after / are processed char by char */
@@ -894,6 +909,773 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
 next_arg:;
     }
     return true;
+}
+
+/* Agent subcommand identifiers */
+#define AGENT_SUB_NONE   0
+#define AGENT_SUB_QUERY  1
+#define AGENT_SUB_LS     2
+#define AGENT_SUB_TREE   3
+#define AGENT_SUB_CHECK  4
+
+/* ================================================================ agent mode */
+
+/* Agent output uses stdout (not WriteConsoleA) for redirectability */
+static void agent_print(const char *s)
+{
+    fputs(s, stdout);
+}
+
+static void agent_print_char(char c)
+{
+    fputc(c, stdout);
+}
+
+static void agent_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+
+static void agent_json_escape(const char *s)
+{
+    for (const char *p = s; *p; p++) {
+        switch (*p) {
+            case '\\': agent_print("\\\\"); break;
+            case '"': agent_print("\\\""); break;
+            case '\b': agent_print("\\b"); break;
+            case '\f': agent_print("\\f"); break;
+            case '\n': agent_print("\\n"); break;
+            case '\r': agent_print("\\r"); break;
+            case '\t': agent_print("\\t"); break;
+            default:
+                if ((unsigned char)*p < 0x20) {
+                    agent_printf("\\u%04x", (unsigned char)*p);
+                } else {
+                    agent_print_char(*p);
+                }
+        }
+    }
+}
+
+static void agent_print_usage(void)
+{
+    agent_print(
+        "NCD Agent Mode -- Filesystem oracle for LLM agents\r\n"
+        "\r\n"
+        "Usage:\r\n"
+        "  ncd /agent query <search> [options]\r\n"
+        "  ncd /agent ls <path> [options]\r\n"
+        "  ncd /agent tree <path> [options]\r\n"
+        "  ncd /agent check <path> | --db-age | --stats | --service-status\r\n"
+        "\r\n"
+        "Commands:\r\n"
+        "  query <search>    Search the NCD index for directories\r\n"
+        "  ls <path>         List directory contents (live filesystem)\r\n"
+        "  tree <path>       Show directory structure from DB\r\n"
+        "  check <path>      Check if path exists in DB (exit code)\r\n"
+        "\r\n"
+        "Query Options:\r\n"
+        "  --json            JSON output instead of compact\r\n"
+        "  --limit N         Cap results (default: 20, 0=unlimited)\r\n"
+        "  --all             Include hidden + system directories\r\n"
+        "  --depth           Sort shallowest first (default: by score)\r\n"
+        "\r\n"
+        "ls Options:\r\n"
+        "  --depth N         Recurse N levels (default: 1, max: 5)\r\n"
+        "  --dirs-only       Only directories\r\n"
+        "  --files-only      Only files\r\n"
+        "  --pattern <glob>  Filter by name (e.g., *.py)\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "tree Options:\r\n"
+        "  --depth N         Max depth (default: 3, max: 10)\r\n"
+        "  --json            Nested JSON structure\r\n"
+        "  --flat            Flat list instead of indented\r\n"
+        "\r\n"
+        "check Options:\r\n"
+        "  --db-age          Output DB age in seconds\r\n"
+        "  --stats           Output dir count per drive\r\n"
+        "  --service-status  Check if NCD service is running and ready\r\n"
+        "\r\n"
+        "Exit Codes:\r\n"
+        "  0   Success / Found\r\n"
+        "  1   Not found / Error\r\n"
+    );
+}
+
+static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
+{
+    /* Initialize defaults */
+    opts->agent_limit = 20;
+    opts->agent_depth = -1;  /* -1 means use subcommand default */
+    
+    if (argc < 2) {
+        ncd_println("NCD: /agent requires a subcommand");
+        return false;
+    }
+    
+    const char *sub = argv[1];
+    *consumed = 1;
+    
+    if (_stricmp(sub, "query") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: /agent query requires a search term");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_QUERY;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        
+        /* Parse query options */
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--limit") == 0 && i + 1 < argc) {
+                opts->agent_limit = atoi(argv[++i]);
+                *consumed += 2;
+            } else if (strcmp(opt, "--all") == 0) {
+                opts->show_hidden = true;
+                opts->show_system = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--depth") == 0) {
+                opts->agent_depth_sort = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "ls") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: /agent ls requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_LS;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        opts->agent_depth = 1;  /* default for ls */
+        
+        /* Parse ls options */
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
+                opts->agent_depth = atoi(argv[++i]);
+                if (opts->agent_depth < 1) opts->agent_depth = 1;
+                if (opts->agent_depth > 5) opts->agent_depth = 5;
+                *consumed += 2;
+            } else if (strcmp(opt, "--dirs-only") == 0) {
+                opts->agent_dirs_only = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--files-only") == 0) {
+                opts->agent_files_only = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--pattern") == 0 && i + 1 < argc) {
+                platform_strncpy_s(opts->agent_pattern, sizeof(opts->agent_pattern), argv[++i]);
+                *consumed += 2;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "tree") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: /agent tree requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_TREE;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        opts->agent_depth = 3;  /* default for tree */
+        
+        /* Parse tree options */
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
+                opts->agent_depth = atoi(argv[++i]);
+                if (opts->agent_depth < 1) opts->agent_depth = 1;
+                if (opts->agent_depth > 10) opts->agent_depth = 10;
+                *consumed += 2;
+            } else if (strcmp(opt, "--flat") == 0) {
+                opts->agent_flat = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "check") == 0) {
+        opts->agent_subcommand = AGENT_SUB_CHECK;
+        
+        /* Parse check options */
+        for (int i = 2; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--db-age") == 0) {
+                opts->agent_check_db_age = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--stats") == 0) {
+                opts->agent_check_stats = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--service-status") == 0) {
+                opts->agent_check_service_status = true;
+                (*consumed)++;
+            } else if (opt[0] != '-') {
+                /* First non-option is the path */
+                platform_strncpy_s(opts->search, sizeof(opts->search), opt);
+                opts->has_search = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        
+        /* check requires at least one of: path, --db-age, --stats, --service-status */
+        if (!opts->has_search && !opts->agent_check_db_age && !opts->agent_check_stats && !opts->agent_check_service_status) {
+            ncd_println("NCD: /agent check requires a path or --db-age or --stats or --service-status");
+            return false;
+        }
+        return true;
+        
+    } else {
+        ncd_printf("NCD: unknown /agent subcommand: %s\r\n", sub);
+        return false;
+    }
+}
+
+/* Simple glob matching for agent pattern filtering */
+static bool glob_match(const char *pattern, const char *text)
+{
+    const char *p = pattern;
+    const char *t = text;
+    const char *star = NULL;
+    const char *ss = NULL;
+    
+    while (*t) {
+        if (*p == '*') {
+            star = p++;
+            ss = t;
+        } else if (*p == '?' || tolower((unsigned char)*p) == tolower((unsigned char)*t)) {
+            p++;
+            t++;
+        } else if (star) {
+            p = star + 1;
+            t = ++ss;
+        } else {
+            return false;
+        }
+    }
+    
+    while (*p == '*') p++;
+    return *p == '\0';
+}
+
+/* ============================================================ agent mode   */
+
+/* Agent mode: query - Search the NCD index for directories */
+static int agent_mode_query(NcdDatabase *db, const NcdOptions *opts)
+{
+    if (!db) {
+        agent_print("{\"error\":\"no database\"}\r\n");
+        return 0;
+    }
+    
+    int match_count = 0;
+    NcdMatch *matches = matcher_find(db, opts->search, opts->show_hidden, opts->show_system, &match_count);
+    
+    if (!matches || match_count == 0) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"query\":\"");
+            agent_json_escape(opts->search);
+            agent_print("\",\"results\":[]}\r\n");
+        }
+        return 0;
+    }
+    
+    /* Apply limit */
+    int limit = opts->agent_limit;
+    if (limit <= 0) limit = match_count;
+    if (match_count < limit) limit = match_count;
+    
+    /* Sort by depth if requested */
+    if (opts->agent_depth_sort) {
+        /* Simple bubble sort by path depth (slash count) */
+        for (int i = 0; i < limit - 1; i++) {
+            for (int j = i + 1; j < limit; j++) {
+                int depth_i = 0, depth_j = 0;
+                for (const char *p = matches[i].full_path; *p; p++)
+                    if (*p == '\\' || *p == '/') depth_i++;
+                for (const char *p = matches[j].full_path; *p; p++)
+                    if (*p == '\\' || *p == '/') depth_j++;
+                if (depth_i > depth_j) {
+                    NcdMatch tmp = matches[i];
+                    matches[i] = matches[j];
+                    matches[j] = tmp;
+                }
+            }
+        }
+    }
+    
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"query\":\"");
+        agent_json_escape(opts->search);
+        agent_print("\",\"results\":[");
+        for (int i = 0; i < limit; i++) {
+            if (i > 0) agent_print(",");
+            agent_print("{\"path\":\"");
+            agent_json_escape(matches[i].full_path);
+            agent_print("\",\"drive\":\"");
+            agent_print_char(matches[i].drive_letter);
+            agent_print("\"}");
+        }
+        agent_print("]}\r\n");
+    } else {
+        /* Compact format: one path per line */
+        for (int i = 0; i < limit; i++) {
+            agent_print(matches[i].full_path);
+            agent_print("\r\n");
+        }
+    }
+    
+    free(matches);
+    return limit;
+}
+
+/* Agent mode: ls - List directory contents from live filesystem */
+static int agent_mode_ls(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        agent_print("{\"error\":\"no path specified\"}\r\n");
+        return 0;
+    }
+    
+    char path[NCD_MAX_PATH];
+    platform_strncpy_s(path, sizeof(path), opts->search);
+    
+    /* Ensure trailing separator for consistent depth calculation */
+    size_t len = strlen(path);
+    if (len > 0 && path[len-1] != '\\' && path[len-1] != '/') {
+        platform_strncat_s(path, sizeof(path), "/");
+    }
+    
+    int base_depth = 0;
+    for (const char *p = path; *p; p++)
+        if (*p == '\\' || *p == '/') base_depth++;
+    
+    typedef struct {
+        char path[NCD_MAX_PATH];
+        char name[256];
+        bool is_dir;
+        int depth;
+    } LsEntry;
+    
+    LsEntry *entries = NULL;
+    int entry_count = 0;
+    int entry_capacity = 0;
+    
+    /* Platform-specific directory enumeration */
+#if NCD_PLATFORM_WINDOWS
+    char search_path[NCD_MAX_PATH];
+    snprintf(search_path, sizeof(search_path), "%s*", path);
+    
+    WIN32_FIND_DATAA find_data;
+    HANDLE find_handle = FindFirstFileExA(search_path, FindExInfoBasic, &find_data,
+                                          FindExSearchNameMatch, NULL, 0);
+    if (find_handle == INVALID_HANDLE_VALUE) {
+        if (opts->agent_json) {
+            agent_print("{\"error\":\"cannot open directory\"}\r\n");
+        }
+        return 0;
+    }
+    
+    do {
+        const char *name = find_data.cFileName;
+        if (name[0] == '.') continue;  /* Skip hidden */
+        
+        bool is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        
+        /* Pattern filtering */
+        if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
+            continue;
+        
+        /* Type filtering */
+        if (opts->agent_dirs_only && !is_dir) continue;
+        if (opts->agent_files_only && is_dir) continue;
+        
+        if (entry_count >= entry_capacity) {
+            entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+            LsEntry *new_entries = (LsEntry *)realloc(entries, entry_capacity * sizeof(LsEntry));
+            if (!new_entries) break;
+            entries = new_entries;
+        }
+        
+        LsEntry *e = &entries[entry_count++];
+        platform_strncpy_s(e->name, sizeof(e->name), name);
+        e->is_dir = is_dir;
+        e->depth = 0;
+        snprintf(e->path, sizeof(e->path), "%s%s", path, name);
+    } while (FindNextFileA(find_handle, &find_data));
+    
+    FindClose(find_handle);
+#else
+    DIR *dir = opendir(path);
+    if (!dir) {
+        if (opts->agent_json) {
+            agent_print("{\"error\":\"cannot open directory\"}\r\n");
+        }
+        return 0;
+    }
+    
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        if (name[0] == '.') continue;  /* Skip hidden */
+        
+        /* Get file stats to determine if directory */
+        char full_path[NCD_MAX_PATH];
+        snprintf(full_path, sizeof(full_path), "%s%s", path, name);
+        struct stat st;
+        bool is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+        
+        /* Pattern filtering */
+        if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
+            continue;
+        
+        /* Type filtering */
+        if (opts->agent_dirs_only && !is_dir) continue;
+        if (opts->agent_files_only && is_dir) continue;
+        
+        if (entry_count >= entry_capacity) {
+            entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+            LsEntry *new_entries = (LsEntry *)realloc(entries, entry_capacity * sizeof(LsEntry));
+            if (!new_entries) break;
+            entries = new_entries;
+        }
+        
+        LsEntry *e = &entries[entry_count++];
+        platform_strncpy_s(e->name, sizeof(e->name), name, sizeof(e->name));
+        e->is_dir = is_dir;
+        e->depth = 0;
+        snprintf(e->path, sizeof(e->path), "%s%s", path, name);
+    }
+    closedir(dir);
+#endif
+    
+    /* Recurse if depth > 1 */
+    if (opts->agent_depth > 1) {
+        /* TODO: Implement recursion */
+    }
+    
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_print("\",\"entries\":[");
+        for (int i = 0; i < entry_count; i++) {
+            if (i > 0) agent_print(",");
+            agent_print("{\"name\":\"");
+            agent_json_escape(entries[i].name);
+            agent_print("\",\"is_dir\":");
+            agent_print(entries[i].is_dir ? "true" : "false");
+            agent_print("}");
+        }
+        agent_print("]}\r\n");
+    } else {
+        for (int i = 0; i < entry_count; i++) {
+            if (entries[i].is_dir) agent_print("[DIR] ");
+            agent_print(entries[i].name);
+            agent_print("\r\n");
+        }
+    }
+    
+    free(entries);
+    return entry_count;
+}
+
+/* Agent mode: tree - Show directory structure from DB */
+static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
+{
+    if (!db) {
+        agent_print("{\"error\":\"no database\"}\r\n");
+        return 0;
+    }
+    
+    if (!opts->has_search || !opts->search[0]) {
+        agent_print("{\"error\":\"no path specified\"}\r\n");
+        return 0;
+    }
+    
+    /* Find the directory in the database */
+    char search_path[NCD_MAX_PATH];
+    platform_strncpy_s(search_path, sizeof(search_path), opts->search);
+    
+    /* Normalize path */
+    for (char *p = search_path; *p; p++) {
+        if (*p == '/') *p = '\\';
+    }
+    
+    /* Find matching directory in database */
+    int found_drive_idx = -1;
+    int found_dir_idx = -1;
+    
+    for (int d = 0; d < db->drive_count && found_dir_idx < 0; d++) {
+        DriveData *drive = &db->drives[d];
+        for (int i = 0; i < drive->dir_count; i++) {
+            char full_path[NCD_MAX_PATH];
+            db_full_path(drive, i, full_path, sizeof(full_path));
+            if (_stricmp(full_path, search_path) == 0) {
+                found_drive_idx = d;
+                found_dir_idx = i;
+                break;
+            }
+        }
+    }
+    
+    if (found_dir_idx < 0) {
+        if (opts->agent_json) {
+            agent_print("{\"error\":\"path not found in database\"}\r\n");
+        } else {
+            agent_print("Path not found in database: ");
+            agent_print(search_path);
+            agent_print("\r\n");
+        }
+        return 0;
+    }
+    
+    /* Collect entries */
+    typedef struct {
+        char name[256];
+        int depth;
+    } TreeEntry;
+    
+    TreeEntry *entries = NULL;
+    int entry_count = 0;
+    int entry_capacity = 0;
+    
+    /* BFS to find all descendants */
+    typedef struct { int drive; int dir; int depth; } QueueItem;
+    int max_queue_size = db->drives[found_drive_idx].dir_count;
+    QueueItem *queue = (QueueItem *)malloc(max_queue_size * sizeof(QueueItem));
+    if (!queue) return 0;
+    
+    int qhead = 0, qtail = 0;
+    queue[qtail++] = (QueueItem){found_drive_idx, found_dir_idx, 0};
+    
+    while (qhead < qtail) {
+        QueueItem cur = queue[qhead++];
+        DriveData *drive = &db->drives[cur.drive];
+        
+        /* Find children */
+        for (int i = 0; i < drive->dir_count; i++) {
+            if (drive->dirs[i].parent == cur.dir) {
+                const char *name = drive->name_pool + drive->dirs[i].name_off;
+                
+                if (entry_count >= entry_capacity) {
+                    entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+                    TreeEntry *new_entries = (TreeEntry *)realloc(entries, entry_capacity * sizeof(TreeEntry));
+                    if (!new_entries) break;
+                    entries = new_entries;
+                }
+                
+                TreeEntry *e = &entries[entry_count++];
+                platform_strncpy_s(e->name, sizeof(e->name), name);
+                e->depth = cur.depth;
+                
+                if (cur.depth + 1 < opts->agent_depth) {
+                    queue[qtail++] = (QueueItem){cur.drive, i, cur.depth + 1};
+                }
+            }
+        }
+    }
+    
+    free(queue);
+    
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"tree\":");
+        /* Build nested structure - simplified flat array for now */
+        agent_print("[");
+        for (int i = 0; i < entry_count; i++) {
+            if (i > 0) agent_print(",");
+            agent_print("{\"n\":\"");
+            agent_json_escape(entries[i].name);
+            agent_print("\",\"d\":");
+            char dstr[16];
+            snprintf(dstr, sizeof(dstr), "%d", entries[i].depth);
+            agent_print(dstr);
+            agent_print("}");
+        }
+        agent_print("]}\r\n");
+    } else if (opts->agent_flat) {
+        for (int i = 0; i < entry_count; i++) {
+            agent_print(entries[i].name);
+            agent_print("\r\n");
+        }
+    } else {
+        for (int i = 0; i < entry_count; i++) {
+            for (int j = 0; j < entries[i].depth; j++)
+                agent_print("  ");
+            agent_print(entries[i].name);
+            agent_print("\r\n");
+        }
+    }
+    
+    free(entries);
+    return entry_count;
+}
+
+/* Agent mode: check - Check existence and status */
+static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
+{
+    bool found = false;
+    
+    if (opts->has_search && opts->search[0]) {
+        /* Check if path exists in filesystem */
+        found = platform_dir_exists(opts->search);
+        
+        /* Check if path is in database */
+        bool in_db = false;
+        if (db) {
+            char search_path[NCD_MAX_PATH];
+            platform_strncpy_s(search_path, sizeof(search_path), opts->search);
+            for (char *p = search_path; *p; p++)
+                if (*p == '/') *p = '\\';
+            
+            for (int d = 0; d < db->drive_count && !in_db; d++) {
+                DriveData *drive = &db->drives[d];
+                for (int i = 0; i < drive->dir_count; i++) {
+                    char full_path[NCD_MAX_PATH];
+                    db_full_path(drive, i, full_path, sizeof(full_path));
+                    if (_stricmp(full_path, search_path) == 0) {
+                        in_db = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"path\":\"");
+            agent_json_escape(opts->search);
+            agent_print("\",\"exists\":");
+            agent_print(found ? "true" : "false");
+            agent_print(",\"in_db\":");
+            agent_print(in_db ? "true" : "false");
+            agent_print("}\r\n");
+        } else {
+            agent_print(found ? "EXISTS" : "NOT_FOUND");
+            agent_print("\r\n");
+        }
+        return found ? 0 : 1;
+    }
+    
+    if (opts->agent_check_db_age) {
+        if (!db) {
+            agent_print("{\"error\":\"no database\"}\r\n");
+            return 1;
+        }
+        time_t age = time(NULL) - db->last_scan;
+        if (opts->agent_json) {
+            agent_printf("{\"v\":1,\"db_age\":%lld}\r\n", (long long)age);
+        } else {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%lld\r\n", (long long)age);
+            agent_print(buf);
+        }
+        return 0;
+    }
+    
+    if (opts->agent_check_stats) {
+        if (!db) {
+            agent_print("{\"error\":\"no database\"}\r\n");
+            return 1;
+        }
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"drives\":[");
+            for (int i = 0; i < db->drive_count; i++) {
+                if (i > 0) agent_print(",");
+                agent_printf("{\"letter\":\"%c\",\"count\":%d}",
+                    db->drives[i].letter, db->drives[i].dir_count);
+            }
+            agent_print("]}\r\n");
+        } else {
+            for (int i = 0; i < db->drive_count; i++) {
+                if (i > 0) agent_print(" ");
+                agent_printf("%c:%d", db->drives[i].letter, db->drives[i].dir_count);
+            }
+            agent_print("\r\n");
+        }
+        return 0;
+    }
+    
+    if (opts->agent_check_service_status) {
+        /* Check service status */
+        bool service_running = ipc_service_exists();
+        
+        if (!service_running) {
+            /* Service not running */
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"status\":\"not_running\",\"message\":\"Service not running\"}\r\n");
+            } else {
+                agent_print("NOT_RUNNING\r\n");
+            }
+            return 0;
+        }
+        
+        /* Service is running - check if it has loaded databases */
+        NcdIpcClient *client = ipc_client_connect();
+        if (!client) {
+            /* Could not connect despite service existing */
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"status\":\"starting\",\"message\":\"Service running but not loaded\"}\r\n");
+            } else {
+                agent_print("STARTING\r\n");
+            }
+            return 0;
+        }
+        
+        NcdIpcStateInfo info;
+        NcdIpcResult result = ipc_client_get_state_info(client, &info);
+        ipc_client_disconnect(client);
+        
+        if (result != NCD_IPC_OK || info.db_generation == 0) {
+            /* Service running but database not loaded yet */
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"status\":\"starting\",\"message\":\"Service running but not loaded\"}\r\n");
+            } else {
+                agent_print("STARTING\r\n");
+            }
+            return 0;
+        }
+        
+        /* Service ready - running and has loaded databases */
+        if (opts->agent_json) {
+            agent_printf("{\"v\":1,\"status\":\"ready\",\"message\":\"Service ready\",\"meta_generation\":%llu,\"db_generation\":%llu}\r\n",
+                (unsigned long long)info.meta_generation,
+                (unsigned long long)info.db_generation);
+        } else {
+            agent_print("READY\r\n");
+        }
+        return 0;
+    }
+    
+    return 1;
 }
 
 #if NCD_PLATFORM_LINUX
@@ -1267,6 +2049,91 @@ int main(int argc, char *argv[])
             con_close();
             return 0;
         }
+    }
+    
+    /* ------------------------------------------------------ agent mode  */
+    if (opts.agent_mode) {
+        int result = 0;
+        
+        switch (opts.agent_subcommand) {
+            case AGENT_SUB_QUERY: {
+                /* Load database and search */
+                NcdDatabase *db = NULL;
+                char target_db[NCD_MAX_PATH] = {0};
+                char cwd[MAX_PATH] = {0};
+                platform_get_current_dir(cwd, sizeof(cwd));
+                char target_drive = (char)toupper((unsigned char)cwd[0]);
+                
+                if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                    target_drive = (char)toupper((unsigned char)opts.search[0]);
+                }
+                
+                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                    db = db_load_auto(target_db);
+                }
+                
+                int count = agent_mode_query(db, &opts);
+                result = (count > 0) ? 0 : 1;
+                if (db) db_free(db);
+                break;
+            }
+            case AGENT_SUB_LS: {
+                int count = agent_mode_ls(&opts);
+                result = (count > 0) ? 0 : 1;
+                break;
+            }
+            case AGENT_SUB_TREE: {
+                /* Load database for tree */
+                NcdDatabase *db = NULL;
+                char target_db[NCD_MAX_PATH] = {0};
+                char cwd[MAX_PATH] = {0};
+                platform_get_current_dir(cwd, sizeof(cwd));
+                char target_drive = (char)toupper((unsigned char)cwd[0]);
+                
+                if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                    target_drive = (char)toupper((unsigned char)opts.search[0]);
+                }
+                
+                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                    db = db_load_auto(target_db);
+                }
+                
+                int count = agent_mode_tree(db, &opts);
+                result = (count > 0) ? 0 : 1;
+                if (db) db_free(db);
+                break;
+            }
+            case AGENT_SUB_CHECK: {
+                /* Load database for check */
+                NcdDatabase *db = NULL;
+                if (opts.agent_check_db_age || opts.agent_check_stats || opts.has_search) {
+                    char target_db[NCD_MAX_PATH] = {0};
+                    char cwd[MAX_PATH] = {0};
+                    platform_get_current_dir(cwd, sizeof(cwd));
+                    char target_drive = (char)toupper((unsigned char)cwd[0]);
+                    
+                    if (opts.has_search && isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                        target_drive = (char)toupper((unsigned char)opts.search[0]);
+                    }
+                    
+                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                        db = db_load_auto(target_db);
+                    }
+                }
+                
+                result = agent_mode_check(db, &opts);
+                if (db) db_free(db);
+                break;
+            }
+            default: {
+                agent_print_usage();
+                result = 1;
+                break;
+            }
+        }
+        
+        con_close();
+        return result;
     }
     
     /* ------------------------------------------------ configuration editor */

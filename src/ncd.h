@@ -464,6 +464,7 @@ typedef struct {
     bool agent_flat;              /* --flat (for tree)                       */
     bool agent_check_db_age;      /* --db-age (for check)                    */
     bool agent_check_stats;       /* --stats (for check)                     */
+    bool agent_check_service_status; /* --service-status (for check)         */
     
     /* Exclusion list options */
     bool exclusion_add;           /* -x <pattern> -- add exclusion pattern   */

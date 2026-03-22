@@ -147,6 +147,7 @@ ncd /agent tree /home/user --depth 3 --json
 ncd /agent check /home/user/projects
 ncd /agent check --db-age
 ncd /agent check --stats
+ncd /agent check --service-status
 ```
 
 Exit codes:
