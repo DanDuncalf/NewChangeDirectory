@@ -913,13 +913,14 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 }
 #endif
 
-static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
+static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
+                                const NcdExclusionList *exclusions)
 {
     /* Handle subdirectory rescan: /r. */
     if (opts->scan_subdirectory[0]) {
         char drive = platform_get_drive_letter(opts->scan_subdirectory);
         ncd_printf("NCD: Rescanning subdirectory %s...\r\n", opts->scan_subdirectory);
-        int n = scan_subdirectory(db, drive, opts->scan_subdirectory, opts->show_hidden, opts->show_system);
+        int n = scan_subdirectory(db, drive, opts->scan_subdirectory, opts->show_hidden, opts->show_system, exclusions);
         ncd_printf("  Scanned %d directories.\r\n", n);
         return n;
     }
@@ -927,7 +928,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
     /* Linux special: /r / scans only root filesystem */
     if (opts->scan_root_only) {
         const char *root_mount = "/";
-        return scan_mounts(db, &root_mount, 1, opts->show_hidden, opts->show_system, opts->timeout_seconds);
+        return scan_mounts(db, &root_mount, 1, opts->show_hidden, opts->show_system, opts->timeout_seconds, exclusions);
     }
 
     /* Build a drive list from the options. If opts->scan_drive_count>0 use
@@ -954,7 +955,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
 
     /* If no specific mounts requested, let scan_mounts enumerate them */
     if (dcount == 0) {
-        return scan_mounts(db, NULL, 0, opts->show_hidden, opts->show_system, opts->timeout_seconds);
+        return scan_mounts(db, NULL, 0, opts->show_hidden, opts->show_system, opts->timeout_seconds, exclusions);
     }
 
     /* Build platform-specific mount strings from the selected drives. */
@@ -970,7 +971,7 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts)
     }
 
     if (mcount == 0) return 0;
-    return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system, opts->timeout_seconds);
+    return scan_mounts(db, mounts, mcount, opts->show_hidden, opts->show_system, opts->timeout_seconds, exclusions);
 }
 
 /* ================================================================= main   */
@@ -1345,7 +1346,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        int n = run_requested_rescan(db, &opts);
+        int n = run_requested_rescan(db, &opts, &meta->exclusions);
         
         /* Cleanup metadata */
         db_metadata_free(meta);
@@ -1518,8 +1519,8 @@ int main(int argc, char *argv[])
         }
 
         int n = (opts.force_rescan
-                 ? run_requested_rescan(scan_db, &opts)
-                 : scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds));
+                 ? run_requested_rescan(scan_db, &opts, NULL)
+                 : scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds, NULL));
         ncd_printf("  Scan complete: %d directories found.\r\n", n);
 
         for (int i = 0; i < scan_db->drive_count; i++) {
@@ -1609,7 +1610,7 @@ int main(int argc, char *argv[])
                     }
                     int n = scan_mounts(scan_db, mounts, rescan_count, 
                                         opts.show_hidden, opts.show_system, 
-                                        opts.timeout_seconds);
+                                        opts.timeout_seconds, NULL);
 #else
                     /* Linux: need to map drive letters back to mount points */
                     const char *mounts[26];
@@ -1632,7 +1633,7 @@ int main(int argc, char *argv[])
                     }
                     int n = scan_mounts(scan_db, mounts, mcount, 
                                         opts.show_hidden, opts.show_system, 
-                                        opts.timeout_seconds);
+                                        opts.timeout_seconds, NULL);
 #endif
                     ncd_printf("  Scan complete: %d directories found.\r\n", n);
                     
@@ -1668,7 +1669,7 @@ int main(int argc, char *argv[])
         scan_db->default_show_hidden = opts.show_hidden;
         scan_db->default_show_system = opts.show_system;
         scan_db->last_scan = time(NULL);
-        int n = scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds);
+        int n = scan_mounts(scan_db, NULL, 0, opts.show_hidden, opts.show_system, opts.timeout_seconds, NULL);
         ncd_printf("  Rebuild complete: %d directories found.\r\n", n);
         for (int i = 0; i < scan_db->drive_count; i++) {
             char drv_path[NCD_MAX_PATH];

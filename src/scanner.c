@@ -16,10 +16,13 @@
 #include <string.h>
 #include <ctype.h>
 
-/* Global exclusion list for scanning */
+/*
+ * Deprecated global exclusion list - kept for backward compatibility.
+ * New code should pass exclusions directly to scan functions.
+ */
 static const NcdExclusionList *g_exclusion_list = NULL;
 
-/* Set the exclusion list for scanning */
+/* Set the exclusion list for scanning (deprecated - pass directly to scan functions) */
 void scan_set_exclusion_list(const NcdExclusionList *list)
 {
     g_exclusion_list = list;
@@ -297,6 +300,7 @@ typedef struct {
     bool         include_system;
     DriveStatus *status;         /* shared with main-thread display loop    */
     int          dirs_found;     /* written on completion                   */
+    const NcdExclusionList *exclusions; /* exclusion list for filtering     */
 } ScanThreadData;
 
 /* Platform-specific implementation of recursive directory scan.
@@ -324,7 +328,7 @@ static unsigned long worker_thread(void *param)
 #if NCD_PLATFORM_LINUX
         .visited        = diridset_create(),
 #endif
-        .exclusions     = g_exclusion_list,
+        .exclusions     = td->exclusions,
     };
 
     /* Perform platform-specific scan. */
@@ -348,7 +352,8 @@ int scan_mount(NcdDatabase   *db,
                bool           include_hidden,
                bool           include_system,
                ScanProgressFn progress_fn,
-               void          *user_data)
+               void          *user_data,
+               const NcdExclusionList *exclusions)
 {
     (void)progress_fn;
     (void)user_data;
@@ -421,7 +426,7 @@ int scan_mount(NcdDatabase   *db,
 #if NCD_PLATFORM_LINUX
                 .visited        = diridset_create(),
 #endif
-                .exclusions     = g_exclusion_list,
+                .exclusions     = exclusions,
             };
             total_count += platform_scan_directory(&ctx, root_dirs[i], (int32_t)dir_id);
 #if NCD_PLATFORM_LINUX
@@ -442,6 +447,7 @@ int scan_mount(NcdDatabase   *db,
     td.include_system = include_system;
     td.status = &local_status;
     td.dirs_found = 0;
+    td.exclusions = exclusions;
 
     PlatformHandle h = platform_thread_create(worker_thread, &td);
     if (h) {
@@ -462,7 +468,8 @@ int scan_mounts(NcdDatabase *db,
                 int           count,
                 bool          include_hidden,
                 bool          include_system,
-                int           timeout_seconds)
+                int           timeout_seconds,
+                const NcdExclusionList *exclusions)
 {
     /* Convert timeout to milliseconds, ensure reasonable minimum */
     unsigned long timeout_ms = timeout_seconds > 0 ? (unsigned long)timeout_seconds * 1000UL : 60000UL;
@@ -557,6 +564,7 @@ int scan_mounts(NcdDatabase *db,
         td[i].include_system = include_system;
         td[i].status = &statuses[i];
         td[i].dirs_found = 0;
+        td[i].exclusions = exclusions;
         handles[nhandles] = platform_thread_create(worker_thread, &td[i]);
         if (handles[nhandles])
             nhandles++;
@@ -703,7 +711,8 @@ int scan_subdirectory(NcdDatabase   *db,
                       char           drive_letter,
                       const char    *subdir_path,
                       bool           include_hidden,
-                      bool           include_system)
+                      bool           include_system,
+                      const NcdExclusionList *exclusions)
 {
     if (!subdir_path || !subdir_path[0]) return -1;
     
@@ -760,6 +769,7 @@ int scan_subdirectory(NcdDatabase   *db,
 #if NCD_PLATFORM_LINUX
     ctx.visited = NULL;
 #endif
+    ctx.exclusions = exclusions;
 
     /* Scan */
     return platform_scan_directory(&ctx, norm_path, subdir_id);

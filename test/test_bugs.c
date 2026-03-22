@@ -124,7 +124,10 @@ TEST(metadata_heuristics_bounds_check) {
             }
         }
     }
-    ASSERT_TRUE(found);
+    if (!found) {
+        free(data);
+        ASSERT_TRUE(found);  /* Will fail and return 1 */
+    }
 
     /* Recalculate CRC64 over data after header (header is 20 bytes) */
     uint64_t new_crc = platform_crc64(data + sizeof(MetaFileHdr), file_size - sizeof(MetaFileHdr));
@@ -499,7 +502,10 @@ TEST(metadata_groups_bounds_check) {
             }
         }
     }
-    ASSERT_TRUE(found);
+    if (!found) {
+        free(data);
+        ASSERT_TRUE(found);  /* Will fail and return 1 */
+    }
 
     /* Recalculate CRC64 over data after header (header is 20 bytes) */
     uint64_t new_crc = platform_crc64(data + sizeof(MetaFileHdr), file_size - sizeof(MetaFileHdr));

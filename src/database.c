@@ -198,6 +198,7 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
         }
         fclose(existing);
     }
+    (void)hdr; /* Silence unused warning if hdr is not used later */
     
     memcpy(buf + pos, &hdr, sizeof(hdr));
     pos += sizeof(hdr);
@@ -234,6 +235,14 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     if (!f) { free(buf); return false; }
 
     size_t written = fwrite(buf, 1, pos, f);
+    if (written != pos) {
+        db_set_error("Failed to write database: incomplete write");
+        fflush(f);
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     if (fflush(f) != 0) {
         db_set_error("Failed to flush database to disk (disk full?): %s", strerror(errno));
         fclose(f);
@@ -243,12 +252,6 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     }
     fclose(f);
     free(buf);
-
-    if (written != pos) { 
-        db_set_error("Failed to write database: incomplete write");
-        platform_delete_file(tmp_path); 
-        return false; 
-    }
 
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
@@ -1341,6 +1344,14 @@ bool db_save(const NcdDatabase *db, const char *path)
     if (!f) { free(sb.buf); return false; }
 
     size_t written = fwrite(sb.buf, 1, sb.len, f);
+    if (written != sb.len) {
+        db_set_error("Failed to write groups: incomplete write");
+        fflush(f);
+        fclose(f);
+        free(sb.buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     if (fflush(f) != 0) {
         db_set_error("Failed to flush groups to disk (disk full?): %s", strerror(errno));
         fclose(f);
@@ -1350,12 +1361,6 @@ bool db_save(const NcdDatabase *db, const char *path)
     }
     fclose(f);
     free(sb.buf);
-
-    if (written != sb.len) {
-        db_set_error("Failed to write groups: incomplete write");
-        platform_delete_file(tmp_path);
-        return false;
-    }
 
     /* Rotate: current -> .old, .tmp -> current */
     char old_path[MAX_PATH];
@@ -1465,6 +1470,14 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     if (!f) { free(buf); return false; }
 
     size_t written = fwrite(buf, 1, pos, f);
+    if (written != pos) {
+        db_set_error("Failed to write binary database: incomplete write");
+        fflush(f);
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
     if (fflush(f) != 0) {
         db_set_error("Failed to flush binary database to disk (disk full?): %s", strerror(errno));
         fclose(f);
@@ -1474,12 +1487,6 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     }
     fclose(f);
     free(buf);
-
-    if (written != pos) {
-        db_set_error("Failed to write binary database: incomplete write");
-        platform_delete_file(tmp_path);
-        return false;
-    }
 
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
@@ -1755,10 +1762,14 @@ NcdDatabase *db_load_auto(const char *path)
         uint16_t version = 0;
         uint8_t skip_flag = 0;
         if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
-            fread(&version, 1, sizeof(version), f);
+            if (fread(&version, 1, sizeof(version), f) != sizeof(version)) {
+                version = 0;
+            }
         }
         if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
-            fread(&skip_flag, 1, 1, f);
+            if (fread(&skip_flag, 1, 1, f) != 1) {
+                skip_flag = 0;
+            }
         }
         fclose(f);
         
@@ -1865,10 +1876,14 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
         if (rd == 1 && magic == NCD_BIN_MAGIC) {
             /* Valid binary file - read version and skip flag */
             if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
-                fread(&version, 1, sizeof(version), f);
+                if (fread(&version, 1, sizeof(version), f) != sizeof(version)) {
+                    version = 0;
+                }
             }
             if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
-                fread(&skip_flag, 1, 1, f);
+                if (fread(&skip_flag, 1, 1, f) != 1) {
+                    skip_flag = 0;
+                }
             }
         }
         fclose(f);
@@ -1939,10 +1954,14 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries)
 
         if (rd == 1 && magic == NCD_BIN_MAGIC) {
             if (fseek(f, offsetof(BinFileHdr, version), SEEK_SET) == 0) {
-                fread(&version, 1, sizeof(version), f);
+                if (fread(&version, 1, sizeof(version), f) != sizeof(version)) {
+                    version = 0;
+                }
             }
             if (fseek(f, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
-                fread(&skip_flag, 1, 1, f);
+                if (fread(&skip_flag, 1, 1, f) != 1) {
+                    skip_flag = 0;
+                }
             }
         }
         fclose(f);

@@ -73,9 +73,10 @@ static bool load_should_fail(void) {
 }
 
 TEST(corrupt_magic_number) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 4);
     
@@ -88,15 +89,17 @@ TEST(corrupt_magic_number) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(corrupt_version_invalid) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 6);
     
@@ -107,15 +110,17 @@ TEST(corrupt_version_invalid) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(corrupt_drive_count_zero) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 16);
     
@@ -128,15 +133,17 @@ TEST(corrupt_drive_count_zero) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(corrupt_drive_count_overflow) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 16);
     
@@ -149,15 +156,17 @@ TEST(corrupt_drive_count_overflow) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(corrupt_drive_count_large) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 16);
     
@@ -170,15 +179,17 @@ TEST(corrupt_drive_count_large) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(truncate_at_header) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 4);
     
@@ -186,15 +197,17 @@ TEST(truncate_at_header) {
     write_file(buf, 8);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(truncate_at_drive_header) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 24);
     
@@ -202,20 +215,22 @@ TEST(truncate_at_drive_header) {
     write_file(buf, 50);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(append_garbage) {
+    unsigned char *buf = NULL;
+    unsigned char *garbage = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
-    
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 0);
     
     /* Append garbage data */
-    unsigned char *garbage = malloc(size + 100);
+    garbage = malloc(size + 100);
     memcpy(garbage, buf, size);
     for (int i = 0; i < 100; i++) {
         garbage[size + i] = (unsigned char)(rand() % 256);
@@ -228,6 +243,7 @@ TEST(append_garbage) {
     if (db) db_free(db);
     /* Test passes if we get here without crash */
     
+cleanup:
     free(buf);
     free(garbage);
     remove(TEST_FILE);
@@ -235,12 +251,12 @@ TEST(append_garbage) {
 }
 
 TEST(flip_bits_in_header) {
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
     for (int bit = 0; bit < 32; bit++) {
+        unsigned char *buf = NULL;
         create_valid_db();
-        
-        unsigned char *buf;
         size_t size = read_file(&buf);
         
         /* Flip one bit in first 24 bytes (file header) */
@@ -261,9 +277,10 @@ TEST(flip_bits_in_header) {
 }
 
 TEST(corrupt_dir_count_overflow) {
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > sizeof(BinFileHdr) + sizeof(BinDriveHdr));
     
@@ -279,6 +296,7 @@ TEST(corrupt_dir_count_overflow) {
         ASSERT_TRUE(load_should_fail());
     }
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -286,16 +304,25 @@ TEST(corrupt_dir_count_overflow) {
 
 TEST(random_bit_flips_alternating) {
     /* 64 iterations: alternating between 1-bit and 2-bit flips at different bytes */
-    srand((unsigned)time(NULL));
+    /* Get seed from environment or use current time */
+    const char *seed_env = getenv("NCD_TEST_SEED");
+    unsigned int seed;
+    if (seed_env) {
+        seed = (unsigned int)atoi(seed_env);
+    } else {
+        seed = (unsigned int)time(NULL);
+    }
+    printf("    Random seed: %u (set NCD_TEST_SEED=%u to reproduce)\n", seed, seed);
+    srand(seed);
     
     int crash_count = 0;
     int load_count = 0;
     int reject_count = 0;
     
     for (int iter = 0; iter < 64; iter++) {
+        unsigned char *buf = NULL;
         create_valid_db();
         
-        unsigned char *buf;
         size_t size = read_file(&buf);
         if (size == 0) {
             remove(TEST_FILE);
@@ -346,16 +373,25 @@ TEST(random_bit_flips_alternating) {
 
 TEST(random_bit_flips_same_byte) {
     /* 16 iterations: 2 bit flips within the SAME byte (different bits) */
-    srand((unsigned)time(NULL));
+    /* Get seed from environment or use current time */
+    const char *seed_env = getenv("NCD_TEST_SEED");
+    unsigned int seed;
+    if (seed_env) {
+        seed = (unsigned int)atoi(seed_env);
+    } else {
+        seed = (unsigned int)time(NULL);
+    }
+    printf("    Random seed: %u (set NCD_TEST_SEED=%u to reproduce)\n", seed, seed);
+    srand(seed);
     
     int crash_count = 0;
     int load_count = 0;
     int reject_count = 0;
     
     for (int iter = 0; iter < 16; iter++) {
+        unsigned char *buf = NULL;
         create_valid_db();
         
-        unsigned char *buf;
         size_t size = read_file(&buf);
         if (size == 0) {
             remove(TEST_FILE);
@@ -403,10 +439,10 @@ TEST(random_bit_flips_same_byte) {
 /* ================================================================ checksum tests */
 
 TEST(corrupt_checksum_detected) {
-    /* Normal mode: corrupted checksum should cause load to fail */
+    unsigned char *buf = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 32); /* Header is 32 bytes, checksum at offset 24 */
     
@@ -423,6 +459,7 @@ TEST(corrupt_checksum_detected) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
+cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -430,10 +467,11 @@ TEST(corrupt_checksum_detected) {
 
 #if DEBUG
 TEST(corrupt_checksum_with_test_nc) {
-    /* With /test NC option: corrupted checksum should be ignored */
+    unsigned char *buf = NULL;
+    NcdDatabase *db = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 32);
     
@@ -453,47 +491,59 @@ TEST(corrupt_checksum_with_test_nc) {
     g_test_no_checksum = true;
     
     /* Should now load successfully despite checksum mismatch */
-    NcdDatabase *db = db_load_binary(TEST_FILE);
+    db = db_load_binary(TEST_FILE);
     ASSERT_NOT_NULL(db);
-    if (db) db_free(db);
+    if (db) {
+        db_free(db);
+        db = NULL;
+    }
     
     /* Reset flag */
     g_test_no_checksum = false;
     
+cleanup:
+    if (db) db_free(db);
+    g_test_no_checksum = false;  /* Ensure flag is reset even on failure */
     free(buf);
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(valid_checksum_with_test_nc) {
-    /* With /test NC option: valid database should still load fine */
+    NcdDatabase *db = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
     /* Enable /test NC mode */
     g_test_no_checksum = true;
     
     /* Should load successfully */
-    NcdDatabase *db = db_load_binary(TEST_FILE);
+    db = db_load_binary(TEST_FILE);
     ASSERT_NOT_NULL(db);
     if (db) {
         /* Verify the data is intact */
         ASSERT_EQ_INT(1, db->drive_count);
         ASSERT_TRUE(db->drives[0].letter == 'C');
         db_free(db);
+        db = NULL;
     }
     
     /* Reset flag */
     g_test_no_checksum = false;
     
+cleanup:
+    if (db) db_free(db);
+    g_test_no_checksum = false;  /* Ensure flag is reset even on failure */
     remove(TEST_FILE);
     return 0;
 }
 
 TEST(test_nc_resets_properly) {
-    /* Ensure the flag can be toggled on and off */
+    unsigned char *buf = NULL;
+    NcdDatabase *db1 = NULL, *db2 = NULL, *db3 = NULL;
+    remove(TEST_FILE);  /* Clean up from previous failed run */
     create_valid_db();
     
-    unsigned char *buf;
     size_t size = read_file(&buf);
     ASSERT_TRUE(size > 32);
     
@@ -511,25 +561,39 @@ TEST(test_nc_resets_properly) {
     
     /* First, with flag enabled - should load */
     g_test_no_checksum = true;
-    NcdDatabase *db1 = db_load_binary(TEST_FILE);
+    db1 = db_load_binary(TEST_FILE);
     ASSERT_NOT_NULL(db1);
-    if (db1) db_free(db1);
+    if (db1) {
+        db_free(db1);
+        db1 = NULL;
+    }
     
     /* Then, with flag disabled - should fail */
     g_test_no_checksum = false;
-    NcdDatabase *db2 = db_load_binary(TEST_FILE);
+    db2 = db_load_binary(TEST_FILE);
     ASSERT_NULL(db2);
-    if (db2) db_free(db2);
+    if (db2) {
+        db_free(db2);
+        db2 = NULL;
+    }
     
     /* Finally, with flag enabled again - should load again */
     g_test_no_checksum = true;
-    NcdDatabase *db3 = db_load_binary(TEST_FILE);
+    db3 = db_load_binary(TEST_FILE);
     ASSERT_NOT_NULL(db3);
-    if (db3) db_free(db3);
+    if (db3) {
+        db_free(db3);
+        db3 = NULL;
+    }
     
     /* Reset flag */
     g_test_no_checksum = false;
     
+cleanup:
+    if (db1) db_free(db1);
+    if (db2) db_free(db2);
+    if (db3) db_free(db3);
+    g_test_no_checksum = false;  /* Ensure flag is reset even on failure */
     free(buf);
     remove(TEST_FILE);
     return 0;

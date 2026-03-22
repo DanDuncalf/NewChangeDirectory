@@ -499,39 +499,53 @@ static int match_word_at(const char *str, const char *word)
 /*
  * Generate all variations of a search term with up to max_replacements substitutions
  * This includes both digit->word and word->digit substitutions
+ * 
+ * Parameters:
+ *   input - the input string to process
+ *   pos - current position in input
+ *   replacements - number of replacements made so far
+ *   current - buffer for current variation being built
+ *   cur_len - current length of string in 'current' buffer
+ *   max_len - maximum capacity of 'current' buffer
+ *   out - output list for completed variations
+ *   max_replacements - maximum allowed replacements
  */
 static void generate_variations_recursive(const char *input, int pos, int replacements,
-                                           char *current, VariationList *out,
-                                           int max_replacements)
+                                           char *current, size_t cur_len, size_t max_len,
+                                           VariationList *out, int max_replacements)
 {
     if (replacements > max_replacements) return;
     if (pos >= (int)strlen(input)) {
         /* End of string - add to variations if not empty */
-        if (strlen(current) > 0 && out->count < MAX_VARIATIONS) {
-            out->variations[out->count] = xmalloc(strlen(current) + 1);
-            strcpy(out->variations[out->count], current);
+        if (cur_len > 0 && out->count < MAX_VARIATIONS) {
+            out->variations[out->count] = xmalloc(cur_len + 1);
+            memcpy(out->variations[out->count], current, cur_len + 1);
             out->count++;
         }
         return;
     }
     
     char c = input[pos];
-    size_t cur_len = strlen(current);
     
     /* Option 1: Keep character as-is */
-    current[cur_len] = c;
-    current[cur_len + 1] = '\0';
-    generate_variations_recursive(input, pos + 1, replacements, current, out, max_replacements);
-    current[cur_len] = '\0';  /* Backtrack */
+    if (cur_len + 1 < max_len) {
+        current[cur_len] = c;
+        current[cur_len + 1] = '\0';
+        generate_variations_recursive(input, pos + 1, replacements, current, cur_len + 1, max_len, out, max_replacements);
+        current[cur_len] = '\0';  /* Backtrack */
+    }
     
     /* Option 2: If current char is a digit, try word substitutions */
     if (is_digit_char(c) && replacements < max_replacements) {
         int digit = digit_char_value(c);
         for (int w = 0; digit_to_words[digit][w] != NULL; w++) {
             const char *word = digit_to_words[digit][w];
-            strcat(current, word);
-            generate_variations_recursive(input, pos + 1, replacements + 1, current, out, max_replacements);
-            current[cur_len] = '\0';  /* Backtrack */
+            size_t word_len = strlen(word);
+            if (cur_len + word_len < max_len) {
+                memcpy(current + cur_len, word, word_len + 1);
+                generate_variations_recursive(input, pos + 1, replacements + 1, current, cur_len + word_len, max_len, out, max_replacements);
+                current[cur_len] = '\0';  /* Backtrack */
+            }
         }
     }
     
@@ -540,11 +554,11 @@ static void generate_variations_recursive(const char *input, int pos, int replac
         for (int d = 0; d <= 9; d++) {
             for (int w = 0; digit_to_words[d][w] != NULL; w++) {
                 int word_len = match_word_at(input + pos, digit_to_words[d][w]);
-                if (word_len > 0) {
+                if (word_len > 0 && cur_len + 1 < max_len) {
                     current[cur_len] = '0' + d;
                     current[cur_len + 1] = '\0';
                     generate_variations_recursive(input, pos + word_len, replacements + 1, 
-                                                   current, out, max_replacements);
+                                                   current, cur_len + 1, max_len, out, max_replacements);
                     current[cur_len] = '\0';  /* Backtrack */
                 }
             }
@@ -561,7 +575,7 @@ static VariationList generate_variations(const char *search)
     out.count = 0;
     
     char current[NCD_MAX_PATH] = {0};
-    generate_variations_recursive(search, 0, 0, current, &out, MAX_SUBSTITUTIONS);
+    generate_variations_recursive(search, 0, 0, current, 0, NCD_MAX_PATH, &out, MAX_SUBSTITUTIONS);
     
     return out;
 }

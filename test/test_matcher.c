@@ -33,6 +33,7 @@ TEST(match_single_component) {
     NcdMatch *matches = matcher_find(db, "drivers", false, false, &count);
     ASSERT_NOT_NULL(matches);
     ASSERT_EQ_INT(1, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "drivers");
     
     free(matches);
     db_free(db);
@@ -47,6 +48,8 @@ TEST(match_two_components) {
     NcdMatch *matches = matcher_find(db, "Users\\Downloads", false, false, &count);
     ASSERT_NOT_NULL(matches);
     ASSERT_EQ_INT(2, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "Downloads");
+    ASSERT_STR_CONTAINS(matches[1].full_path, "Downloads");
     
     free(matches);
     db_free(db);
@@ -60,6 +63,8 @@ TEST(match_case_insensitive) {
     NcdMatch *matches = matcher_find(db, "USERS\\downloads", false, false, &count);
     ASSERT_NOT_NULL(matches);
     ASSERT_EQ_INT(2, count);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "Downloads");
+    ASSERT_STR_CONTAINS(matches[1].full_path, "Downloads");
     
     free(matches);
     db_free(db);

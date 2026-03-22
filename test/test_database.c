@@ -64,6 +64,10 @@ TEST(full_path_reconstruction) {
 }
 
 TEST(binary_save_load_roundtrip) {
+    const char *test_file = "test_db.tmp";
+    NcdDatabase *loaded = NULL;
+    remove(test_file);  /* Clean up from previous failed run */
+    
     /* Create temp database */
     NcdDatabase *db = db_create();
     db->default_show_hidden = true;
@@ -79,12 +83,12 @@ TEST(binary_save_load_roundtrip) {
     db_add_dir(drv, "Program Files", -1, false, false);
     
     /* Save to temp file */
-    const char *test_file = "test_db.tmp";
     ASSERT_TRUE(db_save_binary_single(db, 0, test_file));
     db_free(db);
+    db = NULL;
     
     /* Load and verify */
-    NcdDatabase *loaded = db_load_binary(test_file);
+    loaded = db_load_binary(test_file);
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(1, loaded->drive_count);
     ASSERT_TRUE(loaded->default_show_hidden);
@@ -95,14 +99,19 @@ TEST(binary_save_load_roundtrip) {
     ASSERT_EQ_INT('C', ldrv->letter);
     ASSERT_EQ_INT(3, ldrv->dir_count);
     
-    db_free(loaded);
+cleanup:
+    if (loaded) db_free(loaded);
+    if (db) db_free(db);
     remove(test_file);
     return 0;
 }
 
 TEST(binary_load_corrupted_rejected) {
-    /* Create corrupted file */
     const char *test_file = "test_corrupt.tmp";
+    NcdDatabase *db = NULL;
+    remove(test_file);  /* Clean up from previous failed run */
+    
+    /* Create corrupted file */
     FILE *f = fopen(test_file, "wb");
     /* Write invalid magic */
     fwrite("BAD!", 4, 1, f);
@@ -112,15 +121,20 @@ TEST(binary_load_corrupted_rejected) {
     fclose(f);
     
     /* Should return NULL, not crash */
-    NcdDatabase *db = db_load_binary(test_file);
+    db = db_load_binary(test_file);
     ASSERT_NULL(db);
     
+cleanup:
+    if (db) db_free(db);
     remove(test_file);
     return 0;
 }
 
 TEST(binary_load_truncated_rejected) {
     const char *test_file = "test_trunc.tmp";
+    NcdDatabase *db = NULL;
+    remove(test_file);  /* Clean up from previous failed run */
+    
     FILE *f = fopen(test_file, "wb");
     /* Write valid header but truncate data */
     uint32_t magic = 0x4244434E;  /* 'NCDB' */
@@ -138,9 +152,11 @@ TEST(binary_load_truncated_rejected) {
     /* Missing drive header and data */
     fclose(f);
     
-    NcdDatabase *db = db_load_binary(test_file);
+    db = db_load_binary(test_file);
     ASSERT_NULL(db);
     
+cleanup:
+    if (db) db_free(db);
     remove(test_file);
     return 0;
 }

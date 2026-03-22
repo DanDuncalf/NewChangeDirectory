@@ -288,3 +288,4 @@ int platform_filter_available_drives(const char *in_drives, int in_count,
     }
     return out_idx;
 }
+

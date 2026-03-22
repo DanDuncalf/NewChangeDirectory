@@ -59,7 +59,8 @@ int scan_mounts(NcdDatabase *db,
                 int           count,
                 bool          include_hidden, 
                 bool          include_system,
-                int           timeout_seconds); 
+                int           timeout_seconds,
+                const NcdExclusionList *exclusions); 
 
 /*
  * Re-scan a single mount (platform-specific full path). This is the worker
@@ -71,7 +72,8 @@ int scan_mount(NcdDatabase   *db,
                bool           include_hidden,
                bool           include_system,
                ScanProgressFn progress_fn,
-               void          *user_data);
+               void          *user_data,
+               const NcdExclusionList *exclusions);
 
 /*
  * Scan a subdirectory and merge it into an existing drive's database.
@@ -82,17 +84,20 @@ int scan_subdirectory(NcdDatabase   *db,
                       char           drive_letter,
                       const char    *subdir_path,
                       bool           include_hidden,
-                      bool           include_system);
+                      bool           include_system,
+                      const NcdExclusionList *exclusions);
 
 /*
  * Check if a directory should be excluded based on exclusion list.
  * Called by the scanner to filter directories.
+ * Deprecated: exclusion list is now passed directly to scan functions.
  */
 bool scan_is_excluded(char drive_letter, const char *dir_path);
 
 /*
  * Set the exclusion list for the scanner to use.
  * Called before scanning to provide the exclusion list from metadata.
+ * Deprecated: exclusion list is now passed directly to scan functions.
  */
 void scan_set_exclusion_list(const NcdExclusionList *list);
 

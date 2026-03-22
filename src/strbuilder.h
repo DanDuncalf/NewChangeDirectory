@@ -37,14 +37,14 @@ void sb_clear(StringBuilder *sb);
 
 /* ================================================================ append operations  */
 
-/* Append a null-terminated string. */
-void sb_append(StringBuilder *sb, const char *s);
+/* Append a null-terminated string. Returns false on OOM. */
+bool sb_append(StringBuilder *sb, const char *s);
 
-/* Append a single character. */
-void sb_appendc(StringBuilder *sb, char c);
+/* Append a single character. Returns false on OOM. */
+bool sb_appendc(StringBuilder *sb, char c);
 
-/* Append exactly n characters from string s (may contain nulls). */
-void sb_appendn(StringBuilder *sb, const char *s, size_t n);
+/* Append exactly n characters from string s (may contain nulls). Returns false on OOM. */
+bool sb_appendn(StringBuilder *sb, const char *s, size_t n);
 
 /* Append formatted string (printf-style). */
 void sb_appendf(StringBuilder *sb, const char *fmt, ...);
@@ -54,8 +54,8 @@ void sb_vappendf(StringBuilder *sb, const char *fmt, va_list ap);
 
 /* ================================================================ JSON utilities  */
 
-/* Append a JSON-escaped string literal (including surrounding quotes). */
-void sb_append_json_str(StringBuilder *sb, const char *s);
+/* Append a JSON-escaped string literal (including surrounding quotes). Returns false on OOM. */
+bool sb_append_json_str(StringBuilder *sb, const char *s);
 
 /* ================================================================ buffer management  */
 
