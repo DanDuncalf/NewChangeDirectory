@@ -253,6 +253,145 @@ TEST(match_glob_no_match) {
     return 0;
 }
 
+/* Fuzzy matching tests */
+TEST(fuzzy_match_with_typo) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "downlaods" (transposed letters) should match "Downloads" */
+    NcdMatch *matches = matcher_find_fuzzy(db, "downlaods", false, false, &count);
+    
+    /* Should find at least one match with fuzzy matching */
+    ASSERT_NOT_NULL(matches);
+    ASSERT_TRUE(count >= 1);
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(fuzzy_match_with_transposition) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "Dirvers" instead of "drivers" */
+    NcdMatch *matches = matcher_find_fuzzy(db, "Dirvers", false, false, &count);
+    
+    /* Should find "drivers" despite the typo */
+    ASSERT_NOT_NULL(matches);
+    ASSERT_TRUE(count >= 1);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "drivers");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+TEST(fuzzy_match_no_results_on_total_mismatch) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* Complete gibberish - should not match anything even with fuzzy */
+    NcdMatch *matches = matcher_find_fuzzy(db, "xyzqwerty12345", false, false, &count);
+    
+    /* No matches expected for total mismatch */
+    ASSERT_NULL(matches);
+    ASSERT_EQ_INT(0, count);
+    
+    db_free(db);
+    return 0;
+}
+
+TEST(fuzzy_match_case_difference) {
+    NcdDatabase *db = create_test_db();
+    int count = 0;
+    
+    /* "DOWNLOADS" in all caps */
+    NcdMatch *matches = matcher_find_fuzzy(db, "DOWNLOADS", false, false, &count);
+    
+    /* Should find "Downloads" entries */
+    ASSERT_NOT_NULL(matches);
+    ASSERT_TRUE(count >= 1);
+    ASSERT_STR_CONTAINS(matches[0].full_path, "Downloads");
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+/* Name index tests */
+TEST(name_index_build_returns_non_null) {
+    NcdDatabase *db = create_test_db();
+    
+    NameIndex *idx = name_index_build(db);
+    ASSERT_NOT_NULL(idx);
+    ASSERT_NOT_NULL(idx->entries);
+    ASSERT_TRUE(idx->count > 0);
+    
+    name_index_free(idx);
+    db_free(db);
+    return 0;
+}
+
+TEST(name_index_find_by_hash_finds_entry) {
+    NcdDatabase *db = create_test_db();
+    NameIndex *idx = name_index_build(db);
+    ASSERT_NOT_NULL(idx);
+    
+    /* Hash of "drivers" - we need to compute it the same way the matcher does */
+    /* FNV-1a hash of lowercase "drivers" */
+    const char *name = "drivers";
+    uint32_t hash = 2166136261U;
+    for (const char *p = name; *p; p++) {
+        hash ^= (uint32_t)tolower((unsigned char)*p);
+        hash *= 16777619U;
+    }
+    
+    NameIndexEntry entries[10];
+    int found = name_index_find_by_hash(idx, hash, entries, 10);
+    
+    ASSERT_TRUE(found >= 1);  /* At least one "drivers" entry found */
+    
+    name_index_free(idx);
+    db_free(db);
+    return 0;
+}
+
+TEST(name_index_find_by_hash_misses_unknown_hash) {
+    NcdDatabase *db = create_test_db();
+    NameIndex *idx = name_index_build(db);
+    ASSERT_NOT_NULL(idx);
+    
+    /* Random hash that shouldn't match anything */
+    uint32_t hash = 0xDEADBEEF;
+    
+    NameIndexEntry entries[10];
+    int found = name_index_find_by_hash(idx, hash, entries, 10);
+    
+    ASSERT_EQ_INT(0, found);  /* No entries found */
+    
+    name_index_free(idx);
+    db_free(db);
+    return 0;
+}
+
+TEST(name_index_free_doesnt_crash) {
+    NcdDatabase *db = create_test_db();
+    NameIndex *idx = name_index_build(db);
+    ASSERT_NOT_NULL(idx);
+    
+    /* Should not crash or leak */
+    name_index_free(idx);
+    
+    /* Build another index to ensure cleanup was complete */
+    idx = name_index_build(db);
+    ASSERT_NOT_NULL(idx);
+    name_index_free(idx);
+    
+    db_free(db);
+    return 0;
+}
+
 void suite_matcher(void) {
     RUN_TEST(match_single_component);
     RUN_TEST(match_two_components);
@@ -269,6 +408,15 @@ void suite_matcher(void) {
     RUN_TEST(match_glob_question_multiple);
     RUN_TEST(match_glob_in_path);
     RUN_TEST(match_glob_no_match);
+    /* Tier 1 fuzzy and name index tests */
+    RUN_TEST(fuzzy_match_with_typo);
+    RUN_TEST(fuzzy_match_with_transposition);
+    RUN_TEST(fuzzy_match_no_results_on_total_mismatch);
+    RUN_TEST(fuzzy_match_case_difference);
+    RUN_TEST(name_index_build_returns_non_null);
+    RUN_TEST(name_index_find_by_hash_finds_entry);
+    RUN_TEST(name_index_find_by_hash_misses_unknown_hash);
+    RUN_TEST(name_index_free_doesnt_crash);
 }
 
 TEST_MAIN(

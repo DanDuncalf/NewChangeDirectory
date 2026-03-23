@@ -18,7 +18,9 @@ MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform.c $(SHARED_
 HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
 
 # Test executables
-TESTS = test_database test_matcher test_history test_agent_mkdir fuzz_database bench_matcher test_db_corruption test_bugs
+TESTS = test_database test_matcher test_history test_agent_mkdir \
+        test_strbuilder test_common test_platform \
+        fuzz_database bench_matcher test_db_corruption test_bugs
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features
 
@@ -58,11 +60,32 @@ HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_
 test_history: test_history.c test_framework.c $(HISTORY_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Tier 1 tests - strbuilder
+test_strbuilder: test_strbuilder.c test_framework.c ../../shared/strbuilder.c ../../shared/common.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 1 tests - common
+test_common: test_common.c test_framework.c ../../shared/common.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 1 tests - platform
+test_platform: test_platform.c test_framework.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c ../src/database.c ../src/matcher.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_agent_mkdir
+test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform
+	@echo "Running strbuilder tests..."
+	@./test_strbuilder
+	@echo ""
+	@echo "Running common tests..."
+	@./test_common
+	@echo ""
+	@echo "Running platform tests..."
+	@./test_platform
+	@echo ""
 	@echo "Running database tests..."
 	@./test_database
 	@echo ""
