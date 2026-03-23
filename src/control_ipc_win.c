@@ -49,6 +49,9 @@ const char *ipc_error_string(NcdIpcResult result) {
         case NCD_IPC_ERROR_INVALID: return "Invalid message";
         case NCD_IPC_ERROR_BUSY: return "Service busy";
         case NCD_IPC_ERROR_NOT_FOUND: return "Not found";
+        case NCD_IPC_ERROR_BUSY_LOADING: return "Service loading databases";
+        case NCD_IPC_ERROR_BUSY_SCANNING: return "Service scanning filesystem";
+        case NCD_IPC_ERROR_NOT_READY: return "Service not ready";
         default: return "Unknown error";
     }
 }

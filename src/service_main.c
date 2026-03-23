@@ -36,6 +36,18 @@ static volatile int g_running = 1;
 static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
 
+/* Forward declaration for background loader */
+static void start_background_loader(ServiceState *state);
+static void wait_for_loader(void);
+static void signal_loader_stop(void);
+
+/* Thread handle for background loader */
+#if NCD_PLATFORM_WINDOWS
+static HANDLE g_loader_thread = NULL;
+#else
+static pthread_t g_loader_thread = 0;
+#endif
+
 /* --------------------------------------------------------- signal handling    */
 
 #if NCD_PLATFORM_WINDOWS
@@ -66,11 +78,12 @@ static void setup_signal_handlers(void) {
 
 static void handle_get_state_info(NcdIpcConnection *conn, 
                                    uint32_t sequence,
+                                   const ServiceState *state,
                                    const SnapshotPublisher *pub) {
     SnapshotInfo info;
     snapshot_publisher_get_info(pub, &info);
     
-    /* Build response payload */
+    /* Build response payload with service state */
     NcdStateInfoPayload payload;
     memset(&payload, 0, sizeof(payload));
     payload.protocol_version = NCD_IPC_VERSION;
@@ -80,6 +93,9 @@ static void handle_get_state_info(NcdIpcConnection *conn,
     payload.db_size = (uint32_t)info.db_size;
     payload.meta_name_len = (uint32_t)strlen(info.meta_shm_name) + 1;
     payload.db_name_len = (uint32_t)strlen(info.db_shm_name) + 1;
+    
+    /* Include service state info in reserved fields */
+    /* We can extend the protocol later; for now send status in error messages */
     
     size_t total_size = sizeof(payload) + payload.meta_name_len + payload.db_name_len;
     uint8_t *response = (uint8_t *)malloc(total_size);
@@ -194,6 +210,42 @@ static void handle_request_flush(NcdIpcConnection *conn,
     ipc_server_send_response(conn, sequence, NULL, 0);
 }
 
+/*
+ * check_service_ready  --  Check if service is ready for data-dependent operations
+ *
+ * Returns true if request can proceed, false if busy response was sent.
+ */
+static bool check_service_ready(NcdIpcConnection *conn, 
+                                 uint32_t sequence,
+                                 ServiceState *state) {
+    ServiceRuntimeState runtime_state = service_state_get_runtime_state(state);
+    
+    switch (runtime_state) {
+        case SERVICE_STATE_READY:
+            return true;
+            
+        case SERVICE_STATE_LOADING:
+            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_LOADING,
+                                  service_state_get_status_message(state));
+            return false;
+            
+        case SERVICE_STATE_SCANNING:
+            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_SCANNING,
+                                  service_state_get_status_message(state));
+            return false;
+            
+        case SERVICE_STATE_STARTING:
+            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_NOT_READY,
+                                  "Service starting...");
+            return false;
+            
+        default:
+            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_GENERIC,
+                                  "Service in unknown state");
+            return false;
+    }
+}
+
 static void handle_client_connection(NcdIpcConnection *conn,
                                       ServiceState *state,
                                       SnapshotPublisher *pub) {
@@ -210,15 +262,26 @@ static void handle_client_connection(NcdIpcConnection *conn,
      * or extend the IPC layer to return header info. */
     uint32_t sequence = 0;  /* Would come from header in real implementation */
     
+    /* PING and GET_STATE_INFO work regardless of service state */
+    if (msg_type == NCD_MSG_PING) {
+        ipc_server_send_response(conn, sequence, NULL, 0);
+        if (payload) ipc_free_message(payload);
+        return;
+    }
+    
+    if (msg_type == NCD_MSG_GET_STATE_INFO) {
+        handle_get_state_info(conn, sequence, state, pub);
+        if (payload) ipc_free_message(payload);
+        return;
+    }
+    
+    /* All other operations require READY state */
+    if (!check_service_ready(conn, sequence, state)) {
+        if (payload) ipc_free_message(payload);
+        return;
+    }
+    
     switch (msg_type) {
-        case NCD_MSG_PING:
-            ipc_server_send_response(conn, sequence, NULL, 0);
-            break;
-            
-        case NCD_MSG_GET_STATE_INFO:
-            handle_get_state_info(conn, sequence, pub);
-            break;
-            
         case NCD_MSG_SUBMIT_HEURISTIC:
             if (payload && payload_len >= sizeof(NcdSubmitHeuristicPayload)) {
                 handle_submit_heuristic(conn, sequence, state, pub,
@@ -266,9 +329,78 @@ static void handle_client_connection(NcdIpcConnection *conn,
     }
 }
 
+/* --------------------------------------------------------- background loader  */
+
+#if NCD_PLATFORM_WINDOWS
+static DWORD WINAPI LoaderThreadFunc(LPVOID param) {
+#else
+static void *loader_thread_func(void *param) {
+#endif
+    ServiceState *state = (ServiceState *)param;
+    
+    printf("NCD Service: Background loader started\n");
+    
+    /* Load databases */
+    extern bool service_state_load_databases(ServiceState *state);
+    if (!service_state_load_databases(state)) {
+        fprintf(stderr, "NCD Service: Warning - database loading had issues\n");
+    }
+    
+    /* Transition to READY state */
+    service_state_set_runtime_state(state, SERVICE_STATE_READY);
+    service_state_set_status_message(state, "Ready");
+    printf("NCD Service: Ready\n");
+    
+#if NCD_PLATFORM_WINDOWS
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+static void start_background_loader(ServiceState *state) {
+#if NCD_PLATFORM_WINDOWS
+    g_loader_thread = CreateThread(NULL, 0, LoaderThreadFunc, state, 0, NULL);
+    if (!g_loader_thread) {
+        fprintf(stderr, "NCD Service: Failed to start loader thread\n");
+        /* Continue synchronously */
+        LoaderThreadFunc(state);
+    }
+#else
+    if (pthread_create(&g_loader_thread, NULL, loader_thread_func, state) != 0) {
+        fprintf(stderr, "NCD Service: Failed to start loader thread\n");
+        /* Continue synchronously */
+        loader_thread_func(state);
+    }
+#endif
+}
+
+static void wait_for_loader(void) {
+#if NCD_PLATFORM_WINDOWS
+    if (g_loader_thread) {
+        WaitForSingleObject(g_loader_thread, 5000);
+        CloseHandle(g_loader_thread);
+        g_loader_thread = NULL;
+    }
+#else
+    if (g_loader_thread) {
+        pthread_join(g_loader_thread, NULL);
+        g_loader_thread = 0;
+    }
+#endif
+}
+
+static void signal_loader_stop(void) {
+    /* Loader checks g_running flag */
+}
+
 /* --------------------------------------------------------- main loop          */
 
 static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
+    ServiceRuntimeState prev_state = service_state_get_runtime_state(state);
+    service_state_set_runtime_state(state, SERVICE_STATE_SCANNING);
+    service_state_set_status_message(state, "Scanning filesystem...");
+    
     printf("NCD Service: Starting rescan...\n");
     
     /* Scan all drives */
@@ -278,6 +410,7 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     NcdDatabase *new_db = db_create();
     if (!new_db) {
         fprintf(stderr, "NCD Service: Failed to create database for rescan\n");
+        service_state_set_runtime_state(state, prev_state);
         return;
     }
     
@@ -307,6 +440,9 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     } else {
         db_free(new_db);
     }
+    
+    service_state_set_runtime_state(state, SERVICE_STATE_READY);
+    service_state_set_status_message(state, "Ready");
 }
 
 static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
@@ -376,14 +512,14 @@ int main(int argc, char *argv[]) {
     
     setup_signal_handlers();
     
-    /* Initialize service state (loads from disk) */
+    /* Initialize service state (metadata loaded synchronously, databases lazy) */
     ServiceState *state = service_state_init();
     if (!state) {
         fprintf(stderr, "NCD Service: Failed to initialize state\n");
         return 1;
     }
     
-    printf("NCD Service: State loaded\n");
+    printf("NCD Service: State initialized (metadata loaded)\n");
     
     /* Initialize snapshot publisher */
     SnapshotPublisher *pub = snapshot_publisher_init();
@@ -395,7 +531,7 @@ int main(int argc, char *argv[]) {
     
     printf("NCD Service: Publisher initialized\n");
     
-    /* Publish initial snapshots */
+    /* Publish initial metadata snapshot (available immediately) */
     bool meta_ok = snapshot_publisher_publish_meta(pub, state);
     if (!meta_ok) {
         fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
@@ -405,24 +541,21 @@ int main(int argc, char *argv[]) {
     }
     printf("NCD Service: Metadata snapshot published\n");
     
-    bool db_ok = snapshot_publisher_publish_db(pub, state);
-    if (!db_ok) {
-        fprintf(stderr, "NCD Service: Failed to publish database snapshot\n");
-        snapshot_publisher_cleanup(pub);
-        service_state_cleanup(state);
-        return 1;
-    }
-    printf("NCD Service: Database snapshot published\n");
+    /* Start background loader to load databases */
+    start_background_loader(state);
     
-    printf("NCD Service: Snapshots published (meta_gen=%llu, db_gen=%llu)\n",
-           (unsigned long long)snapshot_publisher_get_meta_generation(pub),
-           (unsigned long long)snapshot_publisher_get_db_generation(pub));
+    /* Note: Database snapshot will be published by the loader when ready */
     
     /* Run service loop */
     service_loop(state, pub);
     
     /* Cleanup */
     printf("NCD Service: Shutting down...\n");
+    
+    /* Signal loader to stop and wait */
+    g_running = 0;
+    signal_loader_stop();
+    wait_for_loader();
     
     /* Final flush */
     if (service_state_needs_flush(state)) {

@@ -23,6 +23,15 @@ extern "C" {
 
 typedef struct ServiceState ServiceState;
 
+/* Service runtime states for lazy loading */
+typedef enum {
+    SERVICE_STATE_STOPPED = 0,
+    SERVICE_STATE_STARTING,
+    SERVICE_STATE_LOADING,
+    SERVICE_STATE_READY,
+    SERVICE_STATE_SCANNING
+} ServiceRuntimeState;
+
 /* Dirty flags for tracking changes */
 typedef enum {
     DIRTY_NONE          = 0x00,
@@ -55,10 +64,20 @@ typedef struct {
 /*
  * service_state_init  --  Initialize service state
  *
- * Loads metadata and database from disk, creates initial snapshots.
+ * Loads metadata from disk synchronously. Database is loaded lazily
+ * via service_state_load_databases().
  * Returns state handle on success, NULL on failure.
  */
 ServiceState *service_state_init(void);
+
+/*
+ * service_state_load_databases  --  Load all drive databases
+ *
+ * This is called by the background loader thread. Loads per-drive
+ * databases from disk and merges them into the main database.
+ * Returns true on success, false on error.
+ */
+bool service_state_load_databases(ServiceState *state);
 
 /*
  * service_state_cleanup  --  Cleanup service state
@@ -189,6 +208,72 @@ uint64_t service_state_bump_db_generation(ServiceState *state);
  * service_state_get_stats  --  Get service statistics
  */
 void service_state_get_stats(const ServiceState *state, ServiceStats *stats);
+
+/* --------------------------------------------------------- runtime state        */
+
+/*
+ * service_state_set_runtime_state  --  Set the service runtime state
+ */
+void service_state_set_runtime_state(ServiceState *state, ServiceRuntimeState new_state);
+
+/*
+ * service_state_get_runtime_state  --  Get the current service runtime state
+ */
+ServiceRuntimeState service_state_get_runtime_state(const ServiceState *state);
+
+/*
+ * service_state_wait_for_ready  --  Wait for service to become READY
+ * 
+ * Returns true if service became READY, false if timeout.
+ */
+bool service_state_wait_for_ready(ServiceState *state, int timeout_ms);
+
+/*
+ * service_state_set_status_message  --  Set human-readable status message
+ */
+void service_state_set_status_message(ServiceState *state, const char *message);
+
+/*
+ * service_state_get_status_message  --  Get current status message
+ */
+const char *service_state_get_status_message(const ServiceState *state);
+
+/* --------------------------------------------------------- request queue        */
+
+/* Request types that can be queued */
+typedef enum {
+    PENDING_HEURISTIC,
+    PENDING_METADATA_UPDATE,
+    PENDING_RESCAN,
+    PENDING_FLUSH
+} PendingRequestType;
+
+/*
+ * service_state_enqueue_request  --  Queue a request for later processing
+ *
+ * Returns true if queued successfully, false if queue is full.
+ */
+bool service_state_enqueue_request(ServiceState *state, 
+                                    PendingRequestType type,
+                                    const void *data,
+                                    size_t data_len);
+
+/*
+ * service_state_process_pending  --  Process all queued requests
+ *
+ * Should be called after transitioning to READY state.
+ */
+void service_state_process_pending(ServiceState *state, void *pub);
+
+/*
+ * service_state_clear_pending  --  Clear all pending requests
+ */
+void service_state_clear_pending(ServiceState *state);
+
+/*
+ * service_state_get_pending_count  --  Get number of pending requests
+ */
+int service_state_get_pending_count(const ServiceState *state);
 
 /* --------------------------------------------------------- utility            */
 

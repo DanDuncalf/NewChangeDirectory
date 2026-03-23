@@ -12,6 +12,14 @@
 
 /* --------------------------------------------------------- internal state     */
 
+/* Pending request node for queue */
+typedef struct PendingRequestNode {
+    PendingRequestType type;
+    void *data;
+    size_t data_len;
+    struct PendingRequestNode *next;
+} PendingRequestNode;
+
 struct ServiceState {
     NcdMetadata *metadata;
     NcdDatabase *database;
@@ -26,6 +34,16 @@ struct ServiceState {
     
     uint64_t request_count;
     uint64_t mutation_count;
+    
+    /* Runtime state machine */
+    ServiceRuntimeState runtime_state;
+    char status_message[256];
+    
+    /* Request queue */
+    PendingRequestNode *pending_head;
+    PendingRequestNode *pending_tail;
+    int pending_count;
+    int pending_max;  /* Maximum queue size */
 };
 
 /* --------------------------------------------------------- lifecycle          */
@@ -36,7 +54,18 @@ ServiceState *service_state_init(void) {
         return NULL;
     }
     
-    /* Load metadata from disk */
+    /* Initialize runtime state - database loading is lazy */
+    state->runtime_state = SERVICE_STATE_STARTING;
+    strncpy(state->status_message, "Initializing...", sizeof(state->status_message) - 1);
+    state->status_message[sizeof(state->status_message) - 1] = '\0';
+    
+    /* Initialize request queue */
+    state->pending_head = NULL;
+    state->pending_tail = NULL;
+    state->pending_count = 0;
+    state->pending_max = 1000;  /* Max 1000 pending requests */
+    
+    /* Load metadata from disk (small, do synchronously) */
     state->metadata = db_metadata_load();
     if (!state->metadata) {
         state->metadata = db_metadata_create();
@@ -46,7 +75,7 @@ ServiceState *service_state_init(void) {
         }
     }
     
-    /* Load all drive databases */
+    /* Create empty database (will be populated lazily) */
     state->database = db_create();
     if (!state->database) {
         db_metadata_free(state->metadata);
@@ -54,15 +83,42 @@ ServiceState *service_state_init(void) {
         return NULL;
     }
     
+    /* Initialize generations */
+    state->meta_generation = 1;
+    state->db_generation = 1;
+    state->last_flush = time(NULL);
+    state->last_rescan = 0;
+    
+    return state;
+}
+
+/*
+ * service_state_load_databases  --  Load all drive databases
+ *
+ * This is called by the background loader thread.
+ */
+bool service_state_load_databases(ServiceState *state) {
+    if (!state) return false;
+    
+    service_state_set_runtime_state(state, SERVICE_STATE_LOADING);
+    service_state_set_status_message(state, "Loading databases...");
+    
     /* Load per-drive databases */
     char drives[26];
     int drive_count = platform_get_available_drives(drives, 26);
+    int loaded_count = 0;
     
     for (int i = 0; i < drive_count; i++) {
         char path[MAX_PATH];
         if (!ncd_platform_db_drive_path(drives[i], path, sizeof(path))) {
             continue;
         }
+        
+        /* Update status with progress */
+        char status[256];
+        snprintf(status, sizeof(status), "Loading drive %c: (%d/%d)...", 
+                 drives[i], i + 1, drive_count);
+        service_state_set_status_message(state, status);
         
         /* Check if file exists */
         FILE *f = fopen(path, "rb");
@@ -96,15 +152,16 @@ ServiceState *service_state_init(void) {
         }
         
         db_free(drive_db);
+        loaded_count++;
     }
     
-    /* Initialize generations */
-    state->meta_generation = 1;
-    state->db_generation = 1;
-    state->last_flush = time(NULL);
     state->last_rescan = state->database->last_scan;
     
-    return state;
+    char status[256];
+    snprintf(status, sizeof(status), "Loaded %d drives", loaded_count);
+    service_state_set_status_message(state, status);
+    
+    return loaded_count > 0 || drive_count == 0;
 }
 
 void service_state_cleanup(ServiceState *state) {
@@ -429,4 +486,128 @@ void service_state_clear_dirty(ServiceState *state, uint32_t flags) {
         return;
     }
     state->dirty_flags &= ~flags;
+}
+
+/* --------------------------------------------------------- runtime state        */
+
+void service_state_set_runtime_state(ServiceState *state, ServiceRuntimeState new_state) {
+    if (!state) return;
+    state->runtime_state = new_state;
+}
+
+ServiceRuntimeState service_state_get_runtime_state(const ServiceState *state) {
+    if (!state) return SERVICE_STATE_STOPPED;
+    return state->runtime_state;
+}
+
+bool service_state_wait_for_ready(ServiceState *state, int timeout_ms) {
+    if (!state) return false;
+    
+    /* Simple polling implementation */
+    int waited = 0;
+    while (state->runtime_state != SERVICE_STATE_READY && waited < timeout_ms) {
+        platform_sleep_ms(10);
+        waited += 10;
+    }
+    
+    return state->runtime_state == SERVICE_STATE_READY;
+}
+
+void service_state_set_status_message(ServiceState *state, const char *message) {
+    if (!state || !message) return;
+    strncpy(state->status_message, message, sizeof(state->status_message) - 1);
+    state->status_message[sizeof(state->status_message) - 1] = '\0';
+}
+
+const char *service_state_get_status_message(const ServiceState *state) {
+    if (!state) return "Unknown";
+    return state->status_message;
+}
+
+/* --------------------------------------------------------- request queue        */
+
+bool service_state_enqueue_request(ServiceState *state, 
+                                    PendingRequestType type,
+                                    const void *data,
+                                    size_t data_len) {
+    if (!state) return false;
+    
+    /* Check queue limit */
+    if (state->pending_count >= state->pending_max) {
+        return false;
+    }
+    
+    /* Allocate node */
+    PendingRequestNode *node = (PendingRequestNode *)calloc(1, sizeof(PendingRequestNode));
+    if (!node) return false;
+    
+    node->type = type;
+    node->next = NULL;
+    
+    /* Copy data if provided */
+    if (data && data_len > 0) {
+        node->data = malloc(data_len);
+        if (!node->data) {
+            free(node);
+            return false;
+        }
+        memcpy(node->data, data, data_len);
+        node->data_len = data_len;
+    }
+    
+    /* Add to tail */
+    if (state->pending_tail) {
+        state->pending_tail->next = node;
+    } else {
+        state->pending_head = node;
+    }
+    state->pending_tail = node;
+    state->pending_count++;
+    
+    return true;
+}
+
+void service_state_process_pending(ServiceState *state, void *pub) {
+    if (!state) return;
+    
+    /* Process all pending requests */
+    while (state->pending_head) {
+        PendingRequestNode *node = state->pending_head;
+        state->pending_head = node->next;
+        if (!state->pending_head) {
+            state->pending_tail = NULL;
+        }
+        state->pending_count--;
+        
+        /* Process based on type - in a real implementation, 
+         * this would call the appropriate handler with 'pub' */
+        /* For now, just free the node */
+        
+        if (node->data) {
+            free(node->data);
+        }
+        free(node);
+    }
+}
+
+void service_state_clear_pending(ServiceState *state) {
+    if (!state) return;
+    
+    while (state->pending_head) {
+        PendingRequestNode *node = state->pending_head;
+        state->pending_head = node->next;
+        
+        if (node->data) {
+            free(node->data);
+        }
+        free(node);
+    }
+    
+    state->pending_tail = NULL;
+    state->pending_count = 0;
+}
+
+int service_state_get_pending_count(const ServiceState *state) {
+    if (!state) return 0;
+    return state->pending_count;
 }

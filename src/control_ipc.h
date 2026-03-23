@@ -60,6 +60,9 @@ typedef enum {
     NCD_IPC_ERROR_INVALID = -2,    /* Invalid message */
     NCD_IPC_ERROR_BUSY = -3,       /* Service busy */
     NCD_IPC_ERROR_NOT_FOUND = -4,  /* Resource not found */
+    NCD_IPC_ERROR_BUSY_LOADING = -5,  /* Service loading databases */
+    NCD_IPC_ERROR_BUSY_SCANNING = -6, /* Service scanning filesystem */
+    NCD_IPC_ERROR_NOT_READY = -7,     /* Service not initialized yet */
 } NcdIpcResult;
 
 /* --------------------------------------------------------- message headers    */
