@@ -380,7 +380,7 @@ ncd /fc                   # Clear frequent searches
 # Agent mode (LLM integration)
 ncd /agent query <search> [--json] [--limit N] [--depth]
 ncd /agent ls <path> [--json] [--depth N] [--dirs-only|--files-only]
-ncd /agent tree <path> [--json] [--depth N] [--flat]
+ncd /agent tree <path> [--json] [--depth N] [--flat]  # Show directory tree from DB
 ncd /agent check <path> | --db-age | --stats | --service-status
 ncd /agent complete <partial> [--limit N]  # Shell tab-completion
 
@@ -522,6 +522,15 @@ A child process cannot change the working directory of its parent shell (OS limi
 - Atomic updates (all or nothing)
 - Reduces file I/O and simplifies backup
 
+### Auto-Rescan Configuration
+
+The auto-rescan interval is now configurable. Use `ncd /c` to edit the configuration and set:
+
+- **Auto-rescan hours**: Number of hours (1-168) before automatically triggering a background rescan
+- **Never** (-1): Disable auto-rescan entirely
+
+The default is 24 hours. When the database is older than the configured interval, NCD will automatically spawn a background rescan after a successful navigation.
+
 ### Why two UI modes?
 
 1. **Selector:** List of search results with live filtering (arrow keys to select, type to filter)
@@ -549,6 +558,74 @@ ncd /agent ls /home/user --depth 2 --json
 
 # Show directory tree from database
 ncd /agent tree /home/user --depth 3 --json
+```
+
+### Agent Tree Output Formats
+
+The `/agent tree` command supports multiple output formats:
+
+**1. Indented Tree Format (default)**
+Displays directories as an indented tree with 2 spaces per level:
+```bash
+$ ncd /agent tree /home/user --depth 2
+docs
+  architecture
+    code_quality.md
+    linux_port.md
+    test_strategy.md
+  history
+    baseline.md
+    final_summary.md
+```
+
+**2. Flat Format with Full Paths (`--flat`)**
+Displays directories as relative paths with platform-specific separators:
+```bash
+$ ncd /agent tree /home/user --depth 2 --flat
+architecture/code_quality.md
+architecture/linux_port.md
+architecture/test_strategy.md
+history/baseline.md
+history/final_summary.md
+```
+
+**3. JSON Format (`--json`)**
+Returns structured JSON with name and depth fields:
+```bash
+$ ncd /agent tree /home/user --depth 2 --json
+{"v":1,"tree":[
+  {"n":"architecture","d":0},
+  {"n":"code_quality.md","d":1},
+  {"n":"linux_port.md","d":1},
+  {"n":"test_strategy.md","d":1},
+  {"n":"history","d":0},
+  {"n":"baseline.md","d":1},
+  {"n":"final_summary.md","d":1}
+]}
+```
+
+**4. JSON Flat Format (`--json --flat`)**
+Combines JSON structure with full relative paths:
+```bash
+$ ncd /agent tree /home/user --depth 2 --json --flat
+{"v":1,"tree":[
+  {"n":"architecture/code_quality.md","d":1},
+  {"n":"architecture/linux_port.md","d":1},
+  {"n":"architecture/test_strategy.md","d":1},
+  {"n":"history/baseline.md","d":1},
+  {"n":"history/final_summary.md","d":1}
+]}
+```
+
+| Option | Description |
+|--------|-------------|
+| `--depth N` | Maximum depth to traverse (default: 3) |
+| `--json` | Output as JSON |
+| `--flat` | Show full relative paths instead of just names |
+
+**Exit Codes:**
+- `0` - Path found, tree displayed
+- `1` - Path not found in database or error
 
 # Check if path exists in database
 ncd /agent check /home/user/projects
@@ -564,6 +641,9 @@ ncd /agent check --service-status
 
 # Shell tab-completion candidates
 ncd /agent complete dow --limit 20
+
+# Create directory (creates parent directories as needed)
+ncd /agent mkdir /home/user/new/project
 ```
 
 Exit codes:
@@ -587,7 +667,7 @@ Exit codes:
 1. No symlink cycle detection on Linux
 2. Windows-only: No Unicode/wide-char support (ANSI only)
 3. History limited to 100 entries (NCD_HEUR_MAX_ENTRIES)
-4. Database refresh only triggered manually or after 24 hours
+4. Database refresh triggered manually, by configurable interval, or disabled
 5. No network drive support on Linux (only local filesystems)
 6. Requires external `../shared/` library for building
 
@@ -623,6 +703,7 @@ Exit codes:
 - Current binary version: 2 (added CRC64 checksum)
 - Current metadata version: 1
 - Current heuristics version: 1
+- Current config version: 3 (added rescan_interval_hours)
 - Current build version: 1.2
 
 When changing database format:
@@ -630,3 +711,7 @@ When changing database format:
 2. Update `BinFileHdr` structure if needed
 3. Ensure backward compatibility or provide migration path
 4. Update CRC64 calculation if header changes
+
+### Config Format Changes
+
+**Version 3** - Added `rescan_interval_hours` field to support configurable auto-rescan intervals (1-168 hours, or -1 for never).

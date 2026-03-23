@@ -14,7 +14,7 @@
 #   and database, never touching the user's real data.
 #
 # HOW TO ADD A NEW TEST:
-#   1. Find the appropriate category section (A through U).
+#   1. Find the appropriate category section (A through V).
 #   2. Call one of the assertion helpers:
 #
 #        test_exit_ok       "ID" "description"                  ncd_args...
@@ -934,6 +934,99 @@ fi
 
 # Rescan to restore database for any further tests
 rescan_testroot
+
+# ==========================================================================
+# CATEGORY V: Agent Tree (10 tests)
+# ==========================================================================
+
+category "V: Agent Tree"
+
+# Agent tree tests verify the different output formats for /agent tree command.
+# The tree command displays directory structures from the database.
+
+# V1: Tree with JSON output
+ test_custom "V1" "Agent tree --json returns valid JSON"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Projects" --json --depth 2 2>&1)
+ if echo "$OUTPUT" | grep -q '"v":1' && echo "$OUTPUT" | grep -q '"tree":'; then
+     pass "V1" "Agent tree --json returns valid JSON"
+ else
+     fail "V1" "Agent tree --json returns valid JSON" "output missing JSON markers"
+ fi
+
+# V2: Tree flat format shows relative paths with separators
+ test_custom "V2" "Agent tree --flat shows relative paths"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Projects" --flat --depth 2 2>&1)
+ # Check that output contains path separators (forward slash on Linux)
+ if echo "$OUTPUT" | grep -q '/'; then
+     pass "V2" "Agent tree --flat shows relative paths"
+ else
+     fail "V2" "Agent tree --flat shows relative paths" "no path separators found"
+ fi
+
+# V3: Tree indented format (default) shows names only with indentation
+ test_custom "V3" "Agent tree default shows indented names"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Projects" --depth 2 2>&1)
+ # Check for leading spaces (indentation)
+ if echo "$OUTPUT" | grep -q '^ '; then
+     pass "V3" "Agent tree default shows indented names"
+ else
+     fail "V3" "Agent tree default shows indented names" "no indentation found"
+ fi
+
+# V4: Tree flat format with JSON
+ test_custom "V4" "Agent tree --json --flat returns flat JSON"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Projects" --json --flat --depth 2 2>&1)
+ if echo "$OUTPUT" | grep -q '"v":1' && echo "$OUTPUT" | grep -q '"d":'; then
+     pass "V4" "Agent tree --json --flat returns flat JSON with depth"
+ else
+     fail "V4" "Agent tree --json --flat returns flat JSON with depth" "missing JSON structure"
+ fi
+
+# V5: Tree depth limits entries
+ test_custom "V5" "Agent tree --depth limits depth"
+ DEPTH1_OUTPUT=$("$NCD" /agent tree "$TESTROOT" --depth 1 2>&1 | wc -l)
+ DEPTH2_OUTPUT=$("$NCD" /agent tree "$TESTROOT" --depth 2 2>&1 | wc -l)
+ if [[ $DEPTH2_OUTPUT -gt $DEPTH1_OUTPUT ]]; then
+     pass "V5" "Agent tree --depth limits depth"
+ else
+     fail "V5" "Agent tree --depth limits depth" "depth 2 not showing more entries"
+ fi
+
+# V6: Tree handles non-existent path gracefully
+ test_exit_fail "V6" "Agent tree fails on non-existent path" /agent tree "/nonexistent/path" --json
+
+# V7: Tree flat format shows full relative paths
+ test_custom "V7" "Agent tree --flat shows correct relative paths"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Users" --flat --depth 2 2>&1)
+ # Should contain paths like "scott/Downloads" or "admin/Downloads"
+ if echo "$OUTPUT" | grep -qE '(scott|admin).*(Downloads|Documents)'; then
+     pass "V7" "Agent tree --flat shows correct relative paths"
+ else
+     fail "V7" "Agent tree --flat shows correct relative paths" "expected path patterns not found"
+ fi
+
+# V8: Tree JSON format has name and depth fields
+ test_custom "V8" "Agent tree JSON has name and depth fields"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Media" --json --depth 1 2>&1)
+ if echo "$OUTPUT" | grep -q '"n":"' && echo "$OUTPUT" | grep -q '"d":0'; then
+     pass "V8" "Agent tree JSON has name and depth fields"
+ else
+     fail "V8" "Agent tree JSON has name and depth fields" "missing name or depth fields"
+ fi
+
+# V9: Tree default format doesn't have path separators (just names)
+ test_custom "V9" "Agent tree default shows only names"
+ OUTPUT=$("$NCD" /agent tree "$TESTROOT/Windows" --depth 2 2>&1)
+ # First line should be just "System32" without any path separator
+ FIRST_LINE=$(echo "$OUTPUT" | head -1 | tr -d '[:space:]')
+ if [[ "$FIRST_LINE" == "System32" ]]; then
+     pass "V9" "Agent tree default shows only names"
+ else
+     fail "V9" "Agent tree default shows only names" "first line was '$FIRST_LINE', expected 'System32'"
+ fi
+
+# V10: Tree requires a path argument
+ test_exit_fail "V10" "Agent tree requires path argument" /agent tree
 
 # ==========================================================================
 # Summary

@@ -1711,9 +1711,15 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
                     snprintf(line, sizeof(line), " %s: [%s] ",
                              item->label, st->input_buf);
                 } else {
-                    snprintf(line, sizeof(line), " %s: %d ",
-                             item->label,
-                             *item->int_value);
+                    /* Special display for rescan interval (item 5) */
+                    if (idx == 5 && *item->int_value == -1) {
+                        snprintf(line, sizeof(line), " %s: Never ",
+                                 item->label);
+                    } else {
+                        snprintf(line, sizeof(line), " %s: %d ",
+                                 item->label,
+                                 *item->int_value);
+                    }
                 }
             }
             con_write_padded(line, inner);
@@ -1744,6 +1750,8 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
                 snprintf(footer, sizeof(footer), " Type timeout value (10-3600s) ");
             } else if (st->selected == 4) {
                 snprintf(footer, sizeof(footer), " Type retry count (0-255, 0=default) ");
+            } else if (st->selected == 5) {
+                snprintf(footer, sizeof(footer), " Type rescan hours (-1=never, 1-168) ");
             } else {
                 snprintf(footer, sizeof(footer), " Type value ");
             }
@@ -1798,6 +1806,8 @@ bool ui_edit_config(NcdMetadata *meta)
     if (timeout < 0) timeout = 300;  /* Default to 300 if not set */
     int service_retry = cfg->service_retry_count;
     if (service_retry == 0) service_retry = NCD_DEFAULT_SERVICE_RETRY_COUNT;
+    int rescan_interval = cfg->rescan_interval_hours;
+    if (rescan_interval == 0) rescan_interval = NCD_RESCAN_HOURS_DEFAULT;
     
     /* Define config items */
     ConfigItem items[] = {
@@ -1806,6 +1816,7 @@ bool ui_edit_config(NcdMetadata *meta)
         {"Fuzzy matching (/z)", &fuzzy_match, true, NULL, 0, 0, NULL},
         {"Scan timeout in seconds (/t)", NULL, false, &timeout, 10, 3600, NULL},
         {"Service retry count (/retry)", NULL, false, &service_retry, 0, 255, NULL},
+        {"Auto-rescan hours (0=never, -1)", NULL, false, &rescan_interval, -1, 168, NULL},
     };
     int item_count = sizeof(items) / sizeof(items[0]);
     
@@ -1876,8 +1887,12 @@ bool ui_edit_config(NcdMetadata *meta)
                     }
                     break;
                 default:
-                    /* Handle digit input (0-9) */
+                    /* Handle digit input (0-9), and '-' for negative values */
                     if (key >= '0' && key <= '9' && st.input_len < 4) {
+                        st.input_buf[st.input_len++] = (char)key;
+                        st.input_buf[st.input_len] = '\0';
+                    } else if (key == '-' && st.input_len == 0 && st.selected == 5) {
+                        /* Allow leading minus sign for rescan interval (item 5) */
                         st.input_buf[st.input_len++] = (char)key;
                         st.input_buf[st.input_len] = '\0';
                     }
@@ -1934,6 +1949,7 @@ bool ui_edit_config(NcdMetadata *meta)
                 cfg->default_fuzzy_match = fuzzy_match;
                 cfg->default_timeout = timeout;
                 cfg->service_retry_count = (uint8_t)service_retry;
+                cfg->rescan_interval_hours = (int16_t)rescan_interval;
                 cfg->has_defaults = true;
                 cfg->magic = NCD_CFG_MAGIC;
                 cfg->version = NCD_CFG_VERSION;
@@ -1954,12 +1970,14 @@ bool ui_edit_config(NcdMetadata *meta)
                 break;
             default:
                 /* Enter input mode on digit press for non-bool items */
-                if (key >= '0' && key <= '9' && !items[st.selected].is_bool) {
+                /* Also allow '-' for rescan interval (item 5) to enter negative values */
+                if ((key >= '0' && key <= '9' && !items[st.selected].is_bool) ||
+                    (key == '-' && !items[st.selected].is_bool && st.selected == 5)) {
                     st.input_mode = true;
                     st.input_len = 0;
                     st.input_buf[0] = '\0';
                     st.input_orig_value = *items[st.selected].int_value;
-                    /* Add the first digit */
+                    /* Add the first character */
                     st.input_buf[st.input_len++] = (char)key;
                     st.input_buf[st.input_len] = '\0';
                 }

@@ -420,9 +420,7 @@ SnapshotPublisher *snapshot_publisher_init(void) {
     }
     
     /* Try to unlink any old shared memory objects */
-    fprintf(stderr, "DEBUG: unlinking old shm: %s\n", pub->meta_name);
     shm_unlink(pub->meta_name);
-    fprintf(stderr, "DEBUG: unlinking old shm: %s\n", pub->db_name);
     shm_unlink(pub->db_name);
     
     return pub;
@@ -476,24 +474,19 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
     
     /* Compute required size */
     size_t new_size = compute_metadata_snapshot_size(meta);
-    fprintf(stderr, "DEBUG: metadata snapshot size=%zu\n", new_size);
     
     /* Allocate temp buffer */
     uint8_t *temp_buf = (uint8_t *)malloc(new_size);
     if (!temp_buf) {
-        fprintf(stderr, "DEBUG: malloc failed for metadata\n");
         return false;
     }
     
     /* Build snapshot */
     uint64_t new_gen = service_state_get_meta_generation(state) + 1;
-    fprintf(stderr, "DEBUG: building metadata snapshot, gen=%llu\n", (unsigned long long)new_gen);
     if (!build_metadata_snapshot(temp_buf, new_size, meta, new_gen)) {
-        fprintf(stderr, "DEBUG: build_metadata_snapshot failed\n");
         free(temp_buf);
         return false;
     }
-    fprintf(stderr, "DEBUG: metadata snapshot built\n");
     
     /* Create/recreate shared memory */
     if (pub->meta_addr) {
@@ -518,14 +511,11 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
         return false;
     }
     
-    fprintf(stderr, "DEBUG: shm_create succeeded for metadata\n");
-    
     /* Map it */
     void *addr;
     size_t mapped_size;
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
     if (result != SHM_OK) {
-        fprintf(stderr, "DEBUG: shm_map(write) failed for metadata: %s\n", shm_error_string(result));
         shm_close(shm);
         shm_unlink(pub->meta_name);
         free(temp_buf);
@@ -539,14 +529,11 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
     shm_unmap(addr, mapped_size);
     
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
-        fprintf(stderr, "DEBUG: shm_map(read) failed for metadata\n");
         shm_close(shm);
         shm_unlink(pub->meta_name);
         free(temp_buf);
         return false;
     }
-    
-    fprintf(stderr, "DEBUG: metadata published successfully, gen=%llu\n", (unsigned long long)new_gen);
     
     /* Update publisher state */
     pub->meta_shm = shm;
@@ -561,36 +548,29 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
 bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
                                      const ServiceState *state) {
     if (!pub || !state) {
-        fprintf(stderr, "DEBUG: publish_db failed - null pub or state\n");
         return false;
     }
     
     const NcdDatabase *db = service_state_get_database(state);
     if (!db) {
-        fprintf(stderr, "DEBUG: publish_db failed - null db\n");
         return false;
     }
     
     /* Compute required size */
     size_t new_size = compute_database_snapshot_size(db);
-    fprintf(stderr, "DEBUG: database snapshot size=%zu (drives=%d)\n", new_size, db->drive_count);
     
     /* Allocate temp buffer */
     uint8_t *temp_buf = (uint8_t *)malloc(new_size);
     if (!temp_buf) {
-        fprintf(stderr, "DEBUG: publish_db failed - malloc failed\n");
         return false;
     }
     
     /* Build snapshot */
     uint64_t new_gen = service_state_get_db_generation(state) + 1;
-    fprintf(stderr, "DEBUG: building database snapshot, gen=%llu\n", (unsigned long long)new_gen);
     if (!build_database_snapshot(temp_buf, new_size, db, new_gen)) {
-        fprintf(stderr, "DEBUG: build_database_snapshot failed\n");
         free(temp_buf);
         return false;
     }
-    fprintf(stderr, "DEBUG: database snapshot built\n");
     
     /* Create/recreate shared memory */
     if (pub->db_addr) {
@@ -610,11 +590,10 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     ShmHandle *shm;
     ShmResult result = shm_create(pub->db_name, shm_size, &shm);
     if (result != SHM_OK) {
-        fprintf(stderr, "DEBUG: shm_create failed for database: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        fprintf(stderr, "NCD Service: shm_create failed for database: %s (size=%zu)\n", shm_error_string(result), shm_size);
         free(temp_buf);
         return false;
     }
-    fprintf(stderr, "DEBUG: shm_create succeeded for database\n");
     
     /* Map it */
     void *addr;
@@ -644,8 +623,6 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     pub->db_addr = addr;
     pub->db_size = mapped_size;
     pub->db_generation = new_gen;
-    
-    fprintf(stderr, "DEBUG: database published successfully, gen=%llu\n", (unsigned long long)new_gen);
     
     free(temp_buf);
     return true;

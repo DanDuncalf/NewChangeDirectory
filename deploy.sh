@@ -4,6 +4,7 @@
 #
 # This script copies both the ncd wrapper script and the NewChangeDirectory
 # binary to /usr/local/bin and sets appropriate permissions.
+# It also handles service management and version checking.
 #
 # Usage:
 #   ./deploy.sh
@@ -15,7 +16,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST_DIR="/usr/local/bin"
 
-echo "Deploying NCD to ${DEST_DIR}..."
+echo "================================================"
+echo "NCD Deployment"
+echo "================================================"
+echo ""
 
 # Check for required files
 if [[ ! -f "${SCRIPT_DIR}/ncd" ]]; then
@@ -27,6 +31,47 @@ if [[ ! -f "${SCRIPT_DIR}/NewChangeDirectory" ]]; then
     echo "ERROR: NewChangeDirectory binary not found in ${SCRIPT_DIR}" >&2
     echo "Please run ./build.sh first to build the binary." >&2
     exit 1
+fi
+
+# Check for service binary
+if [[ -f "${SCRIPT_DIR}/NCDService" ]]; then
+    HAS_SERVICE=1
+else
+    HAS_SERVICE=0
+    echo "NOTE: NCDService binary not found, service will not be deployed"
+fi
+
+# Get version info
+NEW_VERSION=$("${SCRIPT_DIR}/NewChangeDirectory" /v 2>&1 || echo "unknown")
+echo "New version: ${NEW_VERSION}"
+echo ""
+
+# Check for running service and stop it gracefully
+if [[ ${HAS_SERVICE} -eq 1 ]]; then
+    if pgrep -x "NCDService" > /dev/null 2>&1; then
+        echo "Service is currently running."
+        echo "Requesting graceful shutdown..."
+        
+        # Try graceful shutdown via IPC first
+        if "${SCRIPT_DIR}/NewChangeDirectory" /agent quit 2>/dev/null; then
+            # Wait up to 10 seconds for service to stop
+            for i in {1..10}; do
+                if ! pgrep -x "NCDService" > /dev/null 2>&1; then
+                    echo "Service stopped gracefully."
+                    break
+                fi
+                sleep 1
+            done
+        fi
+        
+        # Force kill if still running
+        if pgrep -x "NCDService" > /dev/null 2>&1; then
+            echo "Warning: Service did not stop gracefully, forcing termination..."
+            pkill -9 -x "NCDService" 2>/dev/null || true
+            sleep 1
+        fi
+        echo ""
+    fi
 fi
 
 # Check if we need sudo
@@ -121,7 +166,34 @@ else
 fi
 
 echo ""
+echo "================================================"
+echo "Deployment Summary"
+echo "================================================"
+echo "Destination: ${DEST_DIR}"
+echo "  [OK] NewChangeDirectory"
+if [[ ${HAS_SERVICE} -eq 1 ]]; then
+    echo "  [OK] NCDService"
+fi
+echo "  [OK] ncd"
+
+# Start the service
+if [[ ${HAS_SERVICE} -eq 1 ]]; then
+    echo ""
+    echo "Starting NCD Service..."
+    nohup "${DEST_DIR}/NCDService" > /dev/null 2>&1 &
+    sleep 2
+    
+    if pgrep -x "NCDService" > /dev/null 2>&1; then
+        echo "  [OK] Service started successfully"
+    else
+        echo "  [WARNING] Service may not have started. Check manually."
+    fi
+fi
+
+echo ""
+echo "================================================"
 echo "Deployment complete!"
+echo "================================================"
 echo ""
 echo "Usage: ncd <search>"
 echo ""

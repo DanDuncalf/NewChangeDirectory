@@ -181,6 +181,7 @@ ncd /agent check --db-age
 ncd /agent check --stats
 ncd /agent check --service-status
 ncd /agent complete dow              # Shell tab-completion candidates
+ncd /agent mkdir <path>              # Create directory and parents if needed
 ```
 
 Exit codes:
@@ -241,6 +242,14 @@ When the service is running, NCD automatically connects to it. If the service is
 ## License
 
 MIT License - See LICENSE file for details.
+
+## Documentation
+
+Additional documentation is available in the `docs/` directory:
+
+- **[docs/architecture/](docs/architecture/)** - Technical architecture docs
+- **[docs/history/](docs/history/)** - Project history and lessons learned
+- **[AGENTS.md](AGENTS.md)** - Comprehensive technical documentation for developers
 
 ## Credits
 

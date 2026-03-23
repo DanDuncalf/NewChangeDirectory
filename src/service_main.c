@@ -35,6 +35,11 @@
 static volatile int g_running = 1;
 static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
+static volatile int g_shutdown_requested = 0;
+
+/* Version info - must match NCD_APP_VERSION in control_ipc.h */
+#define SERVICE_VERSION     "1.3"
+#define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
 
 /* Forward declaration for background loader */
 static void start_background_loader(ServiceState *state);
@@ -76,6 +81,23 @@ static void setup_signal_handlers(void) {
 
 /* --------------------------------------------------------- IPC request handlers */
 
+static void handle_get_version(NcdIpcConnection *conn, uint32_t sequence) {
+    NcdVersionInfoPayload payload;
+    memset(&payload, 0, sizeof(payload));
+    
+    strncpy(payload.app_version, SERVICE_VERSION, sizeof(payload.app_version) - 1);
+    strncpy(payload.build_stamp, SERVICE_BUILD_STAMP, sizeof(payload.build_stamp) - 1);
+    payload.protocol_version = NCD_IPC_VERSION;
+    
+    ipc_server_send_response(conn, sequence, &payload, sizeof(payload));
+}
+
+static void handle_request_shutdown(NcdIpcConnection *conn, uint32_t sequence) {
+    g_shutdown_requested = 1;
+    ipc_server_send_response(conn, sequence, NULL, 0);
+    printf("NCD Service: Shutdown requested by client\n");
+}
+
 static void handle_get_state_info(NcdIpcConnection *conn, 
                                    uint32_t sequence,
                                    const ServiceState *state,
@@ -93,9 +115,6 @@ static void handle_get_state_info(NcdIpcConnection *conn,
     payload.db_size = (uint32_t)info.db_size;
     payload.meta_name_len = (uint32_t)strlen(info.meta_shm_name) + 1;
     payload.db_name_len = (uint32_t)strlen(info.db_shm_name) + 1;
-    
-    /* Include service state info in reserved fields */
-    /* We can extend the protocol later; for now send status in error messages */
     
     size_t total_size = sizeof(payload) + payload.meta_name_len + payload.db_name_len;
     uint8_t *response = (uint8_t *)malloc(total_size);
@@ -283,10 +302,17 @@ static void process_all_pending(ServiceState *state, SnapshotPublisher *pub) {
     void *data = NULL;
     size_t data_len = 0;
     
-    printf("NCD Service: Processing %d pending requests...\n", 
-           service_state_get_pending_count(state));
+    int pending_count = service_state_get_pending_count(state);
+    if (pending_count == 0) {
+        return;
+    }
     
+    printf("NCD Service: Processing %d pending requests...\n", pending_count);
+    
+    int processed = 0;
     while (service_state_dequeue_pending(state, &type, &data, &data_len)) {
+        processed++;
+        
         switch (type) {
             case PENDING_HEURISTIC: {
                 /* Data format: search_len (4 bytes) + target_len (4 bytes) + search + target */
@@ -471,6 +497,18 @@ static void handle_client_connection(NcdIpcConnection *conn,
         return;
     }
     
+    if (msg_type == NCD_MSG_GET_VERSION) {
+        handle_get_version(conn, sequence);
+        if (payload) ipc_free_message(payload);
+        return;
+    }
+    
+    if (msg_type == NCD_MSG_REQUEST_SHUTDOWN) {
+        handle_request_shutdown(conn, sequence);
+        if (payload) ipc_free_message(payload);
+        return;
+    }
+    
     /* Check service state - for mutations during LOADING/SCANNING, try to queue */
     ServiceRuntimeState runtime = service_state_get_runtime_state(state);
     if (runtime != SERVICE_STATE_READY) {
@@ -554,8 +592,18 @@ static DWORD WINAPI LoaderThreadFunc(LPVOID param) {
 static void *loader_thread_func(void *param) {
 #endif
     LoaderContext *ctx = (LoaderContext *)param;
+    if (!ctx) {
+        fprintf(stderr, "NCD Service: ERROR - Loader thread received NULL context\n");
+        return 0;
+    }
+    
     ServiceState *state = ctx->state;
     SnapshotPublisher *pub = ctx->pub;
+    
+    if (!state || !pub) {
+        fprintf(stderr, "NCD Service: ERROR - Loader thread received NULL state or pub\n");
+        return 0;
+    }
     
     printf("NCD Service: Background loader started\n");
     
@@ -604,6 +652,8 @@ static void start_background_loader(ServiceState *state, SnapshotPublisher *pub)
     
     g_loader_ctx->state = state;
     g_loader_ctx->pub = pub;
+    
+
     
 #if NCD_PLATFORM_WINDOWS
     g_loader_thread = CreateThread(NULL, 0, LoaderThreadFunc, g_loader_ctx, 0, NULL);
@@ -717,6 +767,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
     time_t last_flush_check = time(NULL);
     const int FLUSH_INTERVAL_SEC = 30;  /* Flush every 30 seconds if dirty */
     
+    int loop_count = 0;
     while (g_running) {
         /* Accept client connections (non-blocking with timeout) */
         NcdIpcConnection *conn = ipc_server_accept(server, 100);  /* 100ms timeout */
@@ -730,6 +781,13 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
         if (g_rescan_requested) {
             g_rescan_requested = 0;
             perform_rescan(state, pub);
+        }
+        
+        /* Check for shutdown request */
+        if (g_shutdown_requested) {
+            printf("NCD Service: Processing shutdown request...\n");
+            g_running = 0;
+            break;
         }
         
         /* Check for flush request or periodic flush */

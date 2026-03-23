@@ -6,7 +6,7 @@
  *
  * Options:
  *   /r          Force an immediate rescan of all drives
- *   /h          Include hidden directories in search
+ *   /i          Include hidden directories in search
  *   /s          Include system directories in search
  *   /a          Include all (hidden + system) directories
  *   /d <path>   Use <path> as the database file instead of the default
@@ -261,8 +261,11 @@ static void ncd_printf(const char *fmt, ...)
  *
  * The banner is printed ONLY when the user explicitly passes /v on the
  * command line.  It is silent in all other paths.
+ * 
+ * IMPORTANT: This version MUST match NCD_APP_VERSION in control_ipc.h
+ * and SERVICE_VERSION in service_main.c
  */
-#define NCD_BUILD_VER   "1.2"
+#define NCD_BUILD_VER   "1.3"
 #define NCD_BUILD_STAMP __DATE__ " " __TIME__
 
 static void print_version(void)
@@ -484,12 +487,72 @@ static void spawn_background_rescan(const char *db_path)
     platform_spawn_detached(cmd);
 }
 
+/* ============================================================= version check */
+
+/*
+ * check_service_version  --  Check service version and handle mismatch
+ *
+ * Returns true if service version matches (or no service running).
+ * Returns false if there's a version mismatch (service was stopped).
+ * Prints appropriate messages to the user.
+ */
+static bool check_service_version(bool *out_service_was_stopped)
+{
+    if (out_service_was_stopped) {
+        *out_service_was_stopped = false;
+    }
+    
+    if (!ipc_service_exists()) {
+        return true;  /* No service running, OK to start new one */
+    }
+    
+    NcdIpcClient *client = ipc_client_connect();
+    if (!client) {
+        return true;  /* Can't connect, service might be starting */
+    }
+    
+    NcdIpcVersionCheckResult result;
+    NcdIpcResult ipc_result = ipc_client_check_version(client, 
+                                                        NCD_BUILD_VER, 
+                                                        NCD_BUILD_STAMP,
+                                                        &result);
+    ipc_client_disconnect(client);
+    
+    if (ipc_result == NCD_IPC_OK && result.versions_match) {
+        return true;  /* Versions match */
+    }
+    
+    /* Version mismatch - report to user */
+    ncd_println("");
+    ncd_println("==================================================");
+    ncd_println("VERSION MISMATCH DETECTED");
+    ncd_println("==================================================");
+    ncd_printf("Client version:  %s (built %s)\r\n", 
+               result.client_version, result.client_build);
+    ncd_printf("Service version: %s (built %s)\r\n",
+               result.service_version, result.service_build);
+    ncd_println("");
+    ncd_println(result.message);
+    ncd_println("==================================================");
+    ncd_println("");
+    
+    if (out_service_was_stopped) {
+        *out_service_was_stopped = result.service_was_stopped;
+    }
+    
+    return false;
+}
+
 /* ============================================================== CLI parse */
 
 static void print_usage(void)
 {
     /* Check service status for header line */
     const char *status_suffix;
+    bool service_was_stopped = false;
+    bool version_ok = check_service_version(&service_was_stopped);
+    (void)version_ok;  /* We continue regardless, but log the issue */
+    
     bool service_running = ipc_service_exists();
     if (!service_running) {
         status_suffix = "  [Standalone client.]";
@@ -636,9 +699,14 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
 
-        /* Explicit help commands */
-        if (_stricmp(arg, "/h") == 0 || _stricmp(arg, "-h") == 0 ||
-            _stricmp(arg, "/?") == 0 || _stricmp(arg, "-?") == 0 ||
+        /* History browse: /h - must be checked BEFORE help (/h is not help!) */
+        if (_stricmp(arg, "/h") == 0 || _stricmp(arg, "-h") == 0) {
+            opts->history_browse = true;
+            continue;
+        }
+
+        /* Explicit help commands - note: /h is history browse, not help */
+        if (_stricmp(arg, "/?") == 0 || _stricmp(arg, "-?") == 0 ||
             _stricmp(arg, "--help") == 0) {
             opts->show_help = true;
             continue;
@@ -657,12 +725,6 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
         /* Directory history ping-pong: /0 */
         if (_stricmp(arg, "/0") == 0 || _stricmp(arg, "-0") == 0) {
             opts->history_pingpong = true;
-            continue;
-        }
-        
-        /* History browse: /h */
-        if (_stricmp(arg, "/h") == 0 || _stricmp(arg, "-h") == 0) {
-            opts->history_browse = true;
             continue;
         }
         
@@ -685,6 +747,24 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                     opts->history_remove = idx;
                 } else {
                     ncd_println("NCD: /hc# index must be 1-9");
+                    return false;
+                }
+            } else {
+                ncd_println("NCD: invalid history command");
+                return false;
+            }
+            continue;
+        }
+        
+        /* History remove by index (alternate form): /h-# (hidden, for testing) */
+        if ((_strnicmp(arg, "/h-", 3) == 0 || _strnicmp(arg, "-h-", 3) == 0)) {
+            const char *rest = arg + 3;
+            if (isdigit((unsigned char)*rest) && rest[1] == '\0') {
+                int idx = *rest - '0';
+                if (idx >= 1 && idx <= 9) {
+                    opts->history_remove = idx;
+                } else {
+                    ncd_println("NCD: /h-# index must be 1-9");
                     return false;
                 }
             } else {
@@ -1006,6 +1086,8 @@ next_arg:;
 #define AGENT_SUB_TREE     3
 #define AGENT_SUB_CHECK    4
 #define AGENT_SUB_COMPLETE 5
+#define AGENT_SUB_MKDIR    6
+#define AGENT_SUB_QUIT     7
 
 /* ================================================================ agent mode */
 
@@ -1067,6 +1149,8 @@ static void agent_print_usage(void)
         "  tree <path>       Show directory structure from DB\r\n"
         "  check <path>      Check if path exists in DB (exit code)\r\n"
         "  complete <partial>  Shell tab-completion candidates\r\n"
+        "  mkdir <path>        Create a directory and add to database\r\n"
+        "  quit                Request graceful service shutdown\r\n"
         "\r\n"
         "Query Options:\r\n"
         "  --json            JSON output instead of compact\r\n"
@@ -1090,6 +1174,9 @@ static void agent_print_usage(void)
         "  --db-age          Output DB age in seconds\r\n"
         "  --stats           Output dir count per drive\r\n"
         "  --service-status  Check if NCD service is running and ready\r\n"
+        "\r\n"
+        "mkdir Options:\r\n"
+        "  --json            JSON output with result code\r\n"
         "\r\n"
         "Exit Codes:\r\n"
         "  0   Success / Found\r\n"
@@ -1264,6 +1351,33 @@ static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *
                 break;
             }
         }
+        return true;
+        
+    } else if (_stricmp(sub, "mkdir") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: /agent mkdir requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_MKDIR;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        
+        /* Parse mkdir options */
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "quit") == 0) {
+        opts->agent_subcommand = AGENT_SUB_QUIT;
+        *consumed = 1;
         return true;
         
     } else {
@@ -1572,7 +1686,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     
     /* Collect entries */
     typedef struct {
-        char name[256];
+        char full_path[NCD_MAX_PATH];
         int depth;
     } TreeEntry;
     
@@ -1580,14 +1694,15 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     int entry_count = 0;
     int entry_capacity = 0;
     
-    /* BFS to find all descendants */
-    typedef struct { int drive; int dir; int depth; } QueueItem;
+    /* BFS to find all descendants - store parent dirs to build full paths */
+    typedef struct { int drive; int dir; int depth; int parent_entry_idx; } QueueItem;
     int max_queue_size = db->drives[found_drive_idx].dir_count;
     QueueItem *queue = (QueueItem *)malloc(max_queue_size * sizeof(QueueItem));
     if (!queue) return 0;
     
     int qhead = 0, qtail = 0;
-    queue[qtail++] = (QueueItem){found_drive_idx, found_dir_idx, 0};
+    /* Root entry: use search path as base */
+    queue[qtail++] = (QueueItem){found_drive_idx, found_dir_idx, 0, -1};
     
     while (qhead < qtail) {
         QueueItem cur = queue[qhead++];
@@ -1605,12 +1720,50 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
                     entries = new_entries;
                 }
                 
-                TreeEntry *e = &entries[entry_count++];
-                platform_strncpy_s(e->name, sizeof(e->name), name);
+                TreeEntry *e = &entries[entry_count];
                 e->depth = cur.depth;
                 
+                /* Build full path: parent's path + separator + name */
+                if (cur.parent_entry_idx < 0) {
+                    /* Direct child of root - prepend root path */
+                    platform_strncpy_s(e->full_path, sizeof(e->full_path), search_path);
+                    size_t len = strlen(e->full_path);
+                    /* Add trailing separator if needed */
+                    if (len > 0 && e->full_path[len-1] != NCD_PATH_SEP[0]) {
+                        if (len < sizeof(e->full_path) - 1) {
+                            e->full_path[len] = NCD_PATH_SEP[0];
+                            e->full_path[len+1] = '\0';
+                        }
+                    }
+                    /* Append name */
+                    size_t name_len = strlen(name);
+                    if (len + name_len < sizeof(e->full_path) - 1) {
+                        strcat(e->full_path, name);
+                    }
+                } else {
+                    /* Child of another entry - prepend parent's full path */
+                    TreeEntry *parent = &entries[cur.parent_entry_idx];
+                    platform_strncpy_s(e->full_path, sizeof(e->full_path), parent->full_path);
+                    size_t len = strlen(e->full_path);
+                    /* Add trailing separator if needed */
+                    if (len > 0 && e->full_path[len-1] != NCD_PATH_SEP[0]) {
+                        if (len < sizeof(e->full_path) - 1) {
+                            e->full_path[len] = NCD_PATH_SEP[0];
+                            e->full_path[len+1] = '\0';
+                            len++;
+                        }
+                    }
+                    /* Append name */
+                    size_t name_len = strlen(name);
+                    if (len + name_len < sizeof(e->full_path) - 1) {
+                        strcat(e->full_path, name);
+                    }
+                }
+                
+                int current_idx = entry_count++;
+                
                 if (cur.depth + 1 < opts->agent_depth) {
-                    queue[qtail++] = (QueueItem){cur.drive, i, cur.depth + 1};
+                    queue[qtail++] = (QueueItem){cur.drive, i, cur.depth + 1, current_idx};
                 }
             }
         }
@@ -1625,7 +1778,11 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         for (int i = 0; i < entry_count; i++) {
             if (i > 0) agent_print(",");
             agent_print("{\"n\":\"");
-            agent_json_escape(entries[i].name);
+            /* For JSON, extract just the name from the full path */
+            const char *name_only = strrchr(entries[i].full_path, NCD_PATH_SEP[0]);
+            if (name_only) name_only++;
+            else name_only = entries[i].full_path;
+            agent_json_escape(name_only);
             agent_print("\",\"d\":");
             char dstr[16];
             snprintf(dstr, sizeof(dstr), "%d", entries[i].depth);
@@ -1634,15 +1791,35 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         }
         agent_print("]}\r\n");
     } else if (opts->agent_flat) {
+        /* Flat format: show full relative path from search root */
         for (int i = 0; i < entry_count; i++) {
-            agent_print(entries[i].name);
+            /* Calculate relative path from search root */
+            size_t search_len = strlen(search_path);
+            const char *rel_path = entries[i].full_path;
+            /* Skip past the search path prefix if present */
+            if (strncmp(entries[i].full_path, search_path, search_len) == 0) {
+                rel_path = entries[i].full_path + search_len;
+                /* Skip leading separator if present */
+                if (*rel_path == NCD_PATH_SEP[0]) rel_path++;
+                /* If nothing left, use the entry name */
+                if (*rel_path == '\0') {
+                    const char *name_only = strrchr(entries[i].full_path, NCD_PATH_SEP[0]);
+                    if (name_only) rel_path = name_only + 1;
+                    else rel_path = entries[i].full_path;
+                }
+            }
+            agent_print(rel_path);
             agent_print("\r\n");
         }
     } else {
+        /* Indented tree format: show just the name with indentation */
         for (int i = 0; i < entry_count; i++) {
             for (int j = 0; j < entries[i].depth; j++)
                 agent_print("  ");
-            agent_print(entries[i].name);
+            const char *name_only = strrchr(entries[i].full_path, NCD_PATH_SEP[0]);
+            if (name_only) name_only++;
+            else name_only = entries[i].full_path;
+            agent_print(name_only);
             agent_print("\r\n");
         }
     }
@@ -1750,10 +1927,8 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         }
         
         /* Service is running - check if it has loaded databases */
-        fprintf(stderr, "DEBUG: connecting to IPC...\n");
         NcdIpcClient *client = ipc_client_connect();
         if (!client) {
-            fprintf(stderr, "DEBUG: IPC connect failed, error=%lu\n", GetLastError());
             /* Could not connect despite service existing */
             if (opts->agent_json) {
                 agent_print("{\"v\":1,\"status\":\"starting\",\"message\":\"Service running but not loaded\"}\r\n");
@@ -1766,9 +1941,6 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         NcdIpcStateInfo info;
         NcdIpcResult result = ipc_client_get_state_info(client, &info);
         ipc_client_disconnect(client);
-        
-        fprintf(stderr, "DEBUG: ipc result=%d, db_gen=%llu, meta_gen=%llu\n", 
-                result, (unsigned long long)info.db_generation, (unsigned long long)info.meta_generation);
         
         if (result != NCD_IPC_OK || info.db_generation == 0) {
             /* Service running but database not loaded yet */
@@ -1792,6 +1964,177 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
     }
     
     return 1;
+}
+
+/* Agent mkdir result codes */
+typedef enum {
+    AGENT_MKDIR_OK,
+    AGENT_MKDIR_EXISTS,
+    AGENT_MKDIR_ERROR_PATH,
+    AGENT_MKDIR_ERROR_PARENT,
+    AGENT_MKDIR_ERROR_PERMS,
+    AGENT_MKDIR_ERROR_OTHER
+} AgentMkdirResult;
+
+/* Agent mode: mkdir - Create a directory and add to database */
+static int agent_mode_mkdir(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+    
+    const char *path = opts->search;
+    AgentMkdirResult result = AGENT_MKDIR_ERROR_OTHER;
+    char result_msg[256] = {0};
+    
+    /* Check if path already exists */
+    if (platform_dir_exists(path)) {
+        result = AGENT_MKDIR_EXISTS;
+        platform_strncpy_s(result_msg, sizeof(result_msg), "Directory already exists");
+    } else {
+        /* Check if parent directory exists */
+        char parent_path[NCD_MAX_PATH];
+        if (!path_parent(path, parent_path, sizeof(parent_path))) {
+            result = AGENT_MKDIR_ERROR_PATH;
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Invalid path");
+        } else if (!platform_dir_exists(parent_path)) {
+            result = AGENT_MKDIR_ERROR_PARENT;
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Parent directory does not exist");
+        } else {
+            /* Try to create the directory */
+            if (platform_create_dir(path)) {
+                result = AGENT_MKDIR_OK;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created successfully");
+            } else {
+                /* Determine specific error based on errno or GetLastError */
+#if NCD_PLATFORM_WINDOWS
+                DWORD err = GetLastError();
+                if (err == ERROR_ACCESS_DENIED) {
+                    result = AGENT_MKDIR_ERROR_PERMS;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                } else {
+                    result = AGENT_MKDIR_ERROR_OTHER;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+                }
+#else
+                if (errno == EACCES || errno == EPERM) {
+                    result = AGENT_MKDIR_ERROR_PERMS;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                } else {
+                    result = AGENT_MKDIR_ERROR_OTHER;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+                }
+#endif
+            }
+        }
+    }
+    
+    /* If successful, add to database */
+    if (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) {
+        char target_drive = path_get_drive(path);
+        if (target_drive == 0 && path[0] != '\0') {
+            /* Try to get drive from first character */
+            target_drive = (char)toupper((unsigned char)path[0]);
+        }
+        
+        if (target_drive != 0) {
+            /* Load existing database for this drive */
+            char target_db[NCD_MAX_PATH] = {0};
+            NcdDatabase *db = NULL;
+            
+            if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                db = db_load_auto(target_db);
+            }
+            
+            if (!db) {
+                db = db_create();
+                db->last_scan = time(NULL);
+            }
+            
+            /* Find or add the drive */
+            DriveData *drv = db_find_drive(db, target_drive);
+            if (!drv) {
+                drv = db_add_drive(db, target_drive);
+            }
+            
+            /* Add the directory to the database */
+            if (drv) {
+                /* Normalize path separator for the platform */
+                char norm_path[NCD_MAX_PATH];
+                platform_strncpy_s(norm_path, sizeof(norm_path), path);
+                path_normalize_separators(norm_path);
+                
+                /* Find parent directory in database */
+                char parent_path[NCD_MAX_PATH];
+                const char *leaf_name = path_leaf(norm_path);
+                int32_t parent_idx = -1;
+                
+                if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
+                    /* Search for parent in database */
+                    for (int i = 0; i < drv->dir_count; i++) {
+                        char full_path[NCD_MAX_PATH];
+                        db_full_path(drv, i, full_path, sizeof(full_path));
+                        if (_stricmp(full_path, parent_path) == 0) {
+                            parent_idx = i;
+                            break;
+                        }
+                    }
+                }
+                
+                /* Check if directory already exists in database */
+                bool in_db = false;
+                for (int i = 0; i < drv->dir_count; i++) {
+                    char full_path[NCD_MAX_PATH];
+                    db_full_path(drv, i, full_path, sizeof(full_path));
+                    if (_stricmp(full_path, norm_path) == 0) {
+                        in_db = true;
+                        break;
+                    }
+                }
+                
+                if (!in_db && leaf_name) {
+                    /* Add to database */
+                    db_add_dir(drv, leaf_name, parent_idx, false, false);
+                    
+                    /* Save the database */
+                    char drv_path[NCD_MAX_PATH];
+                    if (db_drive_path(target_drive, drv_path, sizeof(drv_path))) {
+                        db_save_binary_single(db, 0, drv_path);
+                    }
+                }
+            }
+            
+            if (db) db_free(db);
+        }
+    }
+    
+    /* Output result */
+    if (opts->agent_json) {
+        const char *result_str;
+        switch (result) {
+            case AGENT_MKDIR_OK:      result_str = "created"; break;
+            case AGENT_MKDIR_EXISTS:  result_str = "exists"; break;
+            case AGENT_MKDIR_ERROR_PERMS:  result_str = "error_perms"; break;
+            case AGENT_MKDIR_ERROR_PATH:   result_str = "error_path"; break;
+            case AGENT_MKDIR_ERROR_PARENT: result_str = "error_parent"; break;
+            default:                  result_str = "error"; break;
+        }
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+        agent_json_escape(result_msg);
+        agent_print("\"}\r\n");
+    } else {
+        agent_print(result_msg);
+        agent_print("\r\n");
+    }
+    
+    return (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) ? 0 : 1;
 }
 
 /* Agent mode: complete - Shell tab-completion candidates */
@@ -2459,6 +2802,53 @@ int main(int argc, char *argv[])
                 if (db) db_free(db);
                 break;
             }
+            case AGENT_SUB_MKDIR: {
+                result = agent_mode_mkdir(&opts);
+                break;
+            }
+            case AGENT_SUB_QUIT: {
+                /* Request graceful service shutdown */
+                if (!ipc_service_exists()) {
+                    if (opts.agent_json) {
+                        agent_print("{\"v\":1,\"status\":\"not_running\",\"message\":\"Service not running\"}\r\n");
+                    } else {
+                        agent_print("NOT_RUNNING\r\n");
+                    }
+                    result = 0;
+                    break;
+                }
+                
+                NcdIpcClient *client = ipc_client_connect();
+                if (!client) {
+                    if (opts.agent_json) {
+                        agent_print("{\"v\":1,\"status\":\"error\",\"message\":\"Failed to connect to service\"}\r\n");
+                    } else {
+                        agent_print("ERROR: Failed to connect to service\r\n");
+                    }
+                    result = 1;
+                    break;
+                }
+                
+                NcdIpcResult ipc_result = ipc_client_request_shutdown(client);
+                ipc_client_disconnect(client);
+                
+                if (ipc_result == NCD_IPC_OK) {
+                    if (opts.agent_json) {
+                        agent_print("{\"v\":1,\"status\":\"shutdown_requested\",\"message\":\"Service shutdown requested\"}\r\n");
+                    } else {
+                        agent_print("OK: Service shutdown requested\r\n");
+                    }
+                    result = 0;
+                } else {
+                    if (opts.agent_json) {
+                        agent_printf("{\"v\":1,\"status\":\"error\",\"message\":\"%s\"}\r\n", ipc_error_string(ipc_result));
+                    } else {
+                        agent_printf("ERROR: %s\r\n", ipc_error_string(ipc_result));
+                    }
+                    result = 1;
+                }
+                break;
+            }
             default: {
                 agent_print_usage();
                 result = 1;
@@ -3114,15 +3504,30 @@ int main(int argc, char *argv[])
 
     free(matches);
 
-    /* --------- schedule background rescan if DB is more than 24h old ---- */
+    /* --------- schedule background rescan if DB is older than configured interval ---- */
     bool needs_rescan = false;
-    if (primary_db && primary_db->last_scan > 0) {
+    int rescan_interval = NCD_RESCAN_HOURS_DEFAULT;  /* default 24 hours */
+    
+    /* Load configured rescan interval from metadata */
+    NcdMetadata *rescan_meta = db_metadata_load();
+    if (rescan_meta) {
+        if (rescan_meta->cfg.rescan_interval_hours == NCD_RESCAN_NEVER) {
+            /* Auto-rescan disabled */
+            rescan_interval = -1;
+        } else if (rescan_meta->cfg.rescan_interval_hours > 0) {
+            /* Use configured interval (already validated to be within bounds) */
+            rescan_interval = rescan_meta->cfg.rescan_interval_hours;
+        }
+        db_metadata_free(rescan_meta);
+    }
+    
+    if (primary_db && primary_db->last_scan > 0 && rescan_interval > 0) {
         time_t age_seconds = time(NULL) - primary_db->last_scan;
-        needs_rescan = (age_seconds > (time_t)(NCD_RESCAN_HOURS * 3600));
+        needs_rescan = (age_seconds > (time_t)(rescan_interval * 3600));
     }
     if (!chose_custom_path && needs_rescan) {
         ncd_printf("NCD: Database is over %d hours old -- "
-                   "spawning background rescan...\r\n", NCD_RESCAN_HOURS);
+                   "spawning background rescan...\r\n", rescan_interval);
         spawn_background_rescan(NULL);
     }
 

@@ -27,7 +27,10 @@ extern "C" {
 #define NCD_IPC_MAGIC       0x434E4950U  /* 'N' 'C' 'I' 'P' = NCD IPC */
 
 /* Protocol version */
-#define NCD_IPC_VERSION     1
+#define NCD_IPC_VERSION     2
+
+/* Application version - must match between client and service */
+#define NCD_APP_VERSION     "1.3"
 
 /* Maximum message size */
 #define NCD_IPC_MAX_MSG_SIZE 4096
@@ -41,15 +44,17 @@ typedef enum {
     /* Client -> Server */
     NCD_MSG_PING = 1,               /* Liveness check */
     NCD_MSG_GET_STATE_INFO,         /* Request current generation + names */
+    NCD_MSG_GET_VERSION,            /* Request service version info */
     NCD_MSG_SUBMIT_HEURISTIC,       /* Submit heuristic update */
     NCD_MSG_SUBMIT_METADATA,        /* Submit metadata change */
     NCD_MSG_REQUEST_RESCAN,         /* Request database rescan */
     NCD_MSG_REQUEST_FLUSH,          /* Request immediate persistence */
-    NCD_MSG_SHUTDOWN,               /* Request service shutdown (dev only) */
+    NCD_MSG_REQUEST_SHUTDOWN,       /* Request graceful service shutdown */
     
     /* Server -> Client */
     NCD_MSG_RESPONSE = 0x80,        /* Response to client request */
     NCD_MSG_ERROR,                  /* Error response */
+    NCD_MSG_VERSION_MISMATCH,       /* Version mismatch error */
 } NcdMessageType;
 
 /* --------------------------------------------------------- result codes       */
@@ -146,6 +151,28 @@ typedef struct {
 } NcdStateInfoPayload;
 
 /*
+ * NcdVersionInfoPayload  --  Response to GET_VERSION
+ */
+typedef struct {
+    char     app_version[16];       /* Application version string (e.g., "1.3") */
+    char     build_stamp[32];       /* Build timestamp (__DATE__ " " __TIME__) */
+    uint16_t protocol_version;      /* IPC protocol version */
+    uint16_t reserved;
+} NcdVersionInfoPayload;
+
+/*
+ * NcdVersionMismatchPayload  --  Sent when versions don't match
+ */
+typedef struct {
+    char     client_version[16];    /* Client's version */
+    char     client_build[32];      /* Client's build stamp */
+    char     service_version[16];   /* Service's version */
+    char     service_build[32];     /* Service's build stamp */
+    uint32_t message_len;           /* Length of error message */
+    /* Followed by: message \0 */
+} NcdVersionMismatchPayload;
+
+/*
  * NcdErrorPayload  --  Error response
  */
 typedef struct {
@@ -235,6 +262,50 @@ NcdIpcResult ipc_client_request_rescan(NcdIpcClient *client,
  */
 NcdIpcResult ipc_client_request_flush(NcdIpcClient *client);
 
+/*
+ * ipc_client_get_version  --  Get service version information
+ *
+ * Fills info structure with service version and build info.
+ * Returns NCD_IPC_OK on success, or NCD_IPC_ERROR_* on failure.
+ */
+typedef struct {
+    char     app_version[16];
+    char     build_stamp[32];
+    uint16_t protocol_version;
+} NcdIpcVersionInfo;
+
+NcdIpcResult ipc_client_get_version(NcdIpcClient *client, NcdIpcVersionInfo *info);
+
+/*
+ * ipc_client_check_version  --  Check version compatibility and shutdown if mismatched
+ *
+ * Compares client version with service version. If they don't match,
+ * requests graceful service shutdown and returns version mismatch info.
+ * Returns NCD_IPC_OK if versions match.
+ */
+typedef struct {
+    bool     versions_match;
+    bool     service_was_stopped;
+    char     client_version[16];
+    char     client_build[32];
+    char     service_version[16];
+    char     service_build[32];
+    char     message[256];
+} NcdIpcVersionCheckResult;
+
+NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
+                                       const char *client_version,
+                                       const char *client_build,
+                                       NcdIpcVersionCheckResult *result);
+
+/*
+ * ipc_client_request_shutdown  --  Request graceful service shutdown
+ *
+ * Asks the service to exit cleanly. The service will flush any
+ * pending changes before exiting.
+ */
+NcdIpcResult ipc_client_request_shutdown(NcdIpcClient *client);
+
 /* --------------------------------------------------------- server API         */
 
 /*
@@ -287,6 +358,19 @@ NcdIpcResult ipc_server_send_error(NcdIpcConnection *conn,
                                     uint32_t sequence,
                                     NcdIpcResult error_code,
                                     const char *message);
+
+/*
+ * ipc_server_send_version_mismatch  --  Send version mismatch response
+ *
+ * Sent by service when it detects a version mismatch with the client.
+ */
+NcdIpcResult ipc_server_send_version_mismatch(NcdIpcConnection *conn,
+                                               uint32_t sequence,
+                                               const char *client_version,
+                                               const char *client_build,
+                                               const char *service_version,
+                                               const char *service_build,
+                                               const char *message);
 
 /* --------------------------------------------------------- utilities          */
 

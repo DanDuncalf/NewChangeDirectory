@@ -316,6 +316,7 @@ void db_config_init_defaults(NcdConfig *cfg)
     cfg->default_timeout = -1;  /* -1 means not set (use built-in default of 300) */
     cfg->has_defaults = false;
     cfg->service_retry_count = 0;  /* 0 means use default (NCD_DEFAULT_SERVICE_RETRY_COUNT) */
+    cfg->rescan_interval_hours = NCD_RESCAN_HOURS_DEFAULT;  /* 24 hours default */
 }
 
 /*

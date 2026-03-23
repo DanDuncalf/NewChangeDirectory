@@ -15,9 +15,10 @@ SHARED_SOURCES = ../../shared/platform.c ../../shared/strbuilder.c ../../shared/
 # Note: Using shared/common.c instead of ../src/common.c to avoid duplicate definitions
 DB_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
 MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform.c $(SHARED_SOURCES)
+HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
 
 # Test executables
-TESTS = test_database test_matcher fuzz_database bench_matcher test_db_corruption test_bugs
+TESTS = test_database test_matcher test_history test_agent_mkdir fuzz_database bench_matcher test_db_corruption test_bugs
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features
 
@@ -47,16 +48,32 @@ test_db_corruption: test_db_corruption.c test_framework.c $(DB_SOURCES)
 test_bugs: test_bugs.c test_framework.c $(MATCHER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Agent mkdir tests
+AGENT_MKDIR_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_agent_mkdir: test_agent_mkdir.c test_framework.c $(AGENT_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# History tests
+HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_history: test_history.c test_framework.c $(HISTORY_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher
+test: test_database test_matcher test_history test_agent_mkdir
 	@echo "Running database tests..."
 	@./test_database
 	@echo ""
 	@echo "Running matcher tests..."
 	@./test_matcher
+	@echo ""
+	@echo "Running history tests..."
+	@./test_history
+	@echo ""
+	@echo "Running agent mkdir tests..."
+	@./test_agent_mkdir
 	@echo ""
 	@echo "All unit tests complete."
 

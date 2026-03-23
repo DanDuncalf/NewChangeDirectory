@@ -151,7 +151,12 @@ typedef struct {
 #endif
 
 #define NCD_VERSION       1
-#define NCD_RESCAN_HOURS  24   /* trigger background rescan after this many  */
+
+/* Rescan interval configuration */
+#define NCD_RESCAN_HOURS_DEFAULT  24   /* default: trigger background rescan after 24h */
+#define NCD_RESCAN_HOURS_MIN      1    /* minimum: 1 hour */
+#define NCD_RESCAN_HOURS_MAX      168  /* maximum: 1 week (168 hours) */
+#define NCD_RESCAN_NEVER          (-1) /* disable auto-rescan */
 
 /* ================================================================ constants  */
 
@@ -277,11 +282,12 @@ typedef struct {
     int      default_timeout;     /* Default for /t (seconds, -1 = not set)  */
     bool     has_defaults;        /* true if any defaults have been set      */
     uint8_t  service_retry_count; /* Max retries for service busy (0=default)*/
-    uint8_t  pad[2];              /* Padding for alignment                   */
+    int16_t  rescan_interval_hours; /* Auto-rescan interval (1-168, or -1=never) */
+    uint8_t  pad[4];              /* Padding for alignment                   */
 } NcdConfig;
 
 #define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
-#define NCD_CFG_VERSION  2            /* Incremented: added service_retry_count*/
+#define NCD_CFG_VERSION  3            /* Incremented: added rescan_interval_hours*/
 
 /* Default value for service retry count (10 * 100ms = 1 second max wait) */
 #define NCD_DEFAULT_SERVICE_RETRY_COUNT  10
@@ -457,7 +463,7 @@ typedef struct {
 #endif
     /* Agent mode options (/agent command) */
     bool agent_mode;              /* /agent -- agent API mode                */
-    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete */
+    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir */
     bool agent_json;              /* --json output                           */
     int  agent_limit;             /* --limit N (default 20, 0=unlimited)     */
     bool agent_depth_sort;        /* --depth (sort shallowest first)         */

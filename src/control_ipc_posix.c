@@ -379,6 +379,103 @@ NcdIpcResult ipc_client_request_flush(NcdIpcClient *client) {
     return send_receive(client, NCD_MSG_REQUEST_FLUSH, NULL, 0, NULL, NULL);
 }
 
+NcdIpcResult ipc_client_get_version(NcdIpcClient *client, NcdIpcVersionInfo *info) {
+    if (!info) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    void *response = NULL;
+    size_t response_len = 0;
+    
+    NcdIpcResult result = send_receive(client, NCD_MSG_GET_VERSION,
+                                        NULL, 0, &response, &response_len);
+    
+    if (result != NCD_IPC_OK) {
+        return result;
+    }
+    
+    if (!response || response_len < sizeof(NcdVersionInfoPayload)) {
+        free(response);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    NcdVersionInfoPayload *payload = (NcdVersionInfoPayload *)response;
+    
+    strncpy(info->app_version, payload->app_version, sizeof(info->app_version) - 1);
+    info->app_version[sizeof(info->app_version) - 1] = '\0';
+    
+    strncpy(info->build_stamp, payload->build_stamp, sizeof(info->build_stamp) - 1);
+    info->build_stamp[sizeof(info->build_stamp) - 1] = '\0';
+    
+    info->protocol_version = payload->protocol_version;
+    
+    free(response);
+    return NCD_IPC_OK;
+}
+
+NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
+                                       const char *client_version,
+                                       const char *client_build,
+                                       NcdIpcVersionCheckResult *result) {
+    if (!client_version || !client_build || !result) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    memset(result, 0, sizeof(*result));
+    
+    /* Get service version */
+    NcdIpcVersionInfo service_info;
+    NcdIpcResult ipc_result = ipc_client_get_version(client, &service_info);
+    
+    if (ipc_result != NCD_IPC_OK) {
+        snprintf(result->message, sizeof(result->message),
+                 "Failed to get service version: %s", ipc_error_string(ipc_result));
+        return ipc_result;
+    }
+    
+    /* Store versions in result */
+    strncpy(result->client_version, client_version, sizeof(result->client_version) - 1);
+    strncpy(result->client_build, client_build, sizeof(result->client_build) - 1);
+    strncpy(result->service_version, service_info.app_version, sizeof(result->service_version) - 1);
+    strncpy(result->service_build, service_info.build_stamp, sizeof(result->service_build) - 1);
+    
+    /* Compare versions */
+    if (strcmp(client_version, service_info.app_version) == 0) {
+        result->versions_match = true;
+        result->service_was_stopped = false;
+        snprintf(result->message, sizeof(result->message),
+                 "Versions match: %s", client_version);
+        return NCD_IPC_OK;
+    }
+    
+    /* Versions don't match - request service shutdown */
+    result->versions_match = false;
+    
+    ipc_result = ipc_client_request_shutdown(client);
+    if (ipc_result == NCD_IPC_OK) {
+        result->service_was_stopped = true;
+        snprintf(result->message, sizeof(result->message),
+                 "Version mismatch detected. Client: %s (%s), Service: %s (%s). "
+                 "Service has been gracefully stopped.",
+                 client_version, client_build,
+                 service_info.app_version, service_info.build_stamp);
+    } else {
+        result->service_was_stopped = false;
+        snprintf(result->message, sizeof(result->message),
+                 "Version mismatch detected. Client: %s (%s), Service: %s (%s). "
+                 "Failed to stop service: %s",
+                 client_version, client_build,
+                 service_info.app_version, service_info.build_stamp,
+                 ipc_error_string(ipc_result));
+    }
+    
+    return NCD_IPC_ERROR_GENERIC;
+}
+
+NcdIpcResult ipc_client_request_shutdown(NcdIpcClient *client) {
+    return send_receive(client, NCD_MSG_REQUEST_SHUTDOWN, NULL, 0, NULL, NULL);
+}
+
 /* --------------------------------------------------------- server API         */
 
 NcdIpcServer *ipc_server_init(void) {
@@ -607,6 +704,58 @@ NcdIpcResult ipc_server_send_error(NcdIpcConnection *conn,
     memcpy(msg_buf + sizeof(NcdIpcHeader) + sizeof(NcdErrorPayload), message, msg_len);
     
     size_t total_len = sizeof(NcdIpcHeader) + sizeof(NcdErrorPayload) + msg_len;
+    ssize_t sent = send(conn->fd, msg_buf, total_len, 0);
+    
+    if (sent < 0) {
+        return errno_to_ipc(errno);
+    }
+    
+    return (sent == (ssize_t)total_len) ? NCD_IPC_OK : NCD_IPC_ERROR_GENERIC;
+}
+
+NcdIpcResult ipc_server_send_version_mismatch(NcdIpcConnection *conn,
+                                               uint32_t sequence,
+                                               const char *client_version,
+                                               const char *client_build,
+                                               const char *service_version,
+                                               const char *service_build,
+                                               const char *message) {
+    if (!conn || conn->fd < 0) {
+        return NCD_IPC_ERROR_GENERIC;
+    }
+    
+    size_t msg_len = strlen(message) + 1;
+    size_t payload_size = sizeof(NcdVersionMismatchPayload) + msg_len;
+    
+    if (sizeof(NcdIpcHeader) + payload_size > NCD_IPC_MAX_MSG_SIZE) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
+    NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
+    hdr->magic = NCD_IPC_MAGIC;
+    hdr->version = NCD_IPC_VERSION;
+    hdr->type = NCD_MSG_VERSION_MISMATCH;
+    hdr->sequence = sequence;
+    hdr->payload_len = (uint32_t)payload_size;
+    
+    NcdVersionMismatchPayload *vm = (NcdVersionMismatchPayload *)(msg_buf + sizeof(NcdIpcHeader));
+    strncpy(vm->client_version, client_version, sizeof(vm->client_version) - 1);
+    vm->client_version[sizeof(vm->client_version) - 1] = '\0';
+    
+    strncpy(vm->client_build, client_build, sizeof(vm->client_build) - 1);
+    vm->client_build[sizeof(vm->client_build) - 1] = '\0';
+    
+    strncpy(vm->service_version, service_version, sizeof(vm->service_version) - 1);
+    vm->service_version[sizeof(vm->service_version) - 1] = '\0';
+    
+    strncpy(vm->service_build, service_build, sizeof(vm->service_build) - 1);
+    vm->service_build[sizeof(vm->service_build) - 1] = '\0';
+    
+    vm->message_len = (uint32_t)msg_len;
+    memcpy(msg_buf + sizeof(NcdIpcHeader) + sizeof(NcdVersionMismatchPayload), message, msg_len);
+    
+    size_t total_len = sizeof(NcdIpcHeader) + payload_size;
     ssize_t sent = send(conn->fd, msg_buf, total_len, 0);
     
     if (sent < 0) {

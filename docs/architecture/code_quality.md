@@ -2,7 +2,8 @@
 
 All 14 items from the original audit have been addressed.
 
-Completed:
+## Completed
+
 1. Buffer overflow in fuzzy matching variation generation — bounded recursion
 2. Wrong offset for skipped_rescan on Linux — offsetof() fix
 3. Inconsistent fread/fwrite/fseek return checking — all paths now check immediately
