@@ -37,6 +37,13 @@ static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
 static volatile int g_shutdown_requested = 0;
 
+#if NCD_PLATFORM_WINDOWS
+/* Named objects for service instance detection and control */
+#define SERVICE_MUTEX_NAME      "NCDService_Instance_7D3F9A2E"
+#define SERVICE_STOP_EVENT_NAME "NCDService_Stop_7D3F9A2E"
+static HANDLE g_hStopEvent = NULL;
+#endif
+
 /* Version info - must match NCD_APP_VERSION in control_ipc.h */
 #define SERVICE_VERSION     "1.3"
 #define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
@@ -816,7 +823,234 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
 
 /* --------------------------------------------------------- main               */
 
+
+/* --------------------------------------------------------- Windows service control */
+
+#if NCD_PLATFORM_WINDOWS
+
+/* Check if service is already running */
+static bool is_service_running(void) {
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, SERVICE_MUTEX_NAME);
+    if (hMutex) {
+        CloseHandle(hMutex);
+        return true;
+    }
+    return false;
+}
+
+/* Signal running service to stop via IPC */
+static bool signal_stop_service(void) {
+    /* Initialize IPC client subsystem */
+    if (ipc_client_init() != 0) {
+        return false;
+    }
+    
+    /* Connect to the service IPC server */
+    NcdIpcClient *client = ipc_client_connect();
+    if (!client) {
+        ipc_client_cleanup();
+        return false;
+    }
+    
+    /* Send shutdown request */
+    NcdIpcResult result = ipc_client_request_shutdown(client);
+    
+    ipc_client_disconnect(client);
+    ipc_client_cleanup();
+    
+    return (result == NCD_IPC_OK);
+}
+
+/* Spawn detached child process to run as daemon */
+static int spawn_daemon(const char *exe_path) {
+    STARTUPINFOA si = {sizeof(si)};
+    PROCESS_INFORMATION pi;
+    char cmd[MAX_PATH * 2];
+    
+    snprintf(cmd, sizeof(cmd), "\"%s\" --daemon", exe_path);
+    
+    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
+                      CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                      NULL, NULL, &si, &pi)) {
+        printf("NCD Service started (PID: %lu)\n", pi.dwProcessId);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return 0;
+    }
+    fprintf(stderr, "Failed to start service: %lu\n", GetLastError());
+    return 1;
+}
+
+/* Run the actual service (daemon mode) */
+static int run_service(void) {
+    /* Create mutex to indicate we're running */
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, SERVICE_MUTEX_NAME);
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        fprintf(stderr, "NCD Service: Already running\n");
+        CloseHandle(hMutex);
+        return 1;
+    }
+    
+    (void)g_hStopEvent; /* Unused - IPC used for shutdown */
+    
+    printf("NCD State Service starting...\n");
+    
+    setup_signal_handlers();
+    
+    /* Initialize service state */
+    ServiceState *state = service_state_init();
+    if (!state) {
+        fprintf(stderr, "NCD Service: Failed to initialize state\n");
+        CloseHandle(hMutex);
+        return 1;
+    }
+    
+    /* Initialize snapshot publisher */
+    SnapshotPublisher *pub = snapshot_publisher_init();
+    if (!pub) {
+        fprintf(stderr, "NCD Service: Failed to initialize publisher\n");
+        service_state_cleanup(state);
+        CloseHandle(hMutex);
+        return 1;
+    }
+    
+    /* Publish initial metadata snapshot */
+    if (!snapshot_publisher_publish_meta(pub, state)) {
+        fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
+        snapshot_publisher_cleanup(pub);
+        service_state_cleanup(state);
+        CloseHandle(hMutex);
+        return 1;
+    }
+    printf("NCD Service: Metadata snapshot published\n");
+    
+    /* Start background loader */
+    start_background_loader(state, pub);
+    
+    /* Run service loop - modified to check stop event */
+    NcdIpcServer *server = ipc_server_init();
+    if (!server) {
+        fprintf(stderr, "NCD Service: Failed to initialize IPC server\n");
+    } else {
+        printf("NCD Service: Running (PID: %lu)\n", GetCurrentProcessId());
+        
+        time_t last_flush_check = time(NULL);
+        const int FLUSH_INTERVAL_SEC = 30;
+        
+        while (g_running) {
+            
+            /* Accept client connections (100ms timeout) */
+            NcdIpcConnection *conn = ipc_server_accept(server, 100);
+            
+            if (conn) {
+                handle_client_connection(conn, state, pub);
+                ipc_server_close_connection(conn);
+            }
+            
+            /* Check for rescan request */
+            if (g_rescan_requested) {
+                g_rescan_requested = 0;
+                perform_rescan(state, pub);
+            }
+            
+            /* Check for shutdown request */
+            if (g_shutdown_requested) {
+                printf("NCD Service: Processing shutdown request...\n");
+                g_running = 0;
+                break;
+            }
+            
+            /* Periodic flush */
+            time_t now = time(NULL);
+            if (g_flush_requested || 
+                (service_state_needs_flush(state) && 
+                 (now - last_flush_check) > FLUSH_INTERVAL_SEC)) {
+                g_flush_requested = 0;
+                last_flush_check = now;
+                if (service_state_flush(state)) {
+                    printf("NCD Service: Flushed to disk\n");
+                }
+            }
+            
+            Sleep(10);
+        }
+        
+        ipc_server_cleanup(server);
+    }
+    
+    /* Cleanup */
+    printf("NCD Service: Shutting down...\n");
+    g_running = 0;
+    signal_loader_stop();
+    wait_for_loader();
+    
+    if (service_state_needs_flush(state)) {
+        service_state_flush(state);
+    }
+    
+    snapshot_publisher_cleanup(pub);
+    service_state_cleanup(state);
+    
+    CloseHandle(hMutex);
+    
+    printf("NCD Service: Shutdown complete\n");
+    return 0;
+}
+
+#endif /* NCD_PLATFORM_WINDOWS */
+
+/* --------------------------------------------------------- main               */
+
 int main(int argc, char *argv[]) {
+#if NCD_PLATFORM_WINDOWS
+    /* Get executable path for spawning daemon */
+    char exe_path[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_path, MAX_PATH);
+    
+    /* Parse command line arguments */
+    if (argc > 1) {
+        if (strcmp(argv[1], "start") == 0) {
+            if (is_service_running()) {
+                printf("NCD Service: Already running\n");
+                return 0;
+            }
+            return spawn_daemon(exe_path);
+        }
+        
+        if (strcmp(argv[1], "stop") == 0) {
+            if (!is_service_running()) {
+                printf("NCD Service: Not running\n");
+                return 1;
+            }
+            if (signal_stop_service()) {
+                printf("NCD Service: Stop signal sent\n");
+                return 0;
+            }
+            fprintf(stderr, "NCD Service: Failed to send stop signal\n");
+            return 1;
+        }
+        
+        if (strcmp(argv[1], "status") == 0) {
+            printf(is_service_running() ? "running\n" : "stopped\n");
+            return 0;
+        }
+        
+        if (strcmp(argv[1], "--daemon") == 0) {
+            return run_service();
+        }
+        
+        /* Unknown command - fall through to print usage */
+        fprintf(stderr, "Unknown command: %s\n", argv[1]);
+        fprintf(stderr, "Usage: %s [start|stop|status]\n", argv[0]);
+        return 1;
+    }
+    
+    /* No arguments = run daemon directly (backward compatible) */
+    return run_service();
+    
+#else /* Linux/POSIX */
+    
+    /* Linux: No built-in command parsing - script handles it */
     (void)argc;
     (void)argv;
     
@@ -824,7 +1058,7 @@ int main(int argc, char *argv[]) {
     
     setup_signal_handlers();
     
-    /* Initialize service state (metadata loaded synchronously, databases lazy) */
+    /* Initialize service state */
     ServiceState *state = service_state_init();
     if (!state) {
         fprintf(stderr, "NCD Service: Failed to initialize state\n");
@@ -843,9 +1077,8 @@ int main(int argc, char *argv[]) {
     
     printf("NCD Service: Publisher initialized\n");
     
-    /* Publish initial metadata snapshot (available immediately) */
-    bool meta_ok = snapshot_publisher_publish_meta(pub, state);
-    if (!meta_ok) {
+    /* Publish initial metadata snapshot */
+    if (!snapshot_publisher_publish_meta(pub, state)) {
         fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
         snapshot_publisher_cleanup(pub);
         service_state_cleanup(state);
@@ -853,23 +1086,18 @@ int main(int argc, char *argv[]) {
     }
     printf("NCD Service: Metadata snapshot published\n");
     
-    /* Start background loader to load databases */
+    /* Start background loader */
     start_background_loader(state, pub);
-    
-    /* Note: Database snapshot will be published by the loader when ready */
     
     /* Run service loop */
     service_loop(state, pub);
     
     /* Cleanup */
     printf("NCD Service: Shutting down...\n");
-    
-    /* Signal loader to stop and wait */
     g_running = 0;
     signal_loader_stop();
     wait_for_loader();
     
-    /* Final flush */
     if (service_state_needs_flush(state)) {
         service_state_flush(state);
     }
@@ -880,4 +1108,6 @@ int main(int argc, char *argv[]) {
     printf("NCD Service: Shutdown complete\n");
     
     return 0;
+    
+#endif /* NCD_PLATFORM_WINDOWS */
 }
