@@ -1740,7 +1740,13 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     {
         char footer[256];
         if (st->input_mode) {
-            snprintf(footer, sizeof(footer), " Type timeout value (10-3600s) ");
+            if (st->selected == 3) {
+                snprintf(footer, sizeof(footer), " Type timeout value (10-3600s) ");
+            } else if (st->selected == 4) {
+                snprintf(footer, sizeof(footer), " Type retry count (0-255, 0=default) ");
+            } else {
+                snprintf(footer, sizeof(footer), " Type value ");
+            }
         } else {
             snprintf(footer, sizeof(footer), " ENTER=Save  ESC=Cancel ");
         }
@@ -1790,6 +1796,8 @@ bool ui_edit_config(NcdMetadata *meta)
     bool fuzzy_match = cfg->default_fuzzy_match;
     int timeout = cfg->default_timeout;
     if (timeout < 0) timeout = 300;  /* Default to 300 if not set */
+    int service_retry = cfg->service_retry_count;
+    if (service_retry == 0) service_retry = NCD_DEFAULT_SERVICE_RETRY_COUNT;
     
     /* Define config items */
     ConfigItem items[] = {
@@ -1797,6 +1805,7 @@ bool ui_edit_config(NcdMetadata *meta)
         {"Show system dirs (/s)", &show_system, true, NULL, 0, 0, NULL},
         {"Fuzzy matching (/z)", &fuzzy_match, true, NULL, 0, 0, NULL},
         {"Scan timeout in seconds (/t)", NULL, false, &timeout, 10, 3600, NULL},
+        {"Service retry count (/retry)", NULL, false, &service_retry, 0, 255, NULL},
     };
     int item_count = sizeof(items) / sizeof(items[0]);
     
@@ -1924,6 +1933,7 @@ bool ui_edit_config(NcdMetadata *meta)
                 cfg->default_show_system = show_system;
                 cfg->default_fuzzy_match = fuzzy_match;
                 cfg->default_timeout = timeout;
+                cfg->service_retry_count = (uint8_t)service_retry;
                 cfg->has_defaults = true;
                 cfg->magic = NCD_CFG_MAGIC;
                 cfg->version = NCD_CFG_VERSION;

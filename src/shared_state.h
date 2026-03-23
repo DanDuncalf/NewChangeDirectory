@@ -108,7 +108,8 @@ typedef struct {
     uint8_t  default_fuzzy_match;
     int8_t   default_timeout;    /* -1 = not set */
     uint8_t  has_defaults;
-    uint8_t  pad[2];
+    uint8_t  service_retry_count;/* Max retries for service busy (0=default)*/
+    uint8_t  pad;
 } ShmConfigSection;              /* 16 bytes */
 
 /*

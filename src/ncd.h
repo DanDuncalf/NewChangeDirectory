@@ -276,11 +276,15 @@ typedef struct {
     bool     default_fuzzy_match; /* Default for /z                          */
     int      default_timeout;     /* Default for /t (seconds, -1 = not set)  */
     bool     has_defaults;        /* true if any defaults have been set      */
-    uint8_t  pad[3];              /* Padding for alignment                   */
+    uint8_t  service_retry_count; /* Max retries for service busy (0=default)*/
+    uint8_t  pad[2];              /* Padding for alignment                   */
 } NcdConfig;
 
 #define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
-#define NCD_CFG_VERSION  1
+#define NCD_CFG_VERSION  2            /* Incremented: added service_retry_count*/
+
+/* Default value for service retry count */
+#define NCD_DEFAULT_SERVICE_RETRY_COUNT  50
 
 /*
  * NcdHeurEntryV2  --  enhanced heuristics entry with frequency and recency
@@ -478,6 +482,10 @@ typedef struct {
     bool history_list;            /* /hl -- print history list               */
     bool history_clear;           /* /hc -- clear all history                */
     int  history_remove;          /* /hc# -- remove entry at index (1-9), 0=not set */
+    
+    /* Service retry count */
+    int  service_retry_count;     /* /retry <n> -- max retries for service busy (0=use config default) */
+    bool service_retry_set;       /* true if /retry was specified on command line */
 } NcdOptions;
 
 /*

@@ -559,6 +559,7 @@ static void print_usage(void)
         "  /c            Edit default options interactively\r\n"
         "  /d <path>     Use alternate database file\r\n"
         "  /t <sec>      Scan timeout in seconds (default: 300)\r\n"
+        "  /retry <n>    Service busy retry count (0-255, 0=use config default)\r\n"
         "  /v            Print version\r\n"
         "\r\n"
         "Agent Mode:\r\n"
@@ -961,6 +962,23 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
                             return false;
                         }
                     default:
+                        /* Check for /retry option */
+                        if (_strnicmp(arg + j, "retry", 5) == 0) {
+                            const char *val = arg + j + 5;
+                            if (*val == '\0' && i + 1 < argc) {
+                                i++;
+                                opts->service_retry_count = atoi(argv[i]);
+                                opts->service_retry_set = true;
+                                goto next_arg;
+                            } else if (*val) {
+                                opts->service_retry_count = atoi(val);
+                                opts->service_retry_set = true;
+                                goto next_arg;
+                            } else {
+                                ncd_println("NCD: /retry requires a count (0-255, 0=use config default)");
+                                return false;
+                            }
+                        }
                         ncd_printf("NCD: unknown option /%c\r\n", flag);
                         return false;
                 }
