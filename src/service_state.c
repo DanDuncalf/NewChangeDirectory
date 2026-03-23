@@ -567,27 +567,38 @@ bool service_state_enqueue_request(ServiceState *state,
     return true;
 }
 
-void service_state_process_pending(ServiceState *state, void *pub) {
-    if (!state) return;
+/*
+ * service_state_dequeue_pending  --  Dequeue a pending request for processing
+ *
+ * Returns true if a request was dequeued, false if queue is empty.
+ * Caller is responsible for freeing node->data and node.
+ */
+bool service_state_dequeue_pending(ServiceState *state, PendingRequestType *out_type,
+                                    void **out_data, size_t *out_data_len) {
+    if (!state || !out_type || !out_data || !out_data_len) return false;
     
-    /* Process all pending requests */
-    while (state->pending_head) {
-        PendingRequestNode *node = state->pending_head;
-        state->pending_head = node->next;
-        if (!state->pending_head) {
-            state->pending_tail = NULL;
-        }
-        state->pending_count--;
-        
-        /* Process based on type - in a real implementation, 
-         * this would call the appropriate handler with 'pub' */
-        /* For now, just free the node */
-        
-        if (node->data) {
-            free(node->data);
-        }
-        free(node);
+    if (!state->pending_head) return false;
+    
+    PendingRequestNode *node = state->pending_head;
+    state->pending_head = node->next;
+    if (!state->pending_head) {
+        state->pending_tail = NULL;
     }
+    state->pending_count--;
+    
+    *out_type = node->type;
+    *out_data = node->data;  /* Transfer ownership */
+    *out_data_len = node->data_len;
+    
+    free(node);
+    return true;
+}
+
+void service_state_process_pending(ServiceState *state, void *pub) {
+    (void)state;
+    (void)pub;
+    /* This is implemented in service_main.c where handlers are defined */
+    /* The actual processing iterates using service_state_dequeue_pending */
 }
 
 void service_state_clear_pending(ServiceState *state) {

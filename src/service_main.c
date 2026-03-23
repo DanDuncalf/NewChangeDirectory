@@ -210,6 +210,202 @@ static void handle_request_flush(NcdIpcConnection *conn,
     ipc_server_send_response(conn, sequence, NULL, 0);
 }
 
+/* --------------------------------------------------------- pending request handlers
+ * These are called by service_state_process_pending() after service becomes READY
+ */
+
+void handle_pending_heuristic(ServiceState *state, void *pub, 
+                               const char *search, const char *target) {
+    if (service_state_note_heuristic(state, search, target)) {
+        service_state_bump_meta_generation(state);
+        snapshot_publisher_publish_meta((SnapshotPublisher *)pub, state);
+    }
+}
+
+void handle_pending_metadata(ServiceState *state, void *pub,
+                              int update_type, const void *data) {
+    bool success = false;
+    
+    switch (update_type) {
+        case NCD_META_UPDATE_GROUP_ADD: {
+            const char **args = (const char **)data;
+            success = service_state_add_group(state, args[0], args[1]);
+            break;
+        }
+        case NCD_META_UPDATE_GROUP_REMOVE:
+            success = service_state_remove_group(state, (const char *)data);
+            break;
+        case NCD_META_UPDATE_EXCLUSION_ADD:
+            success = service_state_add_exclusion(state, (const char *)data);
+            break;
+        case NCD_META_UPDATE_EXCLUSION_REMOVE:
+            success = service_state_remove_exclusion(state, (const char *)data);
+            break;
+        case NCD_META_UPDATE_CONFIG:
+            success = service_state_update_config(state, (const NcdConfig *)data);
+            break;
+        case NCD_META_UPDATE_CLEAR_HISTORY:
+            success = service_state_clear_history(state);
+            break;
+        case NCD_META_UPDATE_DIR_HISTORY_ADD: {
+            const char *path = *(const char **)data;
+            char drive = *((const char *)data + sizeof(const char *));
+            success = service_state_add_dir_history(state, path, drive);
+            break;
+        }
+    }
+    
+    if (success) {
+        service_state_bump_meta_generation(state);
+        snapshot_publisher_publish_meta((SnapshotPublisher *)pub, state);
+    }
+}
+
+void handle_pending_rescan(ServiceState *state, void *pub) {
+    (void)state;
+    (void)pub;
+    /* Just set the flag - main loop will handle it */
+    g_rescan_requested = 1;
+}
+
+void handle_pending_flush(ServiceState *state) {
+    (void)state;
+    g_flush_requested = 1;
+}
+
+/*
+ * process_all_pending  --  Process all pending requests in the queue
+ *
+ * This is called by the loader thread after transitioning to READY.
+ */
+static void process_all_pending(ServiceState *state, SnapshotPublisher *pub) {
+    PendingRequestType type;
+    void *data = NULL;
+    size_t data_len = 0;
+    
+    printf("NCD Service: Processing %d pending requests...\n", 
+           service_state_get_pending_count(state));
+    
+    while (service_state_dequeue_pending(state, &type, &data, &data_len)) {
+        switch (type) {
+            case PENDING_HEURISTIC: {
+                /* Data format: search_len (4 bytes) + target_len (4 bytes) + search + target */
+                if (data && data_len >= 8) {
+                    uint32_t search_len = *(uint32_t *)data;
+                    uint32_t target_len = *(uint32_t *)((char *)data + 4);
+                    if (search_len > 0 && target_len > 0 && 
+                        data_len >= 8 + search_len + target_len) {
+                        const char *search = (const char *)data + 8;
+                        const char *target = search + search_len;
+                        handle_pending_heuristic(state, pub, search, target);
+                    }
+                }
+                break;
+            }
+            
+            case PENDING_METADATA_UPDATE: {
+                /* Data format: update_type (4 bytes) + data_len (4 bytes) + data */
+                if (data && data_len >= 8) {
+                    int update_type = *(int *)data;
+                    uint32_t md_len = *(uint32_t *)((char *)data + 4);
+                    if (md_len == 0 || data_len >= 8 + md_len) {
+                        const void *update_data = (const char *)data + 8;
+                        handle_pending_metadata(state, pub, update_type, update_data);
+                    }
+                }
+                break;
+            }
+            
+            case PENDING_RESCAN:
+                handle_pending_rescan(state, pub);
+                break;
+                
+            case PENDING_FLUSH:
+                handle_pending_flush(state);
+                break;
+        }
+        
+        if (data) {
+            free(data);
+            data = NULL;
+        }
+    }
+    
+    printf("NCD Service: Pending requests processed\n");
+}
+
+/*
+ * try_queue_mutation  --  Try to queue a mutation request for later processing
+ *
+ * Returns true if queued, false if queue is full.
+ */
+static bool try_queue_mutation(ServiceState *state, 
+                                NcdMessageType msg_type,
+                                const void *payload, size_t payload_len) {
+    /* Only queue during LOADING or SCANNING states */
+    ServiceRuntimeState runtime = service_state_get_runtime_state(state);
+    if (runtime != SERVICE_STATE_LOADING && runtime != SERVICE_STATE_SCANNING) {
+        return false;
+    }
+    
+    PendingRequestType pending_type;
+    void *data = NULL;
+    size_t data_len = 0;
+    
+    switch (msg_type) {
+        case NCD_MSG_SUBMIT_HEURISTIC: {
+            if (!payload || payload_len < sizeof(NcdSubmitHeuristicPayload)) {
+                return false;
+            }
+            NcdSubmitHeuristicPayload *hp = (NcdSubmitHeuristicPayload *)payload;
+            pending_type = PENDING_HEURISTIC;
+            data_len = 8 + hp->search_len + hp->target_len;
+            data = malloc(data_len);
+            if (!data) return false;
+            *(uint32_t *)data = hp->search_len;
+            *(uint32_t *)((char *)data + 4) = hp->target_len;
+            memcpy((char *)data + 8, 
+                   (const char *)payload + sizeof(NcdSubmitHeuristicPayload),
+                   hp->search_len + hp->target_len);
+            break;
+        }
+        
+        case NCD_MSG_SUBMIT_METADATA: {
+            if (!payload || payload_len < sizeof(NcdSubmitMetadataPayload)) {
+                return false;
+            }
+            NcdSubmitMetadataPayload *mp = (NcdSubmitMetadataPayload *)payload;
+            pending_type = PENDING_METADATA_UPDATE;
+            data_len = 8 + mp->data_len;
+            data = malloc(data_len);
+            if (!data) return false;
+            *(int *)data = mp->update_type;
+            *(uint32_t *)((char *)data + 4) = mp->data_len;
+            if (mp->data_len > 0) {
+                memcpy((char *)data + 8,
+                       (const char *)payload + sizeof(NcdSubmitMetadataPayload),
+                       mp->data_len);
+            }
+            break;
+        }
+        
+        case NCD_MSG_REQUEST_RESCAN:
+            pending_type = PENDING_RESCAN;
+            break;
+            
+        case NCD_MSG_REQUEST_FLUSH:
+            pending_type = PENDING_FLUSH;
+            break;
+            
+        default:
+            return false;
+    }
+    
+    bool queued = service_state_enqueue_request(state, pending_type, data, data_len);
+    if (data) free(data);
+    return queued;
+}
+
 /*
  * check_service_ready  --  Check if service is ready for data-dependent operations
  *
@@ -275,10 +471,26 @@ static void handle_client_connection(NcdIpcConnection *conn,
         return;
     }
     
-    /* All other operations require READY state */
-    if (!check_service_ready(conn, sequence, state)) {
-        if (payload) ipc_free_message(payload);
-        return;
+    /* Check service state - for mutations during LOADING/SCANNING, try to queue */
+    ServiceRuntimeState runtime = service_state_get_runtime_state(state);
+    if (runtime != SERVICE_STATE_READY) {
+        /* Try to queue mutation requests */
+        if ((msg_type == NCD_MSG_SUBMIT_HEURISTIC ||
+             msg_type == NCD_MSG_SUBMIT_METADATA ||
+             msg_type == NCD_MSG_REQUEST_RESCAN ||
+             msg_type == NCD_MSG_REQUEST_FLUSH) &&
+            try_queue_mutation(state, msg_type, payload, payload_len)) {
+            /* Request queued for later processing */
+            ipc_server_send_response(conn, sequence, NULL, 0);
+            if (payload) ipc_free_message(payload);
+            return;
+        }
+        
+        /* Not queued - return busy error */
+        if (!check_service_ready(conn, sequence, state)) {
+            if (payload) ipc_free_message(payload);
+            return;
+        }
     }
     
     switch (msg_type) {
@@ -331,12 +543,19 @@ static void handle_client_connection(NcdIpcConnection *conn,
 
 /* --------------------------------------------------------- background loader  */
 
+typedef struct {
+    ServiceState *state;
+    SnapshotPublisher *pub;
+} LoaderContext;
+
 #if NCD_PLATFORM_WINDOWS
 static DWORD WINAPI LoaderThreadFunc(LPVOID param) {
 #else
 static void *loader_thread_func(void *param) {
 #endif
-    ServiceState *state = (ServiceState *)param;
+    LoaderContext *ctx = (LoaderContext *)param;
+    ServiceState *state = ctx->state;
+    SnapshotPublisher *pub = ctx->pub;
     
     printf("NCD Service: Background loader started\n");
     
@@ -346,10 +565,23 @@ static void *loader_thread_func(void *param) {
         fprintf(stderr, "NCD Service: Warning - database loading had issues\n");
     }
     
+    /* Publish database snapshot */
+    printf("NCD Service: Publishing database snapshot...\n");
+    if (!snapshot_publisher_publish_db(pub, state)) {
+        fprintf(stderr, "NCD Service: Failed to publish database snapshot\n");
+    } else {
+        printf("NCD Service: Database snapshot published\n");
+    }
+    
     /* Transition to READY state */
     service_state_set_runtime_state(state, SERVICE_STATE_READY);
     service_state_set_status_message(state, "Ready");
     printf("NCD Service: Ready\n");
+    
+    /* Process any pending requests that were queued during loading */
+    process_all_pending(state, pub);
+    
+    free(ctx);
     
 #if NCD_PLATFORM_WINDOWS
     return 0;
@@ -358,19 +590,39 @@ static void *loader_thread_func(void *param) {
 #endif
 }
 
-static void start_background_loader(ServiceState *state) {
+static LoaderContext *g_loader_ctx = NULL;
+
+static void start_background_loader(ServiceState *state, SnapshotPublisher *pub) {
+    g_loader_ctx = (LoaderContext *)malloc(sizeof(LoaderContext));
+    if (!g_loader_ctx) {
+        fprintf(stderr, "NCD Service: Failed to allocate loader context\n");
+        /* Continue synchronously */
+        LoaderContext ctx = {state, pub};
+        LoaderThreadFunc(&ctx);
+        return;
+    }
+    
+    g_loader_ctx->state = state;
+    g_loader_ctx->pub = pub;
+    
 #if NCD_PLATFORM_WINDOWS
-    g_loader_thread = CreateThread(NULL, 0, LoaderThreadFunc, state, 0, NULL);
+    g_loader_thread = CreateThread(NULL, 0, LoaderThreadFunc, g_loader_ctx, 0, NULL);
     if (!g_loader_thread) {
         fprintf(stderr, "NCD Service: Failed to start loader thread\n");
+        free(g_loader_ctx);
+        g_loader_ctx = NULL;
         /* Continue synchronously */
-        LoaderThreadFunc(state);
+        LoaderContext ctx = {state, pub};
+        LoaderThreadFunc(&ctx);
     }
 #else
-    if (pthread_create(&g_loader_thread, NULL, loader_thread_func, state) != 0) {
+    if (pthread_create(&g_loader_thread, NULL, loader_thread_func, g_loader_ctx) != 0) {
         fprintf(stderr, "NCD Service: Failed to start loader thread\n");
+        free(g_loader_ctx);
+        g_loader_ctx = NULL;
         /* Continue synchronously */
-        loader_thread_func(state);
+        LoaderContext ctx = {state, pub};
+        loader_thread_func(&ctx);
     }
 #endif
 }
@@ -388,6 +640,8 @@ static void wait_for_loader(void) {
         g_loader_thread = 0;
     }
 #endif
+    /* Context is freed by loader thread */
+    g_loader_ctx = NULL;
 }
 
 static void signal_loader_stop(void) {
@@ -542,7 +796,7 @@ int main(int argc, char *argv[]) {
     printf("NCD Service: Metadata snapshot published\n");
     
     /* Start background loader to load databases */
-    start_background_loader(state);
+    start_background_loader(state, pub);
     
     /* Note: Database snapshot will be published by the loader when ready */
     

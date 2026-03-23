@@ -266,6 +266,15 @@ bool service_state_enqueue_request(ServiceState *state,
 void service_state_process_pending(ServiceState *state, void *pub);
 
 /*
+ * service_state_dequeue_pending  --  Dequeue a pending request for processing
+ *
+ * Returns true if a request was dequeued, false if queue is empty.
+ * Caller is responsible for freeing the returned data.
+ */
+bool service_state_dequeue_pending(ServiceState *state, PendingRequestType *out_type,
+                                    void **out_data, size_t *out_data_len);
+
+/*
  * service_state_clear_pending  --  Clear all pending requests
  */
 void service_state_clear_pending(ServiceState *state);

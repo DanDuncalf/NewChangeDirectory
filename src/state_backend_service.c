@@ -406,6 +406,25 @@ const NcdDatabase *state_view_database_service(const NcdStateView *view) {
 
 /* --------------------------------------------------------- mutations          */
 
+/* Maximum retries for busy states */
+#define MAX_BUSY_RETRIES 50  /* 50 * 100ms = 5 seconds max wait */
+#define BUSY_RETRY_DELAY_MS 100
+
+/*
+ * Helper: Retry on BUSY_LOADING or BUSY_SCANNING
+ */
+static NcdIpcResult retry_on_busy(NcdIpcResult result, int *retries, const char *status_msg) {
+    if ((result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) 
+        && *retries < MAX_BUSY_RETRIES) {
+        (*retries)++;
+        printf("NCD: Service busy (%s), retrying... (%d/%d)\n", 
+               status_msg ? status_msg : "loading", *retries, MAX_BUSY_RETRIES);
+        platform_sleep_ms(BUSY_RETRY_DELAY_MS);
+        return NCD_IPC_ERROR_BUSY;  /* Signal caller to retry */
+    }
+    return result;
+}
+
 int state_backend_submit_heuristic_update_service(NcdStateView *view,
                                                    const char *search,
                                                    const char *target) {
@@ -414,7 +433,14 @@ int state_backend_submit_heuristic_update_service(NcdStateView *view,
         return -1;
     }
     
-    NcdIpcResult result = ipc_client_submit_heuristic(view->ipc_client, search, target);
+    int retries = 0;
+    NcdIpcResult result;
+    
+    do {
+        result = ipc_client_submit_heuristic(view->ipc_client, search, target);
+        result = retry_on_busy(result, &retries, "loading");
+    } while (result == NCD_IPC_ERROR_BUSY);
+    
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));
         return -1;
@@ -432,8 +458,15 @@ int state_backend_submit_metadata_update_service(NcdStateView *view,
         return -1;
     }
     
-    NcdIpcResult result = ipc_client_submit_metadata(view->ipc_client, 
-                                                       update_type, data, data_size);
+    int retries = 0;
+    NcdIpcResult result;
+    
+    do {
+        result = ipc_client_submit_metadata(view->ipc_client, 
+                                            update_type, data, data_size);
+        result = retry_on_busy(result, &retries, "loading");
+    } while (result == NCD_IPC_ERROR_BUSY);
+    
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));
         return -1;
@@ -450,7 +483,14 @@ int state_backend_request_rescan_service(NcdStateView *view,
         return -1;
     }
     
-    NcdIpcResult result = ipc_client_request_rescan(view->ipc_client, drive_mask, scan_root_only);
+    int retries = 0;
+    NcdIpcResult result;
+    
+    do {
+        result = ipc_client_request_rescan(view->ipc_client, drive_mask, scan_root_only);
+        result = retry_on_busy(result, &retries, "scanning");
+    } while (result == NCD_IPC_ERROR_BUSY);
+    
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));
         return -1;
@@ -465,7 +505,14 @@ int state_backend_request_flush_service(NcdStateView *view) {
         return -1;
     }
     
-    NcdIpcResult result = ipc_client_request_flush(view->ipc_client);
+    int retries = 0;
+    NcdIpcResult result;
+    
+    do {
+        result = ipc_client_request_flush(view->ipc_client);
+        result = retry_on_busy(result, &retries, "loading");
+    } while (result == NCD_IPC_ERROR_BUSY);
+    
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));
         return -1;
