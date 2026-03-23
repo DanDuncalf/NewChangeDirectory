@@ -132,7 +132,6 @@ These functions are deterministic, side-effect-free, and can be tested in isolat
 | 7 | Metadata preserves exclusions section | roundtrip with exclusions |
 | 8 | Metadata preserves heuristics section | roundtrip with heuristics |
 | 9 | Metadata preserves history section | roundtrip with history |
-| 10 | db_metadata_migrate handles no legacy files | `db_metadata_migrate()` |
 | 11 | db_metadata_cleanup_legacy returns 0 with none | `db_metadata_cleanup_legacy()` |
 | 12 | db_metadata_free handles NULL | `db_metadata_free()` |
 

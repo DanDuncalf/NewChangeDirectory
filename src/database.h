@@ -337,7 +337,7 @@ bool db_metadata_save(NcdMetadata *meta);
  * Called automatically by db_metadata_load() if ncd.metadata doesn't exist.
  * Returns true on success, false if no legacy files found or migration failed.
  */
-bool db_metadata_migrate(void);
+
 
 /*
  * Delete legacy files after successful migration.

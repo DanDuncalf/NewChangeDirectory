@@ -2839,18 +2839,7 @@ NcdMetadata *db_metadata_load(void)
     NcdMetadata *meta = db_metadata_create();
     
     char path[MAX_PATH];
-    if (!db_metadata_path(path, sizeof(path))) {
-        /* Try to migrate from legacy files */
-        db_metadata_migrate();
-        if (!db_metadata_path(path, sizeof(path))) return meta;
-    }
-    
-    /* Check if we need to migrate from legacy files */
-    if (!platform_file_exists(path)) {
-        db_metadata_migrate();
-    }
-    
-    if (!platform_file_exists(path)) {
+    if (!db_metadata_path(path, sizeof(path)) || !platform_file_exists(path)) {
         /* No metadata file and no legacy files - return empty metadata with defaults */
         db_exclusion_init_defaults(meta);
         return meta;
@@ -2875,9 +2864,6 @@ NcdMetadata *db_metadata_load(void)
 
     if (hdr.magic != NCD_META_MAGIC || hdr.version != NCD_META_VERSION) {
         fclose(f);
-        /* Try legacy migration */
-        db_metadata_migrate();
-        db_config_load(&meta->cfg);
         return meta;
     }
     
@@ -2913,10 +2899,8 @@ NcdMetadata *db_metadata_load(void)
     uint64_t computed_crc = platform_crc64(data, data_size);
     
     if (computed_crc != hdr.checksum) {
-        /* CRC mismatch - try legacy files */
+        /* CRC mismatch */
         free(data);
-        db_metadata_migrate();
-        db_config_load(&meta->cfg);
         return meta;
     }
     
@@ -3028,121 +3012,6 @@ NcdMetadata *db_metadata_load(void)
     
     free(data);
     return meta;
-}
-
-/* Legacy heuristics entry (for migration) */
-typedef struct {
-    char search[NCD_MAX_PATH];
-    char target[NCD_MAX_PATH];
-} NcdHeurEntryOld;
-
-bool db_metadata_migrate(void)
-{
-    if (db_metadata_exists()) return true;  /* Already migrated */
-    
-    NcdMetadata *meta = db_metadata_create();
-    bool any_migrated = false;
-    
-    /* Migrate config */
-    NcdConfig cfg;
-    if (db_config_load(&cfg)) {
-        meta->cfg = cfg;
-        meta->config_dirty = true;
-        any_migrated = true;
-    }
-    
-    /* Migrate groups from legacy ncd.groups file */
-    NcdGroupDb *gdb = db_group_load();
-    if (gdb && gdb->count > 0) {
-        meta->groups.capacity = gdb->count;
-        meta->groups.groups = ncd_malloc_array(gdb->count, sizeof(NcdGroupEntry));
-        for (int i = 0; i < gdb->count && i < NCD_MAX_GROUPS; i++) {
-            memcpy(&meta->groups.groups[i], &gdb->groups[i], sizeof(NcdGroupEntry));
-            meta->groups.count++;
-        }
-        meta->groups_dirty = true;
-        any_migrated = true;
-        db_group_free(gdb);
-    }
-    
-    /* Migrate heuristics from legacy history file */
-    char hist_path[MAX_PATH];
-    if (!db_history_path(hist_path, sizeof(hist_path))) {
-        /* No history path available - skip migration */
-    }
-    
-    FILE *f = (hist_path[0]) ? fopen(hist_path, "r") : NULL;
-    if (f) {
-        char line[(NCD_MAX_PATH * 2) + 32];
-        while (fgets(line, sizeof(line), f)) {
-            if (meta->heuristics.count >= NCD_HEUR_MAX_ENTRIES) break;
-            
-            line[strcspn(line, "\r\n")] = '\0';
-            if (line[0] == '\0') continue;
-            
-            char *tab = strchr(line, '\t');
-            if (!tab) continue;
-            *tab = '\0';
-            const char *search = line;
-            const char *target = tab + 1;
-            if (search[0] == '\0' || target[0] == '\0') continue;
-            
-            /* Normalize and add */
-            char norm_search[NCD_MAX_PATH];
-            char norm_target[NCD_MAX_PATH];
-            
-            /* Simple lowercase normalization for search */
-            size_t i;
-            for (i = 0; i < NCD_MAX_PATH - 1 && search[i]; i++) {
-                norm_search[i] = (char)tolower((unsigned char)search[i]);
-            }
-            norm_search[i] = '\0';
-            platform_strncpy_s(norm_target, sizeof(norm_target), target);
-            
-            /* 
-             * Check for duplicates (O(n) scan, but n <= 100 during migration).
-             * This is acceptable for a one-time migration from legacy format.
-             */
-            bool found = false;
-            for (int j = 0; j < meta->heuristics.count; j++) {
-                if (_stricmp(meta->heuristics.entries[j].search, norm_search) == 0) {
-                    found = true;
-                    break;
-                }
-            }
-            
-            if (!found) {
-                if (meta->heuristics.count >= meta->heuristics.capacity) {
-                    int new_cap = meta->heuristics.capacity ? meta->heuristics.capacity * 2 : 16;
-                    if (new_cap > NCD_HEUR_MAX_ENTRIES) new_cap = NCD_HEUR_MAX_ENTRIES;
-                    meta->heuristics.entries = ncd_realloc(meta->heuristics.entries,
-                        sizeof(NcdHeurEntryV2) * new_cap);
-                    meta->heuristics.capacity = new_cap;
-                }
-                
-                NcdHeurEntryV2 *entry = &meta->heuristics.entries[meta->heuristics.count++];
-                memset(entry, 0, sizeof(NcdHeurEntryV2));
-                platform_strncpy_s(entry->search, sizeof(entry->search), norm_search);
-                platform_strncpy_s(entry->target, sizeof(entry->target), norm_target);
-                entry->frequency = 1;
-                entry->last_used = time(NULL);
-            }
-            
-            any_migrated = true;
-        }
-        fclose(f);
-    }
-    
-    if (any_migrated) {
-        /* Build hash table after migration before saving */
-        if (meta->heuristics.count > 0) {
-            heur_hash_rebuild(&meta->heuristics);
-        }
-        db_metadata_save(meta);
-    }
-    
-    db_metadata_free(meta);
-    return any_migrated;
 }
 
 int db_metadata_cleanup_legacy(void)
