@@ -604,24 +604,62 @@ bool db_group_save(const NcdGroupDb *gdb)
     return true;
 }
 
+/*
+ * Check if exact name+path combination already exists in group.
+ * Returns index if found, -1 if not found.
+ */
+static int db_group_find_exact(NcdMetadata *meta, const char *name, const char *path)
+{
+    if (!meta || !name || !path) return -1;
+    
+    NcdGroupDb *gdb = &meta->groups;
+    
+    for (int i = 0; i < gdb->count; i++) {
+        if (_stricmp(gdb->groups[i].name, name) == 0 &&
+            _stricmp(gdb->groups[i].path, path) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Count entries for a given group name.
+ */
+static int db_group_count_name(NcdMetadata *meta, const char *name)
+{
+    if (!meta || !name) return 0;
+    
+    NcdGroupDb *gdb = &meta->groups;
+    int count = 0;
+    
+    for (int i = 0; i < gdb->count; i++) {
+        if (_stricmp(gdb->groups[i].name, name) == 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
 bool db_group_set(NcdMetadata *meta, const char *name, const char *path)
 {
     if (!meta || !name || !path) return false;
     
     NcdGroupDb *gdb = &meta->groups;
     
-    /* Check if group already exists */
-    for (int i = 0; i < gdb->count; i++) {
-        if (_stricmp(gdb->groups[i].name, name) == 0) {
-            /* Update existing group */
-            platform_strncpy_s(gdb->groups[i].path, sizeof(gdb->groups[i].path), path);
-            gdb->groups[i].created = time(NULL);
-            meta->groups_dirty = true;
-            return true;
-        }
+    /* Check if exact name+path combination already exists */
+    int existing = db_group_find_exact(meta, name, path);
+    if (existing >= 0) {
+        /* Already in group - update timestamp and return */
+        gdb->groups[existing].created = time(NULL);
+        meta->groups_dirty = true;
+        return true;  /* Caller should print "already in group" message */
     }
     
-    /* Add new group */
+    /* Check if name exists with different path - we'll add a new entry */
+    /* (This is the new multi-directory group behavior) */
+    
+    /* Add new group entry */
     if (gdb->count >= gdb->capacity) {
         int new_cap = gdb->capacity ? gdb->capacity * 2 : 8;
         if (new_cap > NCD_MAX_GROUPS) new_cap = NCD_MAX_GROUPS;
@@ -645,9 +683,32 @@ bool db_group_remove(NcdMetadata *meta, const char *name)
     if (!meta || !name) return false;
     
     NcdGroupDb *gdb = &meta->groups;
+    bool removed = false;
+    
+    /* Remove all entries with matching name */
+    for (int i = gdb->count - 1; i >= 0; i--) {
+        if (_stricmp(gdb->groups[i].name, name) == 0) {
+            /* Remove by shifting remaining elements */
+            memmove(&gdb->groups[i], &gdb->groups[i + 1],
+                    (size_t)(gdb->count - i - 1) * sizeof(NcdGroupEntry));
+            gdb->count--;
+            meta->groups_dirty = true;
+            removed = true;
+        }
+    }
+    
+    return removed;
+}
+
+bool db_group_remove_path(NcdMetadata *meta, const char *name, const char *path)
+{
+    if (!meta || !name || !path) return false;
+    
+    NcdGroupDb *gdb = &meta->groups;
     
     for (int i = 0; i < gdb->count; i++) {
-        if (_stricmp(gdb->groups[i].name, name) == 0) {
+        if (_stricmp(gdb->groups[i].name, name) == 0 &&
+            _stricmp(gdb->groups[i].path, path) == 0) {
             /* Remove by shifting remaining elements */
             memmove(&gdb->groups[i], &gdb->groups[i + 1],
                     (size_t)(gdb->count - i - 1) * sizeof(NcdGroupEntry));
@@ -657,7 +718,7 @@ bool db_group_remove(NcdMetadata *meta, const char *name)
         }
     }
     
-    return false;  /* Group not found */
+    return false;  /* Entry not found */
 }
 
 const NcdGroupEntry *db_group_get(NcdMetadata *meta, const char *name)
@@ -675,6 +736,45 @@ const NcdGroupEntry *db_group_get(NcdMetadata *meta, const char *name)
     return NULL;
 }
 
+int db_group_get_all(NcdMetadata *meta, const char *name,
+                     const NcdGroupEntry **out, int max_out)
+{
+    if (!meta || !name || !out || max_out <= 0) return 0;
+    
+    NcdGroupDb *gdb = &meta->groups;
+    int count = 0;
+    
+    for (int i = 0; i < gdb->count && count < max_out; i++) {
+        if (_stricmp(gdb->groups[i].name, name) == 0) {
+            out[count++] = &gdb->groups[i];
+        }
+    }
+    
+    return count;
+}
+
+/*
+ * Helper to count unique group names.
+ */
+static int db_group_count_unique(NcdMetadata *meta)
+{
+    if (!meta || meta->groups.count == 0) return 0;
+    
+    int unique = 0;
+    for (int i = 0; i < meta->groups.count; i++) {
+        /* Count if this is the first occurrence of this name */
+        bool first = true;
+        for (int j = 0; j < i; j++) {
+            if (_stricmp(meta->groups.groups[j].name, meta->groups.groups[i].name) == 0) {
+                first = false;
+                break;
+            }
+        }
+        if (first) unique++;
+    }
+    return unique;
+}
+
 void db_group_list(NcdMetadata *meta)
 {
     if (!meta || meta->groups.count == 0) {
@@ -682,10 +782,42 @@ void db_group_list(NcdMetadata *meta)
         return;
     }
     
-    printf("Groups (%d):\n", meta->groups.count);
+    int unique = db_group_count_unique(meta);
+    printf("Groups (%d unique, %d total entries):\n", unique, meta->groups.count);
+    
+    /* Track which entries we've printed */
+    bool *printed = ncd_calloc(meta->groups.count, sizeof(bool));
+    
     for (int i = 0; i < meta->groups.count; i++) {
-        printf("  %-20s -> %s\n", meta->groups.groups[i].name, meta->groups.groups[i].path);
+        if (printed[i]) continue;
+        
+        const char *name = meta->groups.groups[i].name;
+        
+        /* Count entries for this group */
+        int entry_count = 0;
+        for (int j = i; j < meta->groups.count; j++) {
+            if (_stricmp(meta->groups.groups[j].name, name) == 0) {
+                entry_count++;
+            }
+        }
+        
+        /* Print group header */
+        if (entry_count == 1) {
+            printf("  %s (1 entry)\n", name);
+        } else {
+            printf("  %s (%d entries)\n", name, entry_count);
+        }
+        
+        /* Print all entries for this group */
+        for (int j = i; j < meta->groups.count; j++) {
+            if (_stricmp(meta->groups.groups[j].name, name) == 0) {
+                printf("    -> %s\n", meta->groups.groups[j].path);
+                printed[j] = true;
+            }
+        }
     }
+    
+    free(printed);
 }
 
 /* ============================================================= dir history */
@@ -767,6 +899,22 @@ void db_dir_history_clear(NcdMetadata *meta)
     meta->dir_history_dirty = true;
 }
 
+bool db_dir_history_remove(NcdMetadata *meta, int index)
+{
+    if (!meta || index < 0 || index >= meta->dir_history.count) {
+        return false;
+    }
+    
+    /* Shift entries down to remove the specified index */
+    memmove(&meta->dir_history.entries[index],
+            &meta->dir_history.entries[index + 1],
+            (size_t)(meta->dir_history.count - index - 1) * sizeof(NcdDirHistoryEntry));
+    meta->dir_history.count--;
+    meta->dir_history_dirty = true;
+    
+    return true;
+}
+
 void db_dir_history_print(NcdMetadata *meta)
 {
     if (!meta || meta->dir_history.count == 0) {
@@ -783,9 +931,10 @@ void db_dir_history_print(NcdMetadata *meta)
     printf("\nUsage:\n");
     printf("  ncd       - ping-pong between last two directories\n");
     printf("  ncd /0    - same as ncd (ping-pong)\n");
-    printf("  ncd /1    - add current directory to history\n");
-    printf("  ncd /2    - jump to 2nd entry in history\n");
-    printf("  ncd /3    - jump to 3rd entry in history\n");
+    printf("  ncd /h    - browse history (interactive)\n");
+    printf("  ncd /hl   - list history\n");
+    printf("  ncd /hc   - clear all history\n");
+    printf("  ncd /hc3  - remove entry #3 from history\n");
 }
 
 /* ============================================================= drive mgmt */

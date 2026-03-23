@@ -141,22 +141,45 @@ NcdIpcClient *ipc_client_connect(void) {
         return NULL;
     }
     
-    /* Try to connect to named pipe */
-    client->hPipe = CreateFile(
-        g_pipe_name,            /* Pipe name */
-        GENERIC_READ |          /* Read and write access */
-        GENERIC_WRITE,
-        0,                      /* No sharing */
-        NULL,                   /* Default security attributes */
-        OPEN_EXISTING,          /* Opens existing pipe */
-        0,                      /* Default attributes */
-        NULL                    /* No template file */
-    );
+    /* Try to connect to named pipe with retries */
+    HANDLE hPipe = INVALID_HANDLE_VALUE;
+    int retries = 50;  /* 50 * 20ms = 1 second total */
     
-    if (client->hPipe == INVALID_HANDLE_VALUE) {
+    while (retries > 0) {
+        hPipe = CreateFile(
+            g_pipe_name,            /* Pipe name */
+            GENERIC_READ |          /* Read and write access */
+            GENERIC_WRITE,
+            0,                      /* No sharing */
+            NULL,                   /* Default security attributes */
+            OPEN_EXISTING,          /* Opens existing pipe */
+            0,                      /* Default attributes */
+            NULL                    /* No template file */
+        );
+        
+        if (hPipe != INVALID_HANDLE_VALUE) {
+            break;  /* Success */
+        }
+        
+        DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PIPE_BUSY) {
+            /* Pipe not ready yet, wait and retry */
+            Sleep(20);
+            retries--;
+            continue;
+        }
+        
+        /* Other error, fail immediately */
         free(client);
         return NULL;
     }
+    
+    if (hPipe == INVALID_HANDLE_VALUE) {
+        free(client);
+        return NULL;
+    }
+    
+    client->hPipe = hPipe;
     
     /* Set pipe to message mode */
     DWORD mode = PIPE_READMODE_MESSAGE;

@@ -453,7 +453,7 @@ typedef struct {
 #endif
     /* Agent mode options (/agent command) */
     bool agent_mode;              /* /agent -- agent API mode                */
-    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check  */
+    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete */
     bool agent_json;              /* --json output                           */
     int  agent_limit;             /* --limit N (default 20, 0=unlimited)     */
     bool agent_depth_sort;        /* --depth (sort shallowest first)         */
@@ -473,9 +473,11 @@ typedef struct {
     char exclusion_pattern[NCD_MAX_PATH]; /* Pattern for -x or -x-         */
     
     /* Directory history options */
-    bool history_nav;             /* /0, /1, /2, etc. -- navigate history    */
-    int  history_index;           /* 0=ping-pong, 1+=jump to Nth entry       */
-    bool history_add_current;     /* true to add current dir to history      */
+    bool history_pingpong;        /* /0 or bare ncd -- ping-pong between last two */
+    bool history_browse;          /* /h -- interactive history browser       */
+    bool history_list;            /* /hl -- print history list               */
+    bool history_clear;           /* /hc -- clear all history                */
+    int  history_remove;          /* /hc# -- remove entry at index (1-9), 0=not set */
 } NcdOptions;
 
 /*

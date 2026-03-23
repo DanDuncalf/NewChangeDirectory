@@ -45,6 +45,15 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                        size_t      out_path_size);
 
 /*
+ * History browser with Delete key support.
+ * Shows history entries in a selectable list.
+ * Press Delete to remove the highlighted entry.
+ * Returns the index of the selected entry, or -1 if cancelled.
+ * The matches array and count may be modified if entries are deleted.
+ */
+int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta);
+
+/*
  * Interactive filesystem navigator used by "ncd .".
  *
  * start_path must be an absolute path.

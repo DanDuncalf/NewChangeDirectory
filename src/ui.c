@@ -56,15 +56,20 @@ typedef struct {
     int          top_row;
     int          box_width;
     int          visible_rows;
-    int          count;
-    int          selected;
+    int          count;           /* original total count */
+    int          selected;        /* index into filtered[] */
     int          scroll_top;
-    const NcdMatch *matches;
+    const NcdMatch *matches;      /* original unfiltered array */
     const char  *search_str;
     /* Dirty tracking for incremental redraw */
     int          last_selected;
     int          last_scroll_top;
     bool         first_draw;
+    /* Live filter */
+    char         filter[64];      /* current filter text */
+    int          filter_len;      /* length of filter text */
+    int         *filtered;        /* index mapping: filtered[i] -> matches[j] */
+    int          filtered_count;  /* number of entries passing filter */
 } UiState;
 
 typedef struct {
@@ -226,6 +231,7 @@ static int read_key(void)
         if (ir.EventType != KEY_EVENT)       continue;
         if (!ir.Event.KeyEvent.bKeyDown)     continue;
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        char ch = ir.Event.KeyEvent.uChar.AsciiChar;
         switch (vk) {
             case VK_UP:     return KEY_UP;
             case VK_DOWN:   return KEY_DOWN;
@@ -239,10 +245,12 @@ static int read_key(void)
             case VK_BACK:   return KEY_BACKSPACE;
             case VK_RETURN: return KEY_ENTER;
             case VK_ESCAPE: return KEY_ESC;
-            case 'Q': case 'q': return KEY_ESC;
+            case VK_DELETE: return KEY_DELETE;
             case ' ':       return ' ';
             default:
-                /* Return ASCII digits directly */
+                /* Return printable ASCII characters directly */
+                if (ch >= 32 && ch <= 126) return (int)ch;
+                /* Also handle virtual key codes for digits */
                 if (vk >= '0' && vk <= '9') return vk;
                 continue;
         }
@@ -424,9 +432,12 @@ static int read_key(void)
         case PLATFORM_VK_BACK:  return KEY_BACKSPACE;
         case PLATFORM_VK_RETURN:return KEY_ENTER;
         case PLATFORM_VK_ESCAPE:return KEY_ESC;
+        case PLATFORM_VK_DELETE:return KEY_DELETE;
         case ' ':               return ' ';
         default:
-            /* Return ASCII digits directly */
+            /* Return printable ASCII characters directly */
+            if (vk >= 32 && vk <= 126) return (int)vk;
+            /* Also handle digits */
             if (vk >= '0' && vk <= '9') return vk;
             return KEY_UNKNOWN;
     }
@@ -515,6 +526,38 @@ static void clamp_scroll(UiState *st)
     if (st->scroll_top < 0) st->scroll_top = 0;
 }
 
+/* Apply filter and rebuild filtered index array */
+static void apply_filter(UiState *st)
+{
+    st->filtered_count = 0;
+    for (int i = 0; i < st->count; i++) {
+        const char *path = st->matches[i].full_path;
+
+        if (st->filter_len == 0) {
+            /* No filter -- include everything */
+            st->filtered[st->filtered_count++] = i;
+            continue;
+        }
+
+        /* Determine match target: last component or full path */
+        const char *target = path;
+        bool has_sep = (strchr(st->filter, '\\') != NULL || strchr(st->filter, '/') != NULL);
+        if (!has_sep) {
+            const char *last_sep = strrchr(path, NCD_PATH_SEP[0]);
+            if (last_sep) target = last_sep + 1;
+        }
+
+        if (platform_strcasestr(target, st->filter)) {
+            st->filtered[st->filtered_count++] = i;
+        }
+    }
+
+    /* Reset navigation */
+    st->selected = 0;
+    st->scroll_top = 0;
+    st->first_draw = true;  /* force full redraw */
+}
+
 static void nav_clamp_scroll(NavState *st)
 {
     if (st->sibling_sel < 0) st->sibling_sel = 0;
@@ -540,22 +583,25 @@ static void nav_clamp_scroll(NavState *st)
 /* ======================================================================== */
 
 /* Helper: Draw a single list row */
-static void draw_list_row(UiState *st, int row, int idx, bool is_selected)
+static void draw_list_row(UiState *st, int row, int vis_idx, bool is_selected)
 {
     int w = st->box_width;
     int inner = w - 2;
     char line[512];
     int list_start = st->top_row + 3;
-    
+
     con_cursor_pos(list_start + row, 0);
     con_write(BOX_V);
     if (is_selected && g_ansi) con_write(ANSI_REVERSE);
-    if (idx < st->count && idx >= 0)
+
+    if (vis_idx >= 0 && vis_idx < st->filtered_count) {
+        int real_idx = st->filtered[vis_idx];
         snprintf(line, sizeof(line), " %s %.*s",
                  is_selected ? SEL_IND : " ",
-                 (int)(sizeof(line) - 4), st->matches[idx].full_path);
-    else
+                 (int)(sizeof(line) - 4), st->matches[real_idx].full_path);
+    } else {
         line[0] = '\0';
+    }
     con_write_padded(line, inner);
     if (is_selected && g_ansi) con_write(ANSI_RESET);
     con_write(BOX_V);
@@ -566,10 +612,10 @@ static void draw_scrollbar(UiState *st)
 {
     int w = st->box_width;
     int list_start = st->top_row + 3;
-    
-    if (st->count > st->visible_rows) {
+
+    if (st->filtered_count > st->visible_rows) {
         int track = st->visible_rows;
-        int thumb = (int)((double)st->scroll_top / (st->count - st->visible_rows)
+        int thumb = (int)((double)st->scroll_top / (st->filtered_count - st->visible_rows)
                           * (track - 1));
         for (int r = 0; r < track; r++) {
             con_cursor_pos(list_start + r, w - 1);
@@ -598,9 +644,15 @@ static void draw_box(UiState *st)
         con_write(BOX_V);
         if (g_ansi) con_write(ANSI_BOLD ANSI_CYAN);
         char header[256];
-        snprintf(header, sizeof(header),
-                 "  NCD  --  %d match%s for \"%s\"  (Up/Dn PgUp PgDn Home End  Tab=Nav  Enter=OK  Esc=Cancel)",
-                 st->count, st->count == 1 ? "" : "es", st->search_str);
+        if (st->filter_len > 0) {
+            snprintf(header, sizeof(header),
+                     "  NCD  --  %d/%d for \"%s\"  filter: \"%s\"",
+                     st->filtered_count, st->count, st->search_str, st->filter);
+        } else {
+            snprintf(header, sizeof(header),
+                     "  NCD  --  %d match%s for \"%s\"  (type to filter)",
+                     st->count, st->count == 1 ? "" : "es", st->search_str);
+        }
         con_write_padded(header, inner);
         if (g_ansi) con_write(ANSI_RESET);
         con_write(BOX_V);
@@ -893,6 +945,10 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
 
+    /* Allocate filtered index array */
+    int *filtered = (int *)malloc(sizeof(int) * count);
+    if (!filtered) { ui_close_console(); return 0; }
+
     UiState st = {
         .top_row      = box_top,
         .box_width    = bw,
@@ -904,8 +960,15 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
         .search_str   = search_str,
         .last_selected = -1,
         .last_scroll_top = -1,
-        .first_draw   = true
+        .first_draw   = true,
+        .filter       = {0},
+        .filter_len   = 0,
+        .filtered     = filtered,
+        .filtered_count = count
     };
+
+    /* Initialize identity mapping */
+    for (int i = 0; i < count; i++) filtered[i] = i;
 
     con_hide_cursor();
     draw_box(&st);
@@ -918,40 +981,100 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                 if (st.selected > 0) st.selected--;
                 break;
             case KEY_DOWN:
-                if (st.selected < count - 1) st.selected++;
+                if (st.selected < st.filtered_count - 1) st.selected++;
                 break;
             case KEY_PGUP:
-                st.selected -= visible;
+                st.selected -= st.visible_rows;
                 if (st.selected < 0) st.selected = 0;
                 break;
             case KEY_PGDN:
-                st.selected += visible;
-                if (st.selected >= count) st.selected = count - 1;
+                st.selected += st.visible_rows;
+                if (st.selected >= st.filtered_count) st.selected = st.filtered_count - 1;
                 break;
-            case KEY_HOME: st.selected = 0; break;
-            case KEY_END:  st.selected = count - 1; break;
+            case KEY_HOME:
+                st.selected = 0;
+                break;
+            case KEY_END:
+                if (st.filtered_count > 0) st.selected = st.filtered_count - 1;
+                break;
+            case KEY_BACKSPACE:
+                if (st.filter_len > 0) {
+                    st.filter[--st.filter_len] = '\0';
+                    apply_filter(&st);
+                    /* Recalculate visible rows */
+                    int new_vis = st.filtered_count < max_list ? st.filtered_count : max_list;
+                    if (new_vis < 1) new_vis = 1;
+                    /* Resize box if needed */
+                    if (new_vis != st.visible_rows) {
+                        clear_area(box_top, total_rows, bw);
+                        st.visible_rows = new_vis;
+                        total_rows = 4 + new_vis;
+                    }
+                    draw_box(&st);
+                }
+                break;
             case KEY_TAB: {
+                if (st.filtered_count == 0) break;
+                int real_idx = st.filtered[st.selected];
                 char nav_out[MAX_PATH] = {0};
                 clear_area(box_top, total_rows, bw);
                 con_cursor_pos(box_top, 0);
-                int nav_result = navigate_run(matches[st.selected].full_path,
+                int nav_result = navigate_run(matches[real_idx].full_path,
                                               nav_out, sizeof(nav_out), true);
                 if (nav_result == NAV_RESULT_BACK) { draw_box(&st); continue; }
                 if (nav_result == NAV_RESULT_SELECT && out_path && out_path_size > 0) {
-                platform_strncpy_s(out_path, out_path_size, nav_out);
+                    platform_strncpy_s(out_path, out_path_size, nav_out);
                     result = -2;
                 } else { result = -1; }
                 goto done;
             }
-            case KEY_ENTER: result = st.selected; goto done;
-            case KEY_ESC:   result = -1;          goto done;
-            default: continue;
+            case KEY_ENTER:
+                if (st.filtered_count > 0) {
+                    result = st.filtered[st.selected];
+                } else {
+                    result = -1;
+                }
+                goto done;
+            case KEY_ESC:
+                if (st.filter_len > 0) {
+                    /* First Escape: clear filter */
+                    st.filter_len = 0;
+                    st.filter[0] = '\0';
+                    apply_filter(&st);
+                    int new_vis = st.filtered_count < max_list ? st.filtered_count : max_list;
+                    if (new_vis != st.visible_rows) {
+                        clear_area(box_top, total_rows, bw);
+                        st.visible_rows = new_vis;
+                        total_rows = 4 + new_vis;
+                    }
+                    draw_box(&st);
+                    break;
+                }
+                result = -1;
+                goto done;
+            default:
+                /* Printable character: append to filter */
+                if (key >= 32 && key <= 126 && st.filter_len < 63) {
+                    st.filter[st.filter_len++] = (char)key;
+                    st.filter[st.filter_len] = '\0';
+                    apply_filter(&st);
+                    int new_vis = st.filtered_count < max_list ? st.filtered_count : max_list;
+                    if (new_vis < 1) new_vis = 1;
+                    if (new_vis != st.visible_rows) {
+                        clear_area(box_top, total_rows, bw);
+                        st.visible_rows = new_vis;
+                        total_rows = 4 + new_vis;
+                    }
+                    draw_box(&st);
+                }
+                break;
         }
         clamp_scroll(&st);
         draw_box(&st);
     }
 
 done:
+    free(filtered);
     clear_area(box_top, total_rows, bw);
     con_cursor_pos(box_top, 0);
     con_show_cursor();
@@ -962,6 +1085,253 @@ done:
 int ui_select_match(const NcdMatch *matches, int count, const char *search_str)
 {
     return ui_select_match_ex(matches, count, search_str, NULL, 0);
+}
+
+/*
+ * Helper macros and types for history selection UI
+ */
+#define HISTORY_CLAMP(s, max_list_val) do { \
+    if ((s)->selected < 0) (s)->selected = 0; \
+    if ((s)->selected >= (s)->count) (s)->selected = (s)->count - 1; \
+    if ((s)->scroll_top > (s)->selected) (s)->scroll_top = (s)->selected; \
+    if ((s)->scroll_top + (s)->visible_rows <= (s)->selected) \
+        (s)->scroll_top = (s)->selected - (s)->visible_rows + 1; \
+    if ((s)->scroll_top + (s)->visible_rows > (s)->count) \
+        (s)->scroll_top = (s)->count - (s)->visible_rows; \
+    if ((s)->scroll_top < 0) (s)->scroll_top = 0; \
+    if ((s)->visible_rows > (s)->count) (s)->visible_rows = (s)->count; \
+    if ((s)->visible_rows < 1) (s)->visible_rows = 1; \
+} while (0)
+
+typedef struct {
+    int top_row;
+    int box_width;
+    int visible_rows;
+    int count;
+    int selected;
+    int scroll_top;
+    NcdMatch *matches;
+} HistoryUiState;
+
+static void history_clear_area(int start_row, int num_rows)
+{
+    for (int r = 0; r < num_rows; r++) {
+        con_cursor_pos(start_row + r, 0);
+#if NCD_PLATFORM_WINDOWS
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (GetConsoleScreenBufferInfo(h, &csbi)) {
+            DWORD written;
+            FillConsoleOutputCharacterA(h, ' ', csbi.dwSize.X - csbi.dwCursorPosition.X, csbi.dwCursorPosition, &written);
+        }
+#else
+        printf("\033[K");
+#endif
+    }
+}
+
+static void history_draw_row(HistoryUiState *s, int row, int idx, int list_start, int inner)
+{
+    bool is_selected = (idx == s->selected);
+
+    con_cursor_pos(list_start + row, 0);
+    con_write(BOX_V);
+
+    char line[256];
+    const char *path = s->matches[idx].full_path;
+    int num_width = 4;  /* " 1) " */
+    int avail = inner - num_width - 1;
+
+    if ((int)strlen(path) > avail) {
+        int skip = (int)strlen(path) - avail + 3;
+        snprintf(line, sizeof(line), " %d) ...%s", idx + 1, path + skip);
+    } else {
+        snprintf(line, sizeof(line), " %d) %s", idx + 1, path);
+    }
+
+    if (is_selected && g_ansi) con_write(ANSI_REVERSE);
+    con_write_padded(line, inner);
+    if (is_selected && g_ansi) con_write(ANSI_RESET);
+    con_write(BOX_V);
+}
+
+static void history_draw_box(HistoryUiState *s, int inner, int list_start, const char *title)
+{
+    int w = s->box_width;
+
+    /* Title bar */
+    con_cursor_pos(s->top_row, 0);
+    con_write(BOX_TL);
+    {
+        int title_len = (int)strlen(title);
+        int left_pad = (inner - title_len) / 2;
+        int right_pad = inner - title_len - left_pad;
+        if (left_pad < 0) left_pad = 0;
+        if (right_pad < 0) right_pad = 0;
+        for (int i = 0; i < left_pad; i++) con_write(BOX_H);
+        con_write(title);
+        for (int i = 0; i < right_pad; i++) con_write(BOX_H);
+    }
+    con_write(BOX_TR);
+
+    /* Help text */
+    con_cursor_pos(s->top_row + 1, 0);
+    con_write(BOX_V);
+    const char *help = " Enter=select, Del=remove, Esc=cancel ";
+    con_write_padded(help, inner);
+    con_write(BOX_V);
+
+    /* Separator */
+    con_cursor_pos(s->top_row + 2, 0);
+    con_write(BOX_ML);
+    for (int i = 0; i < inner; i++) con_write(BOX_H);
+    con_write(BOX_MR);
+
+    /* List rows */
+    for (int i = 0; i < s->visible_rows; i++) {
+        int idx = s->scroll_top + i;
+        if (idx < s->count) {
+            history_draw_row(s, i, idx, list_start, inner);
+        } else {
+            con_cursor_pos(list_start + i, 0);
+            con_write(BOX_V);
+            con_write_padded("", inner);
+            con_write(BOX_V);
+        }
+    }
+
+    /* Bottom border */
+    con_cursor_pos(s->top_row + 3 + s->visible_rows, 0);
+    con_write(BOX_BL);
+    for (int i = 0; i < inner; i++) con_write(BOX_H);
+    con_write(BOX_BR);
+}
+
+/*
+ * History selection UI with Delete key support.
+ * Similar to ui_select_match_ex but allows removing entries with Delete key.
+ * Returns selected index, or -1 if cancelled.
+ * The matches array and count may be modified if entries are deleted.
+ */
+int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta)
+{
+    if (!matches || !count || *count <= 0) return -1;
+    if (*count == 1) return 0;
+
+    ui_open_console();
+#if NCD_PLATFORM_WINDOWS
+    if (g_hout == INVALID_HANDLE_VALUE) { ui_close_console(); return 0; }
+#else
+    if (g_tty_out < 0) { ui_close_console(); return 0; }
+#endif
+
+    int cols, rows, cur_row;
+    get_console_size(&cols, &rows, &cur_row);
+
+    int max_list = rows - 6;
+    if (max_list < 3) max_list = 3;
+    if (max_list > 20) max_list = 20;
+    int visible = *count < max_list ? *count : max_list;
+
+    int bw = cols; if (bw > 120) bw = 120; if (bw < 40) bw = 40;
+    int total_rows = 4 + visible;
+    for (int i = 0; i < total_rows; i++) con_writeln("");
+
+    get_console_size(&cols, &rows, &cur_row);
+    int box_top = cur_row - total_rows;
+    if (box_top < 0) box_top = 0;
+
+    HistoryUiState st;
+    st.top_row = box_top;
+    st.box_width = bw;
+    st.visible_rows = visible;
+    st.count = *count;
+    st.selected = 0;
+    st.scroll_top = 0;
+    st.matches = matches;
+
+    int inner = bw - 2;
+    int list_start = st.top_row + 3;
+    const char *title = "History (Del to remove)";
+
+    con_hide_cursor();
+    history_draw_box(&st, inner, list_start, title);
+
+    int result = -1;
+    for (;;) {
+        int key = read_key();
+        switch (key) {
+            case KEY_UP:
+                if (st.selected > 0) st.selected--;
+                break;
+            case KEY_DOWN:
+                if (st.selected < st.count - 1) st.selected++;
+                break;
+            case KEY_PGUP:
+                st.selected -= st.visible_rows;
+                if (st.selected < 0) st.selected = 0;
+                break;
+            case KEY_PGDN:
+                st.selected += st.visible_rows;
+                if (st.selected >= st.count) st.selected = st.count - 1;
+                break;
+            case KEY_HOME: st.selected = 0; break;
+            case KEY_END:  st.selected = st.count - 1; break;
+            case KEY_ENTER:
+                result = st.selected;
+                goto history_done;
+            case KEY_ESC:
+                result = -1;
+                goto history_done;
+            case KEY_DELETE: {
+                if (st.count <= 0) break;
+
+                /* Find and remove this entry from persistent history */
+                const char *path = st.matches[st.selected].full_path;
+                for (int i = 0; i < db_dir_history_count(meta); i++) {
+                    const NcdDirHistoryEntry *e = db_dir_history_get(meta, i);
+                    if (e && _stricmp(e->path, path) == 0) {
+                        db_dir_history_remove(meta, i);
+                        db_metadata_save(meta);
+                        break;
+                    }
+                }
+
+                /* Remove from display array */
+                memmove(&st.matches[st.selected], &st.matches[st.selected + 1],
+                        (size_t)(st.count - st.selected - 1) * sizeof(NcdMatch));
+                st.count--;
+                (*count)--;
+
+                /* Handle empty list */
+                if (st.count == 0) {
+                    result = -1;
+                    goto history_done;
+                }
+
+                /* Adjust selection */
+                if (st.selected >= st.count) st.selected = st.count - 1;
+
+                /* Recalculate visible rows and redraw */
+                st.visible_rows = st.count < max_list ? st.count : max_list;
+                HISTORY_CLAMP(&st, max_list);
+
+                /* Full redraw needed since list changed */
+                history_clear_area(st.top_row, total_rows);
+                total_rows = 4 + st.visible_rows;
+                history_draw_box(&st, inner, list_start, title);
+                continue;
+            }
+            default: break;
+        }
+        HISTORY_CLAMP(&st, max_list);
+        history_draw_box(&st, inner, list_start, title);
+    }
+
+history_done:
+    con_show_cursor();
+    ui_close_console();
+    return result;
 }
 
 bool ui_navigate_directory(const char *start_path,

@@ -8,13 +8,16 @@ A cross-platform command-line directory navigation tool inspired by the classic 
 ## Features
 
 - **Fast Directory Search** - Search across your entire filesystem using a pre-built binary database
-- **Interactive TUI** - Selector mode for choosing from multiple matches, Navigator mode for browsing
+- **Interactive TUI** - Selector mode with live filtering, Navigator mode for browsing
 - **Cross-Platform** - Works on Windows (x64) and Linux (x64, including WSL)
 - **Multi-threaded Scanning** - Fast directory enumeration using parallel workers
 - **Fuzzy Matching** - Damerau-Levenshtein distance for typo-tolerant searches
 - **Smart Ranking** - Learns from your choices to prioritize frequently used directories
-- **Groups/Bookmarks** - Tag frequently used directories for quick access
+- **Groups/Bookmarks** - Tag frequently used directories for quick access (supports multiple dirs per group)
+- **Directory History** - Interactive history browser with delete support
 - **Agent Mode** - LLM-friendly API for integration with AI tools
+- **Shell Tab Completion** - Bash, Zsh, and PowerShell completion support
+- **Optional Service** - Resident state service for faster startup (shared memory)
 
 ## Installation
 
@@ -71,12 +74,41 @@ ncd /a                    # Include all (hidden + system)
 ncd /z <search>           # Fuzzy matching
 ncd .                     # Navigator mode (browse from current dir)
 ncd @home                 # Jump to bookmarked group
-ncd /g @home              # Create group for current directory
+ncd /g @home              # Add current directory to group
+ncd /g- @home             # Remove current directory from group
 ncd /gl                   # List all groups
+ncd /0                    # Ping-pong between last two directories
+ncd /h                    # Browse history interactively (Del to remove)
+ncd /hl                   # List directory history
+ncd /hc                   # Clear all history
+ncd /hc3                  # Remove history entry #3
 ncd /f                    # Show frequent searches
+ncd /fc                   # Clear frequent searches
 ncd /agent query <term>   # Agent mode (JSON output)
 ncd /?                    # Help
 ```
+
+### Interactive Selection
+
+When multiple directories match, NCD shows an interactive list:
+
+- **Arrow keys** - Navigate up/down
+- **Page Up/Down** - Scroll a page at a time
+- **Home/End** - Jump to first/last item
+- **Type characters** - Live filter the list (e.g., type "src" to narrow results)
+- **Backspace** - Remove last filter character
+- **Escape** - Clear filter (first press) or cancel (second press)
+- **Tab** - Enter navigator mode on selected item
+- **Enter** - Select highlighted directory
+
+### History Browser
+
+The interactive history browser (`ncd /h`) shows recently visited directories:
+
+- **Arrow keys** - Navigate
+- **Delete** - Remove entry from history
+- **Enter** - Navigate to selected directory
+- **Escape** - Cancel
 
 ## Building from Source
 
@@ -128,10 +160,10 @@ NCD is written in C11 and organized into modules:
 | Module | Purpose |
 |--------|---------|
 | `main.c` | CLI parsing, orchestration, heuristics |
-| `database.c` | Binary DB load/save, groups, config |
+| `database.c` | Binary DB load/save, groups, config, history |
 | `scanner.c` | Multi-threaded directory scanning |
 | `matcher.c` | Search matching with fuzzy support |
-| `ui.c` | Interactive TUI (selector + navigator) |
+| `ui.c` | Interactive TUI (selector + navigator + history) |
 | `platform.c` | Platform abstraction (delegates to shared lib) |
 
 The project uses a shared platform abstraction library located at `../shared/` which provides cross-platform utilities for filesystem, console I/O, and threading.
@@ -148,23 +180,63 @@ ncd /agent check /home/user/projects
 ncd /agent check --db-age
 ncd /agent check --stats
 ncd /agent check --service-status
+ncd /agent complete dow              # Shell tab-completion candidates
 ```
 
 Exit codes:
 - `0` - Success / Found
 - `1` - Not found / Error
 
+## Tab Completion
+
+NCD supports shell tab-completion for directory names:
+
+### Bash
+```bash
+source completions/ncd.bash
+# or if installed via deploy.sh, completions are auto-loaded
+ncd dow<Tab>  # Completes to "downloads", "documents", etc.
+ncd @h<Tab>   # Completes to "@home" group
+```
+
+### Zsh
+```zsh
+# Add completions directory to fpath, then run compinit
+fpath+=(/path/to/completions)
+autoload -U compinit && compinit
+```
+
+### PowerShell
+```powershell
+. /path/to/completions/ncd.ps1
+ncd dow<Tab>  # Shows matching directory names
+```
+
+## Optional Service Mode
+
+NCD can run with an optional resident service (`NCDService.exe` on Windows, `ncd_service` on Linux) that keeps state hot in memory using shared memory. This provides faster startup times for repeated use.
+
+### Starting the Service
+
+```bash
+# Windows
+ncd_service.bat start
+
+# Linux
+ncd_service start
+```
+
+When the service is running, NCD automatically connects to it. If the service is not available, NCD falls back to standalone mode (loading from disk).
+
 ## Database Storage
 
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
-- Config: `%LOCALAPPDATA%\NCD\ncd.config`
-- History: `%LOCALAPPDATA%\ncd.history`
+- Metadata: `%LOCALAPPDATA%\NCD\ncd.metadata`
 
 **Linux:**
 - Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
-- Config: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.config`
-- History: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.history`
+- Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
 
 ## License
 

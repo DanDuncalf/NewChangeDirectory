@@ -87,6 +87,13 @@ const char *platform_get_app_title(void);
  */
 int platform_write_help_suffix(char *buf, size_t buf_size);
 
+/*
+ * Case-insensitive substring search.
+ * Returns pointer to first occurrence of needle in haystack (case-insensitive),
+ * or NULL if not found.
+ */
+const char *platform_strcasestr(const char *haystack, const char *needle);
+
 #ifdef __cplusplus
 }
 #endif

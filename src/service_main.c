@@ -72,6 +72,7 @@ static void handle_get_state_info(NcdIpcConnection *conn,
     
     /* Build response payload */
     NcdStateInfoPayload payload;
+    memset(&payload, 0, sizeof(payload));
     payload.protocol_version = NCD_IPC_VERSION;
     payload.meta_generation = info.meta_generation;
     payload.db_generation = info.db_generation;
@@ -395,12 +396,23 @@ int main(int argc, char *argv[]) {
     printf("NCD Service: Publisher initialized\n");
     
     /* Publish initial snapshots */
-    if (!snapshot_publisher_publish_all(pub, state)) {
-        fprintf(stderr, "NCD Service: Failed to publish initial snapshots\n");
+    bool meta_ok = snapshot_publisher_publish_meta(pub, state);
+    if (!meta_ok) {
+        fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
         snapshot_publisher_cleanup(pub);
         service_state_cleanup(state);
         return 1;
     }
+    printf("NCD Service: Metadata snapshot published\n");
+    
+    bool db_ok = snapshot_publisher_publish_db(pub, state);
+    if (!db_ok) {
+        fprintf(stderr, "NCD Service: Failed to publish database snapshot\n");
+        snapshot_publisher_cleanup(pub);
+        service_state_cleanup(state);
+        return 1;
+    }
+    printf("NCD Service: Database snapshot published\n");
     
     printf("NCD Service: Snapshots published (meta_gen=%llu, db_gen=%llu)\n",
            (unsigned long long)snapshot_publisher_get_meta_generation(pub),

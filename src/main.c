@@ -32,6 +32,10 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+#if NCD_PLATFORM_WINDOWS
+#include <windows.h>
+#endif
+
 #include "ncd.h"
 #include "database.h"
 #include "scanner.h"
@@ -484,46 +488,82 @@ static void spawn_background_rescan(const char *db_path)
 
 static void print_usage(void)
 {
-    ncd_printf("%s\r\n"
+    /* Check service status for header line */
+    const char *status_suffix;
+    bool service_running = ipc_service_exists();
+    if (!service_running) {
+        status_suffix = "  [Standalone client.]";
+    } else {
+        /* Service exists - check if ready */
+        NcdIpcClient *client = ipc_client_connect();
+        if (!client) {
+            status_suffix = "  [Service: Starting...]";
+        } else {
+            NcdIpcStateInfo info;
+            NcdIpcResult result = ipc_client_get_state_info(client, &info);
+            ipc_client_disconnect(client);
+            if (result != NCD_IPC_OK || info.db_generation == 0) {
+                status_suffix = "  [Service: Starting...]";
+            } else {
+                status_suffix = "  [Service: Running.]";
+            }
+        }
+    }
+    
+    ncd_printf("%s%s\r\n"
         "\r\n"
         "Usage:\r\n"
-        "  ncd <search>\r\n"
-        "  ncd [/r|/r<drives>] [/i] [/s] [/a] [/d <dbpath>] [/t <sec>] <search>\r\n"
-        "  ncd /r|/r<drives>\r\n"
-        "  ncd /f | /fc\r\n"
-        "  ncd /0 | /1 | /2 | /3 ... /9\r\n"
-        "  ncd /h | /?\r\n"
+        "  ncd <search>                    Search and navigate to a directory\r\n"
+        "  ncd [options] <search>          Search with options\r\n"
+        "  ncd /r [drives]                 Rescan drives\r\n"
+        "  ncd /?                          Show this help\r\n"
         "\r\n"
-        "Command Key:\r\n"
-        "  /h, /?      Help\r\n"
-        "  /v          Print version (continues if combined with work)\r\n"
-        "  /f          Show Frequent history (last 20 unique searches)\r\n"
-        "  /fc         Clear Frequent history\r\n"
-        "  /0          Ping-pong: swap between last two directories (same as no args)\r\n"
-        "  /1          Add current directory to history list\r\n"
-        "  /2 .. /9    Jump to Nth directory in history (up to 9 entries)\r\n"
-        "  /r          Force rescan of all drives now\r\n"
-        "  /r. or /r . Rescan current subdirectory only\r\n"
-        "  /rBDE       Force rescan of specific drives only (B:,D:,E:)\r\n"
-        "  /r-b-d      Force rescan of all drives EXCEPT B: and D:\r\n"
-        "  /r-b,d      Same as /r-b-d (comma separators supported)\r\n"
-        "  /i          Include hidden directories in search\r\n"
-        "  /s          Include system directories in search\r\n"
-        "  /a          Include all directories (hidden + system)\r\n"
-        "  /z          Fuzzy matching (digit-word substitution + DL distance)\r\n"
-        "  /g <group>  Group current directory (e.g., /g @home)\r\n"
-        "  /g- <group> Remove a group\r\n"
-        "  /gl         List all groups\r\n"
-        "  -x <pat>    Add exclusion pattern (e.g., -x C:Windows)\r\n"
-        "  -x- <pat>   Remove exclusion pattern\r\n"
-        "  -xl         List all exclusion patterns\r\n"
-        "  /c          Edit configuration (set default options)\r\n"
-        "  /d <path>   Use alternate database file\r\n"
-        "  /t <sec>    Scan inactivity timeout in seconds (default: 300)\r\n"
-        "  <search>    Partial path with optional wildcards (*, ?)\r\n"
-        "              Special: '.' opens navigator from current directory\r\n"
-        "                       'X:' or 'X:' opens navigator from drive root\r\n",
-        platform_get_app_title());
+        "Navigation:\r\n"
+        "  <search>      Partial directory name with optional wildcards (*, ?)\r\n"
+        "  .             Browse from current directory (navigator mode)\r\n"
+        "  X: or X:\\     Browse from drive root (navigator mode)\r\n"
+        "  @<group>      Jump to a group/bookmark (see Groups below)\r\n"
+        "\r\n"
+        "Search Options:\r\n"
+        "  /i            Include hidden directories\r\n"
+        "  /s            Include system directories\r\n"
+        "  /a            Include all (hidden + system)\r\n"
+        "  /z            Fuzzy matching (typo-tolerant)\r\n"
+        "\r\n"
+        "History:\r\n"
+        "  /0            Ping-pong: swap between last two directories\r\n"
+        "  /h            Browse history (interactive, Del to remove)\r\n"
+        "  /hl           List directory history\r\n"
+        "  /hc           Clear all directory history\r\n"
+        "  /hc#          Remove history entry # (e.g., /hc3)\r\n"
+        "  /f            Show frequent searches (last 20)\r\n"
+        "  /fc           Clear frequent search history\r\n"
+        "\r\n"
+        "Groups:\r\n"
+        "  /g @<name>    Add current directory to group (e.g., /g @proj)\r\n"
+        "  /g- @<name>   Remove current directory from group\r\n"
+        "  /gl           List all groups and their directories\r\n"
+        "\r\n"
+        "Scanning:\r\n"
+        "  /r            Rescan all drives\r\n"
+        "  /r.           Rescan current subdirectory only\r\n"
+        "  /rBDE         Rescan specific drives (B:, D:, E:)\r\n"
+        "  /r-b-d        Rescan all drives except B: and D:\r\n"
+        "\r\n"
+        "Exclusions:\r\n"
+        "  -x <pat>      Add exclusion pattern (e.g., -x C:Windows)\r\n"
+        "  -x- <pat>     Remove exclusion pattern\r\n"
+        "  -xl           List exclusion patterns\r\n"
+        "\r\n"
+        "Configuration:\r\n"
+        "  /c            Edit default options interactively\r\n"
+        "  /d <path>     Use alternate database file\r\n"
+        "  /t <sec>      Scan timeout in seconds (default: 300)\r\n"
+        "  /v            Print version\r\n"
+        "\r\n"
+        "Agent Mode:\r\n"
+        "  /agent        LLM integration mode (run 'ncd /agent' for details)\r\n",
+        platform_get_app_title(), status_suffix);
     
     /* Platform-specific suffix */
     char suffix_buf[512];
@@ -534,22 +574,22 @@ static void print_usage(void)
     ncd_print(
         "\r\n"
         "Examples:\r\n"
-        "  ncd downloads\r\n"
-        "  ncd scott\\downloads\r\n"
-        "  ncd down*       (wildcard: matches downloads, downgrade, etc.)\r\n"
-        "  ncd *load*      (wildcard: matches downloads, uploads, etc.)\r\n"
-        "  ncd src?x64     (single char: matches src_x64, src-x64)\r\n"
-        "  ncd /i scott\\appdata\r\n"
-        "  ncd /f\r\n"
-        "  ncd /fc\r\n"
-        "  ncd /rBDE       (force immediate rescan of B:,D:,E:)\r\n"
-        "  ncd /r-b-d      (force immediate rescan excluding B:,D:)\r\n"
-        "  ncd /r-b,d      (same exclude syntax using commas)\r\n"
-        "  ncd /r e,p      (same as /rEP)\r\n"
-        "  ncd /r          (force immediate rescan)\r\n"
-#if NCD_PLATFORM_LINUX
-        "  ncd /r /        (force rescan of Linux root only, no /mnt drives)\r\n"
-#endif
+        "  ncd downloads              Search for \"downloads\"\r\n"
+        "  ncd scott\\downloads        Search with path context\r\n"
+        "  ncd down*                  Wildcard: matches downloads, downgrade, etc.\r\n"
+        "  ncd *load*                 Wildcard: matches downloads, uploads, etc.\r\n"
+        "  ncd /z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
+        "  ncd .                      Browse current directory tree\r\n"
+        "  ncd /g @proj               Add current dir to @proj group\r\n"
+        "  ncd @proj                  Jump to @proj group\r\n"
+        "  ncd /0                     Swap to previous directory\r\n"
+        "  ncd /r                     Rescan all drives\r\n"
+        "  ncd /rBDE                  Rescan drives B:, D:, E: only\r\n"
+        "\r\n"
+        "Tab Completion:\r\n"
+        "  Bash:    source completions/ncd.bash\r\n"
+        "  Zsh:     Add completions/_ncd to your fpath\r\n"
+        "  PowerShell: . completions/ncd.ps1\r\n"
     );
 }
 
@@ -613,14 +653,44 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
             continue;
         }
 
-        /* Directory history navigation: /0, /1, /2, etc. */
-        if ((arg[0] == '/' || arg[0] == '-') && isdigit((unsigned char)arg[1])) {
-            int idx = atoi(arg + 1);
-            if (idx >= 0 && idx <= 9) {
-                opts->history_nav = true;
-                opts->history_index = idx;
-                continue;
+        /* Directory history ping-pong: /0 */
+        if (_stricmp(arg, "/0") == 0 || _stricmp(arg, "-0") == 0) {
+            opts->history_pingpong = true;
+            continue;
+        }
+        
+        /* History browse: /h */
+        if (_stricmp(arg, "/h") == 0 || _stricmp(arg, "-h") == 0) {
+            opts->history_browse = true;
+            continue;
+        }
+        
+        /* History list: /hl */
+        if (_stricmp(arg, "/hl") == 0 || _stricmp(arg, "-hl") == 0) {
+            opts->history_list = true;
+            continue;
+        }
+        
+        /* History clear or remove by index: /hc or /hc# */
+        if ((_strnicmp(arg, "/hc", 3) == 0 || _strnicmp(arg, "-hc", 3) == 0)) {
+            const char *rest = arg + 3;
+            if (*rest == '\0') {
+                /* /hc - clear all */
+                opts->history_clear = true;
+            } else if (isdigit((unsigned char)*rest) && rest[1] == '\0') {
+                /* /hc# - remove specific entry */
+                int idx = *rest - '0';
+                if (idx >= 1 && idx <= 9) {
+                    opts->history_remove = idx;
+                } else {
+                    ncd_println("NCD: /hc# index must be 1-9");
+                    return false;
+                }
+            } else {
+                ncd_println("NCD: invalid history command");
+                return false;
             }
+            continue;
         }
 
         /*
@@ -912,11 +982,12 @@ next_arg:;
 }
 
 /* Agent subcommand identifiers */
-#define AGENT_SUB_NONE   0
-#define AGENT_SUB_QUERY  1
-#define AGENT_SUB_LS     2
-#define AGENT_SUB_TREE   3
-#define AGENT_SUB_CHECK  4
+#define AGENT_SUB_NONE     0
+#define AGENT_SUB_QUERY    1
+#define AGENT_SUB_LS       2
+#define AGENT_SUB_TREE     3
+#define AGENT_SUB_CHECK    4
+#define AGENT_SUB_COMPLETE 5
 
 /* ================================================================ agent mode */
 
@@ -970,12 +1041,14 @@ static void agent_print_usage(void)
         "  ncd /agent ls <path> [options]\r\n"
         "  ncd /agent tree <path> [options]\r\n"
         "  ncd /agent check <path> | --db-age | --stats | --service-status\r\n"
+        "  ncd /agent complete <partial> [--limit N]\r\n"
         "\r\n"
         "Commands:\r\n"
         "  query <search>    Search the NCD index for directories\r\n"
         "  ls <path>         List directory contents (live filesystem)\r\n"
         "  tree <path>       Show directory structure from DB\r\n"
         "  check <path>      Check if path exists in DB (exit code)\r\n"
+        "  complete <partial>  Shell tab-completion candidates\r\n"
         "\r\n"
         "Query Options:\r\n"
         "  --json            JSON output instead of compact\r\n"
@@ -1152,6 +1225,26 @@ static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *
         if (!opts->has_search && !opts->agent_check_db_age && !opts->agent_check_stats && !opts->agent_check_service_status) {
             ncd_println("NCD: /agent check requires a path or --db-age or --stats or --service-status");
             return false;
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "complete") == 0) {
+        opts->agent_subcommand = AGENT_SUB_COMPLETE;
+        
+        /* Parse complete options */
+        for (int i = 2; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--limit") == 0 && i + 1 < argc) {
+                opts->agent_limit = atoi(argv[++i]);
+                *consumed += 2;
+            } else if (opt[0] != '-') {
+                /* First non-option is the partial text to complete */
+                platform_strncpy_s(opts->search, sizeof(opts->search), opt);
+                opts->has_search = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
         }
         return true;
         
@@ -1639,8 +1732,10 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         }
         
         /* Service is running - check if it has loaded databases */
+        fprintf(stderr, "DEBUG: connecting to IPC...\n");
         NcdIpcClient *client = ipc_client_connect();
         if (!client) {
+            fprintf(stderr, "DEBUG: IPC connect failed, error=%lu\n", GetLastError());
             /* Could not connect despite service existing */
             if (opts->agent_json) {
                 agent_print("{\"v\":1,\"status\":\"starting\",\"message\":\"Service running but not loaded\"}\r\n");
@@ -1653,6 +1748,9 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         NcdIpcStateInfo info;
         NcdIpcResult result = ipc_client_get_state_info(client, &info);
         ipc_client_disconnect(client);
+        
+        fprintf(stderr, "DEBUG: ipc result=%d, db_gen=%llu, meta_gen=%llu\n", 
+                result, (unsigned long long)info.db_generation, (unsigned long long)info.meta_generation);
         
         if (result != NCD_IPC_OK || info.db_generation == 0) {
             /* Service running but database not loaded yet */
@@ -1676,6 +1774,96 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
     }
     
     return 1;
+}
+
+/* Agent mode: complete - Shell tab-completion candidates */
+static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
+{
+    const char *partial = opts->search;
+    int limit = opts->agent_limit > 0 ? opts->agent_limit : 20;
+    int printed = 0;
+
+    /* Track printed names for deduplication - using fixed-size array for simplicity */
+    /* Max 256 entries for dedup tracking */
+    #define MAX_PRINTED 256
+    char printed_names[MAX_PRINTED][NCD_MAX_NAME];
+    int printed_count = 0;
+
+    NcdMetadata *meta = db_metadata_load();
+
+    /* Helper macro: add name to printed list */
+    #define RECORD_PRINTED(name) \
+        do { \
+            if (printed_count < MAX_PRINTED) { \
+                platform_strncpy_s(printed_names[printed_count], NCD_MAX_NAME, (name)); \
+                printed_count++; \
+            } \
+        } while(0)
+
+    /* Group name completion (@prefix) */
+    if (partial[0] == '@') {
+        if (meta) {
+            for (int i = 0; i < meta->groups.count && printed < limit; i++) {
+                if (_strnicmp(meta->groups.groups[i].name, partial, strlen(partial)) == 0) {
+                    agent_printf("%s\r\n", meta->groups.groups[i].name);
+                    printed++;
+                }
+            }
+        }
+        if (meta) db_metadata_free(meta);
+        return 0;
+    }
+
+    /* History matches (sorted first - higher signal) */
+    if (meta) {
+        int hist_count = db_dir_history_count(meta);
+        for (int i = 0; i < hist_count && printed < limit; i++) {
+            const NcdDirHistoryEntry *e = db_dir_history_get(meta, i);
+            if (!e) continue;
+            const char *name = path_leaf(e->path);
+            if (!name) name = e->path;
+            if (_strnicmp(name, partial, strlen(partial)) == 0) {
+                bool found = false;
+                for (int j = 0; j < printed_count && !found; j++) {
+                    if (_stricmp(printed_names[j], name) == 0) found = true;
+                }
+                if (!found) {
+                    agent_printf("%s\r\n", name);
+                    RECORD_PRINTED(name);
+                    printed++;
+                }
+            }
+        }
+    }
+
+    /* Database matches */
+    if (printed < limit && db) {
+        /* Load all directory names and filter by prefix */
+        for (int d = 0; d < db->drive_count && printed < limit; d++) {
+            DriveData *drive = &db->drives[d];
+            for (int i = 0; i < drive->dir_count && printed < limit; i++) {
+                const char *name = drive->name_pool + drive->dirs[i].name_off;
+                if (_strnicmp(name, partial, strlen(partial)) == 0) {
+                    bool found = false;
+                    for (int j = 0; j < printed_count && !found; j++) {
+                        if (_stricmp(printed_names[j], name) == 0) found = true;
+                    }
+                    if (!found) {
+                        agent_printf("%s\r\n", name);
+                        RECORD_PRINTED(name);
+                        printed++;
+                    }
+                }
+            }
+        }
+    }
+
+    #undef MAX_PRINTED
+    #undef IS_ALREADY_PRINTED
+    #undef RECORD_PRINTED
+
+    if (meta) db_metadata_free(meta);
+    return 0;
 }
 
 #if NCD_PLATFORM_LINUX
@@ -1782,7 +1970,12 @@ int main(int argc, char *argv[])
 
     /* ------------------------------------------------ first-run configuration */
     /* If no config file exists and user didn't specify /c, prompt for configuration */
-    if (!db_metadata_exists() && !opts.config_edit && !opts.show_help) {
+    if (!db_metadata_exists() && !opts.config_edit && !opts.show_help && 
+        !opts.group_list && !opts.group_set && !opts.group_remove &&
+        !opts.show_history && !opts.clear_history && !opts.show_version &&
+        !opts.force_rescan && !opts.has_search &&
+        !opts.history_pingpong && !opts.history_browse && !opts.history_list &&
+        !opts.history_clear && opts.history_remove == 0) {
         ncd_println("Welcome to NCD! Let's set up your default options.");
         ncd_println("(Use 'ncd /c' anytime to change these settings)\r\n");
         
@@ -1863,6 +2056,39 @@ int main(int argc, char *argv[])
         NcdMetadata *meta = db_metadata_load();
         if (!meta) meta = db_metadata_create();
         
+        /* Get current directory for targeted removal */
+        char cwd[MAX_PATH] = {0};
+        bool have_cwd = platform_get_current_dir(cwd, sizeof(cwd));
+        
+        /* Check if current directory is in the group */
+        bool in_group = false;
+        if (have_cwd) {
+            const NcdGroupEntry *entry = NULL;
+            int count = 0;
+            for (int i = 0; i < meta->groups.count; i++) {
+                if (_stricmp(meta->groups.groups[i].name, opts.group_name) == 0) {
+                    count++;
+                    if (_stricmp(meta->groups.groups[i].path, cwd) == 0) {
+                        in_group = true;
+                    }
+                }
+            }
+            
+            if (in_group && count > 1) {
+                /* Remove only current directory from group */
+                if (db_group_remove_path(meta, opts.group_name, cwd)) {
+                    db_metadata_save(meta);
+                    ncd_printf("Removed '%s' from group '%s'.\r\n", cwd, opts.group_name);
+                } else {
+                    ncd_printf("Failed to remove from group '%s'.\r\n", opts.group_name);
+                }
+                db_metadata_free(meta);
+                con_close();
+                return 0;
+            }
+        }
+        
+        /* Remove entire group (all entries) */
         if (db_group_remove(meta, opts.group_name)) {
             db_metadata_save(meta);
             ncd_printf("Group '%s' removed.\r\n", opts.group_name);
@@ -1886,9 +2112,37 @@ int main(int argc, char *argv[])
         NcdMetadata *meta = db_metadata_load();
         if (!meta) meta = db_metadata_create();
         
+        /* Check if already in group before adding */
+        bool already_in_group = false;
+        for (int i = 0; i < meta->groups.count; i++) {
+            if (_stricmp(meta->groups.groups[i].name, opts.group_name) == 0 &&
+                _stricmp(meta->groups.groups[i].path, cwd) == 0) {
+                already_in_group = true;
+                break;
+            }
+        }
+        
+        /* Count existing entries for this group (before adding) */
+        int existing_count = 0;
+        for (int i = 0; i < meta->groups.count; i++) {
+            if (_stricmp(meta->groups.groups[i].name, opts.group_name) == 0) {
+                existing_count++;
+            }
+        }
+        
         if (db_group_set(meta, opts.group_name, cwd)) {
             db_metadata_save(meta);
-            ncd_printf("Group '%s' -> '%s'\r\n", opts.group_name, cwd);
+            
+            if (already_in_group) {
+                ncd_printf("'%s' is already in group '%s'.\r\n", cwd, opts.group_name);
+            } else if (existing_count > 0) {
+                /* Added to existing group */
+                ncd_printf("Added to group '%s' (%d entries) -> '%s'\r\n", 
+                           opts.group_name, existing_count + 1, cwd);
+            } else {
+                /* New group created */
+                ncd_printf("Group '%s' -> '%s'\r\n", opts.group_name, cwd);
+            }
         } else {
             ncd_println("Failed to set group (too many groups?).");
         }
@@ -1943,112 +2197,158 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    /* ------------------------------------------------ directory history navigation */
-    if (opts.history_nav || (!opts.has_search && argc == 1)) {
-        /* No args: treat as /0 (ping-pong) */
-        int idx = opts.history_nav ? opts.history_index : 0;
-        
+    /* ------------------------------------------------ directory history list */
+    if (opts.history_list) {
         NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
-        
-        if (idx == 0) {
-            /* /0 or no args: ping-pong between [0] and [1], swapping them */
-            if (db_dir_history_count(meta) < 2) {
-                ncd_println("NCD: Not enough history entries to ping-pong.\r\n");
-                ncd_println("Run 'ncd /1' first to add current directory to history.\r\n");
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            /* Get the second entry (will become first after swap) */
-            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, 1);
-            if (!entry) {
-                result_error("History entry not found.");
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            /* Verify directory still exists */
-            if (!platform_dir_exists(entry->path)) {
-                ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            /* Swap first two entries */
-            db_dir_history_swap_first_two(meta);
-            meta->dir_history_dirty = true;
-            db_metadata_save(meta);
-            
-            /* Return the (now) first entry */
-            result_ok(entry->path, entry->drive);
+        if (meta) {
+            db_dir_history_print(meta);
             db_metadata_free(meta);
-            con_close();
-            return 0;
-            
-        } else if (idx == 1) {
-            /* /1: add current directory to top of history */
-            char cwd[MAX_PATH] = {0};
-            if (!platform_get_current_dir(cwd, sizeof(cwd))) {
-                result_error("Could not determine current directory.");
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            char drive = platform_get_drive_letter(cwd);
-            if (drive == 0) {
-                /* On Linux, use first char or default */
-                drive = cwd[0];
-            }
-            
-            if (db_dir_history_add(meta, cwd, drive)) {
-                meta->dir_history_dirty = true;
-                db_metadata_save(meta);
-                ncd_printf("Added to history: %s\r\n", cwd);
-            } else {
-                ncd_println("Failed to add to history.");
-            }
-            db_metadata_free(meta);
-            con_close();
-            return 0;
-            
         } else {
-            /* /2, /3, etc.: jump to Nth entry (1-indexed, so /2 = index 1) */
-            int entry_idx = idx - 1;  /* Convert to 0-indexed */
-            
-            if (entry_idx >= db_dir_history_count(meta)) {
-                ncd_printf("NCD: History entry /%d not available (only %d entries).\r\n",
-                           idx, db_dir_history_count(meta));
-                db_metadata_free(meta);
-                con_close();
-                return 1;
+            ncd_println("Directory history: empty");
+        }
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ directory history clear */
+    if (opts.history_clear) {
+        NcdMetadata *meta = db_metadata_load();
+        if (meta) {
+            db_dir_history_clear(meta);
+            db_metadata_save(meta);
+            ncd_println("Directory history cleared.");
+            db_metadata_free(meta);
+        }
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ directory history remove by index */
+    if (opts.history_remove > 0) {
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) {
+            ncd_println("No history.");
+            con_close();
+            return 1;
+        }
+        
+        int idx = opts.history_remove - 1;  /* convert 1-based to 0-based */
+        const NcdDirHistoryEntry *entry = db_dir_history_get(meta, idx);
+        if (!entry) {
+            ncd_printf("History entry %d not found (only %d entries).\r\n",
+                       opts.history_remove, db_dir_history_count(meta));
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        ncd_printf("Removed from history: %s\r\n", entry->path);
+        db_dir_history_remove(meta, idx);
+        db_metadata_save(meta);
+        db_metadata_free(meta);
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ directory history browse */
+    if (opts.history_browse) {
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta || db_dir_history_count(meta) == 0) {
+            ncd_println("No history entries.");
+            if (meta) db_metadata_free(meta);
+            con_close();
+            return 0;
+        }
+        
+        /* Build match array from history entries */
+        int count = db_dir_history_count(meta);
+        NcdMatch *matches = ncd_malloc(sizeof(NcdMatch) * count);
+        int valid = 0;
+        
+        for (int i = 0; i < count; i++) {
+            const NcdDirHistoryEntry *e = db_dir_history_get(meta, i);
+            if (e && platform_dir_exists(e->path)) {
+                platform_strncpy_s(matches[valid].full_path, 
+                                   sizeof(matches[valid].full_path), e->path);
+                matches[valid].drive_letter = e->drive;
+                matches[valid].drive_index = -1;  /* not from database */
+                matches[valid].dir_index = -1;
+                valid++;
+            } else if (e) {
+                ncd_printf("Warning: Directory no longer exists: %s\r\n", e->path);
             }
-            
-            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, entry_idx);
-            if (!entry) {
-                result_error("History entry not found.");
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            /* Verify directory still exists */
-            if (!platform_dir_exists(entry->path)) {
-                ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
-                db_metadata_free(meta);
-                con_close();
-                return 1;
-            }
-            
-            result_ok(entry->path, entry->drive);
+        }
+        
+        if (valid == 0) {
+            ncd_println("No valid history entries (directories may have been removed).");
+            free(matches);
             db_metadata_free(meta);
             con_close();
             return 0;
         }
+        
+        int chosen;
+        if (valid == 1) {
+            chosen = 0;
+        } else {
+            chosen = ui_select_history(matches, &valid, meta);
+            /* Note: valid may have decreased if user deleted entries */
+        }
+        
+        if (chosen >= 0 && chosen < valid) {
+            add_current_dir_to_history();
+            result_ok(matches[chosen].full_path, matches[chosen].drive_letter);
+        } else {
+            result_cancel();
+        }
+        
+        free(matches);
+        db_metadata_free(meta);
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ directory history ping-pong */
+    if (opts.history_pingpong || (!opts.has_search && argc == 1)) {
+        /* /0 or no args: ping-pong between [0] and [1], swapping them */
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        
+        if (db_dir_history_count(meta) < 2) {
+            ncd_println("NCD: Not enough history entries to ping-pong.\r\n");
+            ncd_println("Navigate to a directory first with 'ncd <search>'.\r\n");
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        /* Get the second entry (will become first after swap) */
+        const NcdDirHistoryEntry *entry = db_dir_history_get(meta, 1);
+        if (!entry) {
+            result_error("History entry not found.");
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        /* Verify directory still exists */
+        if (!platform_dir_exists(entry->path)) {
+            ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        /* Swap first two entries */
+        db_dir_history_swap_first_two(meta);
+        meta->dir_history_dirty = true;
+        db_metadata_save(meta);
+        
+        /* Return the (now) first entry */
+        result_ok(entry->path, entry->drive);
+        db_metadata_free(meta);
+        con_close();
+        return 0;
     }
     
     /* ------------------------------------------------------ agent mode  */
@@ -2122,6 +2422,22 @@ int main(int argc, char *argv[])
                 }
                 
                 result = agent_mode_check(db, &opts);
+                if (db) db_free(db);
+                break;
+            }
+            case AGENT_SUB_COMPLETE: {
+                /* Complete doesn't need database, but can use it if available */
+                NcdDatabase *db = NULL;
+                char cwd[MAX_PATH] = {0};
+                platform_get_current_dir(cwd, sizeof(cwd));
+                char target_drive = (char)toupper((unsigned char)cwd[0]);
+                char target_db[NCD_MAX_PATH] = {0};
+                
+                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                    db = db_load_auto(target_db);
+                }
+                
+                result = agent_mode_complete(db, &opts);
                 if (db) db_free(db);
                 break;
             }
@@ -2304,32 +2620,81 @@ int main(int argc, char *argv[])
         const char *group_name = opts.search;  /* Includes the @ prefix */
         
         NcdMetadata *meta = db_metadata_load();
-        if (meta) {
-            const NcdGroupEntry *entry = db_group_get(meta, group_name);
-            if (entry) {
-                /* Verify the directory still exists */
-                if (platform_dir_exists(entry->path)) {
-                    char drive_letter = entry->path[0];
-                    add_current_dir_to_history();
-                    result_ok(entry->path, drive_letter);
-                    db_metadata_free(meta);
-                    con_close();
-                    return 0;
-                } else {
-                    ncd_printf("Group '%s' points to non-existent directory: %s\r\n",
-                               group_name, entry->path);
-                    db_metadata_free(meta);
-                    con_close();
-                    return 1;
-                }
-            }
-            db_metadata_free(meta);
+        if (!meta) {
+            result_error("Unknown group: %s", group_name);
+            con_close();
+            return 1;
         }
         
-        /* Group not found */
-        result_error("Unknown group: %s", group_name);
+        /* Get all entries for this group */
+        const NcdGroupEntry *entries[256];
+        int count = db_group_get_all(meta, group_name, entries, 256);
+        
+        if (count == 0) {
+            db_metadata_free(meta);
+            result_error("Unknown group: %s", group_name);
+            con_close();
+            return 1;
+        }
+        
+        /* Filter out non-existent directories */
+        NcdMatch *matches = ncd_malloc(sizeof(NcdMatch) * count);
+        int valid_count = 0;
+        
+        for (int i = 0; i < count; i++) {
+            if (platform_dir_exists(entries[i]->path)) {
+                platform_strncpy_s(matches[valid_count].full_path, 
+                                   sizeof(matches[valid_count].full_path),
+                                   entries[i]->path);
+                matches[valid_count].drive_letter = entries[i]->path[0];
+                matches[valid_count].drive_index = -1;  /* Not from database */
+                matches[valid_count].dir_index = -1;
+                valid_count++;
+            } else {
+                ncd_printf("Warning: Group entry points to non-existent directory: %s\r\n",
+                           entries[i]->path);
+            }
+        }
+        
+        if (valid_count == 0) {
+            free(matches);
+            db_metadata_free(meta);
+            result_error("Group '%s' has no valid directories.", group_name);
+            con_close();
+            return 1;
+        }
+        
+        /* Single entry - navigate directly */
+        if (valid_count == 1) {
+            char drive_letter = matches[0].drive_letter;
+            add_current_dir_to_history();
+            result_ok(matches[0].full_path, drive_letter);
+            free(matches);
+            db_metadata_free(meta);
+            con_close();
+            return 0;
+        }
+        
+        /* Multiple entries - show selection UI */
+        int selected = ui_select_match(matches, valid_count, group_name);
+        
+        if (selected < 0) {
+            /* User cancelled */
+            free(matches);
+            db_metadata_free(meta);
+            result_cancel();
+            con_close();
+            return 0;
+        }
+        
+        /* Navigate to selected entry */
+        char drive_letter = matches[selected].drive_letter;
+        add_current_dir_to_history();
+        result_ok(matches[selected].full_path, drive_letter);
+        free(matches);
+        db_metadata_free(meta);
         con_close();
-        return 1;
+        return 0;
     }
 
     /* ----------------------------------------- parse drive from search   */

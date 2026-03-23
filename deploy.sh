@@ -92,7 +92,39 @@ else
     echo "  ${NCD_FUNC}"
 fi
 
+# -----------------------------------------------------------------------
+# 6.  Install shell completion files
+# -----------------------------------------------------------------------
+echo ""
+echo "Installing shell completion files..."
+
+# Bash completions
+BASH_COMPLETION_DIR="/usr/local/share/bash-completion/completions"
+if [[ -d "${BASH_COMPLETION_DIR}" ]] || ${SUDO} mkdir -p "${BASH_COMPLETION_DIR}" 2>/dev/null; then
+    if [[ -f "${SCRIPT_DIR}/completions/ncd.bash" ]]; then
+        ${SUDO} cp "${SCRIPT_DIR}/completions/ncd.bash" "${BASH_COMPLETION_DIR}/ncd"
+        echo "  Bash completions installed to ${BASH_COMPLETION_DIR}/ncd"
+    fi
+else
+    echo "  Note: Could not install Bash completions (no permission)"
+fi
+
+# Zsh completions
+ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
+if [[ -d "${ZSH_COMPLETION_DIR}" ]] || ${SUDO} mkdir -p "${ZSH_COMPLETION_DIR}" 2>/dev/null; then
+    if [[ -f "${SCRIPT_DIR}/completions/_ncd" ]]; then
+        ${SUDO} cp "${SCRIPT_DIR}/completions/_ncd" "${ZSH_COMPLETION_DIR}/_ncd"
+        echo "  Zsh completions installed to ${ZSH_COMPLETION_DIR}/_ncd"
+    fi
+else
+    echo "  Note: Could not install Zsh completions (no permission)"
+fi
+
 echo ""
 echo "Deployment complete!"
 echo ""
 echo "Usage: ncd <search>"
+echo ""
+echo "Tab completion:"
+echo "  Bash: Restart your shell or run: source ${BASH_COMPLETION_DIR}/ncd"
+echo "  Zsh:  Add ${ZSH_COMPLETION_DIR} to your fpath and run: compinit"

@@ -6,16 +6,19 @@ NewChangeDirectory (NCD) is a cross-platform command-line directory navigation t
 
 **Key Features:**
 - Fast directory search using a pre-built binary database format
-- Interactive TUI for selecting from multiple matches (selector mode)
+- Interactive TUI with live filtering for selecting from multiple matches (selector mode)
 - Filesystem navigator for browsing directories (navigator mode, launched with `ncd .`)
 - Cross-platform support: Windows (x64) and Linux (x64, including WSL)
 - Multi-threaded directory scanning for performance
 - Heuristics-based search result ranking (learns from user choices)
 - Per-drive/per-mount database files for incremental updates
-- Group/tag system for bookmarking frequently used directories
+- Group/tag system for bookmarking frequently used directories (supports multiple dirs per group)
 - Fuzzy matching with Damerau-Levenshtein distance
+- Interactive history browser with delete support
 - Agent mode API for LLM integration
+- Shell tab completion for Bash, Zsh, and PowerShell
 - Exclusion list for filtering unwanted directories
+- Optional resident service for shared-memory state access
 - Directory history for quick navigation between recent locations
 
 ## Technology Stack
@@ -27,6 +30,8 @@ NewChangeDirectory (NCD) is a cross-platform command-line directory navigation t
   - Linux: GCC or Clang via `build.sh`
 - **Threading:** Windows threads (Win32 API) / POSIX threads (pthreads)
 - **UI:** Platform-native console I/O with ANSI escape sequences (Linux) / Win32 Console API (Windows)
+- **IPC:** Named pipes (Windows) / Unix domain sockets (Linux)
+- **Shared Memory:** `CreateFileMapping` (Windows) / `shm_open` (Linux)
 
 ## Project Structure
 
@@ -38,18 +43,36 @@ NewChangeDirectory/
 │   ├── database.c/.h         # Database load/save (binary format), groups, config, metadata
 │   ├── scanner.c/.h          # Multi-threaded directory enumeration
 │   ├── matcher.c/.h          # Search matching algorithm (chain + fuzzy)
-│   ├── ui.c/.h               # Interactive terminal UI (selector + navigator)
+│   ├── ui.c/.h               # Interactive terminal UI (selector + navigator + history)
 │   ├── platform.c/.h         # NCD-specific platform wrappers (includes ../shared/)
 │   ├── strbuilder.c/.h       # Dynamic string builder for JSON output
 │   ├── common.c              # Memory allocation wrappers
+│   ├── state_backend.h       # State access abstraction (local or service)
+│   ├── state_backend_local.c # Local disk state implementation
+│   ├── state_backend_service.c # Service-backed state implementation
+│   ├── shared_state.h/.c     # Shared memory snapshot format
+│   ├── shm_platform.h        # Shared memory platform abstraction
+│   ├── shm_platform_win.c    # Windows shared memory implementation
+│   ├── shm_platform_posix.c  # Linux/POSIX shared memory implementation
+│   ├── control_ipc.h         # IPC control channel interface
+│   ├── control_ipc_win.c     # Windows named pipe IPC
+│   ├── control_ipc_posix.c   # Linux Unix socket IPC
+│   ├── service_main.c        # Service executable entry point
+│   ├── service_state.c/.h    # Service state management
+│   ├── service_publish.c/.h  # Snapshot publication
 │   ├── ncd.vcxproj           # Visual Studio project file
 │   └── ncd.sln               # Visual Studio solution file
+├── completions/              # Shell completion scripts
+│   ├── ncd.bash              # Bash completion
+│   ├── _ncd                  # Zsh completion
+│   └── ncd.ps1               # PowerShell completion
 ├── test/                     # Test suite
 │   ├── test_framework.h/.c   # Minimal unit testing framework
 │   ├── test_database.c       # Database module unit tests
 │   ├── test_matcher.c        # Matcher module unit tests
 │   ├── test_db_corruption.c  # Database corruption handling tests
 │   ├── test_bugs.c           # Known bug detection tests
+│   ├── test_shared_state.c   # Shared state tests
 │   ├── fuzz_database.c       # Fuzz testing for database loading
 │   ├── bench_matcher.c       # Performance benchmarks
 │   ├── Makefile              # Test build system
@@ -57,8 +80,14 @@ NewChangeDirectory/
 │   ├── Win/                  # Windows-specific tests
 │   ├── Wsl/                  # WSL/Linux-specific tests
 │   └── PowerShell/           # PowerShell-specific tests
+├── tasks/                    # Implementation tracking
+│   ├── todo.md               # Task checklist
+│   ├── lessons.md            # Lessons learned
+│   └── baseline.md           # Performance baseline
 ├── ncd.bat                   # Windows wrapper script (CMD)
 ├── ncd                       # Linux wrapper script (Bash)
+├── ncd_service.bat           # Windows service launcher
+├── ncd_service               # Linux service launcher
 ├── build.bat                 # Windows build (MSVC)
 ├── build.sh                  # Linux build (GCC/Clang)
 ├── Makefile                  # Cross-platform build (MinGW)
@@ -79,8 +108,13 @@ The project requires a shared platform abstraction library located at `../shared
 | Database | Binary DB load/save, path helpers, groups, config, metadata, exclusions, history | `database.c/.h` |
 | Scanner | Thread pool management, recursive directory scanning | `scanner.c/.h` |
 | Matcher | Chain-matching algorithm, name index, fuzzy matching with DL distance | `matcher.c/.h` |
-| UI | Interactive selection list, filesystem navigator, dialogs, config editor | `ui.c/.h` |
+| UI | Interactive selection list, filesystem navigator, history browser, dialogs, config editor | `ui.c/.h` |
 | Platform | NCD-specific wrappers around shared platform library | `platform.c/.h` |
+| State Backend | Abstraction for local disk vs service-backed state | `state_backend.h`, `state_backend_local.c`, `state_backend_service.c` |
+| Shared State | Shared memory snapshot format and validation | `shared_state.h/.c` |
+| SHM Platform | Cross-platform shared memory wrapper | `shm_platform.h`, `shm_platform_win.c`, `shm_platform_posix.c` |
+| Control IPC | Inter-process communication for service/client | `control_ipc.h`, `control_ipc_win.c`, `control_ipc_posix.c` |
+| Service | Resident state service implementation | `service_main.c`, `service_state.c/.h`, `service_publish.c/.h` |
 | String Builder | Dynamic string construction, JSON escaping | `strbuilder.c/.h` |
 | Common | Memory allocation wrappers that exit on OOM | `common.c` |
 
@@ -175,6 +209,9 @@ cd test && make features
 
 # Feature tests without root (uses /tmp)
 cd test && make features-noroot
+
+# Service parity tests
+cd test && make service-parity
 ```
 
 ### Test Coverage
@@ -195,6 +232,12 @@ cd test && make features-noroot
 - `match_with_hidden_filter` - Hidden directory filtering
 - `match_no_results` - Empty result handling
 - `match_empty_search` - Empty search handling
+
+**Shared State Tests:**
+- `header_validation` - Snapshot header validation
+- `checksum_validation` - CRC64 checksum verification
+- `section_lookup` - Section table navigation
+- `bounds_checking` - Memory bounds validation
 
 ## Code Style Guidelines
 
@@ -309,11 +352,18 @@ ncd /z                    # Fuzzy matching with DL distance
 ncd .                     # Navigate from current directory
 ncd C:                    # Navigate from drive root (Windows)
 
-# Groups (bookmarks)
-ncd /g @home              # Create group for current directory
-ncd /g- @home             # Remove group
+# Groups (bookmarks) - supports multiple directories per group
+ncd /g @home              # Add current directory to group
+ncd /g- @home             # Remove current directory from group
 ncd /gl                   # List all groups
-ncd @home                 # Jump to group
+ncd @home                 # Jump to group (shows selector if multiple)
+
+# Directory history
+ncd /0                    # Ping-pong between two most recent directories
+ncd /h                    # Browse history interactively (Del to remove)
+ncd /hl                   # List directory history
+ncd /hc                   # Clear all history
+ncd /hc3                  # Remove history entry #3
 
 # Exclusions
 ncd -x C:Windows          # Add exclusion pattern
@@ -323,24 +373,57 @@ ncd -xl                   # List all exclusions
 # Configuration
 ncd /c                    # Edit configuration (set default options)
 
-# History
+# Frequent searches
 ncd /f                    # Show frequent searches
-ncd /fc                   # Clear history
-
-# Directory history navigation
-ncd /0                    # Ping-pong between two most recent directories
-ncd /1, /2, ... /9       # Jump to Nth most recent directory
+ncd /fc                   # Clear frequent searches
 
 # Agent mode (LLM integration)
 ncd /agent query <search> [--json] [--limit N] [--depth]
 ncd /agent ls <path> [--json] [--depth N] [--dirs-only|--files-only]
 ncd /agent tree <path> [--json] [--depth N] [--flat]
 ncd /agent check <path> | --db-age | --stats | --service-status
+ncd /agent complete <partial> [--limit N]  # Shell tab-completion
+
+# Service management
+ncd_service start         # Start resident service (faster startup)
+ncd_service stop          # Stop resident service
+ncd /agent check --service-status  # Check if service is running
 
 # Help
 ncd /?                    # or /h
 ncd /v                    # Version info
 ```
+
+### Interactive Selection UI
+
+When multiple directories match, NCD shows an interactive list with **live filtering**:
+
+**Navigation:**
+- **Arrow keys** - Navigate up/down
+- **Page Up/Down** - Scroll a page at a time
+- **Home/End** - Jump to first/last item
+- **Enter** - Select highlighted entry
+- **Escape** - Cancel (or clear filter if active)
+- **Tab** - Enter navigator mode on selected item
+
+**Live Filtering:**
+- **Type characters** - Filter the list in real-time (e.g., type "src" to narrow)
+- **Backspace** - Remove last filter character
+- **Escape (when filtering)** - Clear filter, restore full list
+
+Filter matching:
+- Case-insensitive substring match
+- If filter contains `\` or `/`, matches against full path
+- Otherwise, matches against last path component (directory name)
+
+### History Browser
+
+The interactive history browser (`ncd /h`) shows recently visited directories:
+
+- **Arrow keys** - Navigate
+- **Delete** - Remove entry from history
+- **Enter** - Navigate to selected directory
+- **Escape** - Cancel
 
 ### Wrapper Scripts
 
@@ -353,6 +436,28 @@ ncd /v                    # Version info
 - Must be sourced, not executed: `source ncd` or use shell function
 - Exe writes `/tmp/ncd_result.sh` (or `$XDG_RUNTIME_DIR`)
 - Script sources and executes `cd`
+
+## Shell Tab Completion
+
+NCD supports tab-completion for directory and group names.
+
+### Bash
+```bash
+source completions/ncd.bash
+ncd dow<Tab>    # Completes to "downloads", "documents", etc.
+ncd @h<Tab>     # Completes to "@home", "@htdocs", etc.
+```
+
+### Zsh
+```zsh
+fpath+=(/path/to/completions)
+autoload -U compinit && compinit
+```
+
+### PowerShell
+```powershell
+. /path/to/completions/ncd.ps1
+```
 
 ## Database Storage
 
@@ -419,10 +524,17 @@ A child process cannot change the working directory of its parent shell (OS limi
 
 ### Why two UI modes?
 
-1. **Selector:** List of search results (arrow keys to select)
+1. **Selector:** List of search results with live filtering (arrow keys to select, type to filter)
 2. **Navigator:** Browse filesystem hierarchy (Tab to enter, Backspace to exit)
 
 This mirrors Norton Commander's behavior for both search-driven and browse-driven workflows.
+
+### Why an optional resident service?
+
+- Keeps metadata and database hot in shared memory
+- Eliminates disk I/O on client startup when service is running
+- Client falls back to standalone mode if service unavailable
+- Service handles persistence and snapshot publication
 
 ## Agent Mode
 
@@ -449,6 +561,9 @@ ncd /agent check --stats
 
 # Check service status (returns: READY, STARTING, or NOT_RUNNING)
 ncd /agent check --service-status
+
+# Shell tab-completion candidates
+ncd /agent complete dow --limit 20
 ```
 
 Exit codes:
@@ -465,6 +580,7 @@ Exit codes:
 4. **Buffer safety:** All string operations use bounded copies
 5. **Overflow checking:** Multiplication/addition operations check for overflow
 6. **Symlink handling:** On Linux, symlinks are followed; no cycle detection currently
+7. **Shared memory:** User-scoped naming prevents cross-user collisions
 
 ## Known Limitations
 
@@ -484,20 +600,27 @@ Exit codes:
 | `src/database.c` | Binary DB load/save, path helpers, groups, config, metadata, exclusions, history |
 | `src/scanner.c` | Multi-threaded filesystem scanning, mount enumeration, exclusion filtering |
 | `src/matcher.c` | Chain matching, name index, fuzzy matching with Damerau-Levenshtein |
-| `src/ui.c` | TUI implementation (selector, navigator, dialogs, config editor) |
+| `src/ui.c` | TUI implementation (selector with live filter, navigator, history browser, dialogs) |
 | `src/platform.c` | NCD-specific platform wrappers (delegates to ../shared/) |
 | `src/strbuilder.c` | Dynamic string builder with JSON escaping |
 | `src/common.c` | Memory allocation wrappers with OOM handling |
+| `src/state_backend.h` | State access abstraction interface |
+| `src/state_backend_local.c` | Local disk state implementation |
+| `src/state_backend_service.c` | Service-backed state via shared memory |
+| `src/shared_state.h/.c` | Shared memory snapshot format and validation |
+| `src/shm_platform.h` | Shared memory platform abstraction |
+| `src/control_ipc.h` | IPC message protocol for service/client |
+| `src/service_main.c` | Service executable entry point |
+| `src/service_state.c/.h` | Service state management and dirty tracking |
+| `src/service_publish.c/.h` | Snapshot publication and generation management |
 | `test/test_framework.h` | Minimal unit testing framework macros |
 | `test/test_database.c` | Database module unit tests |
 | `test/test_matcher.c` | Matcher module unit tests |
-| `test/fuzz_database.c` | Fuzz testing for database loading |
-| `test/bench_matcher.c` | Performance benchmarks |
-| `test/test_db_corruption.c` | Database corruption handling tests |
+| `test/test_shared_state.c` | Shared state validation tests |
 
 ## Version History
 
-- Current binary version: 2 (added CRC64 checksum field)
+- Current binary version: 2 (added CRC64 checksum)
 - Current metadata version: 1
 - Current heuristics version: 1
 - Current build version: 1.2

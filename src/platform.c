@@ -10,8 +10,11 @@
 #include <string.h>
 #include <ctype.h>
 
-#if NCD_PLATFORM_LINUX
+#if NCD_PLATFORM_WINDOWS
+#include <shlwapi.h>  /* For StrStrIA (case-insensitive substring search) */
+#elif NCD_PLATFORM_LINUX
 #include <errno.h>
+#include <strings.h>  /* For strcasestr on Linux */
 #endif
 
 /* NCD-specific pseudo filesystems list */
@@ -289,3 +292,18 @@ int platform_filter_available_drives(const char *in_drives, int in_count,
     return out_idx;
 }
 
+/* ================================================================ Case-insensitive substring search */
+
+const char *platform_strcasestr(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle) return NULL;
+    if (!needle[0]) return haystack;
+    
+#if NCD_PLATFORM_WINDOWS
+    /* Use Windows Shlwapi function */
+    return (const char *)StrStrIA(haystack, needle);
+#else
+    /* Use POSIX.1-2008 function on Linux */
+    return strcasestr(haystack, needle);
+#endif
+}

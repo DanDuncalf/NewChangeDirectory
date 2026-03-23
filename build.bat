@@ -152,7 +152,7 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET% ^
     %OBJDIR%\shared_state.obj ^
     %OBJDIR%\shm_platform_win.obj ^
     %OBJDIR%\control_ipc_win.obj ^
-    kernel32.lib user32.lib advapi32.lib
+    kernel32.lib user32.lib advapi32.lib shlwapi.lib
 
 if errorlevel 1 goto :error
 
@@ -178,7 +178,7 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:NCDService.exe ^
     %OBJDIR%\sh_platform.obj ^
     %OBJDIR%\sh_strbuilder.obj ^
     %OBJDIR%\sh_common.obj ^
-    kernel32.lib user32.lib advapi32.lib
+    kernel32.lib user32.lib advapi32.lib shlwapi.lib
 
 if errorlevel 1 goto :error
 

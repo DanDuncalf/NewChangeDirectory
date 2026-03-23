@@ -225,11 +225,27 @@ bool db_group_remove(NcdMetadata *meta, const char *name);
 /*
  * Look up a group by name in metadata.
  * Returns pointer to entry, or NULL if not found.
+ * If multiple entries exist with the same name, returns the first one.
  */
 const NcdGroupEntry *db_group_get(NcdMetadata *meta, const char *name);
 
 /*
+ * Look up all entries for a group name in metadata.
+ * Fills out array with pointers to matching entries (up to max_out).
+ * Returns the number of entries found (may be more than max_out).
+ */
+int db_group_get_all(NcdMetadata *meta, const char *name,
+                     const NcdGroupEntry **out, int max_out);
+
+/*
+ * Remove a specific path from a group.
+ * Returns true if entry was found and removed.
+ */
+bool db_group_remove_path(NcdMetadata *meta, const char *name, const char *path);
+
+/*
  * List all groups to console from metadata.
+ * Groups with multiple entries are shown with entry counts.
  */
 void db_group_list(NcdMetadata *meta);
 
@@ -460,6 +476,13 @@ int db_dir_history_count(NcdMetadata *meta);
  * Clear all history entries.
  */
 void db_dir_history_clear(NcdMetadata *meta);
+
+/*
+ * Remove a single history entry by index.
+ * Index 0 is the most recent entry.
+ * Returns true on success, false if index is out of range.
+ */
+bool db_dir_history_remove(NcdMetadata *meta, int index);
 
 /*
  * Print the directory history list (for debugging/display).

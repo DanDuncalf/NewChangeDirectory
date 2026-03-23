@@ -1,0 +1,16 @@
+#compdef ncd
+
+_ncd() {
+    local -a completions
+    local cur="${words[CURRENT]}"
+
+    # Skip flag completion for now
+    if [[ "$cur" == /* || "$cur" == -* ]]; then
+        return
+    fi
+
+    completions=( ${(f)"$(NewChangeDirectory /agent complete "$cur" --limit 20 2>/dev/null)"} )
+    compadd -a completions
+}
+
+_ncd "$@"

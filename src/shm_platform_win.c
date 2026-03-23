@@ -114,7 +114,9 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
     );
     
     if (handle->hMapFile == NULL) {
-        set_last_error(GetLastError());
+        DWORD err = GetLastError();
+        set_last_error(err);
+        fprintf(stderr, "DEBUG: CreateFileMapping failed for '%s' size=%zu, error=%lu\n", name, size, err);
         free(handle);
         return win_error_to_shm(g_last_error);
     }
