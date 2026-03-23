@@ -407,7 +407,7 @@ const NcdDatabase *state_view_database_service(const NcdStateView *view) {
 /* --------------------------------------------------------- mutations          */
 
 /* Default retries for busy states */
-#define DEFAULT_BUSY_RETRIES 50  /* 50 * 100ms = 5 seconds max wait */
+#define DEFAULT_BUSY_RETRIES 10  /* 10 * 100ms = 1 second max wait */
 #define BUSY_RETRY_DELAY_MS 100
 
 /*

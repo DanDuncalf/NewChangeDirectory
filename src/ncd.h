@@ -283,8 +283,8 @@ typedef struct {
 #define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
 #define NCD_CFG_VERSION  2            /* Incremented: added service_retry_count*/
 
-/* Default value for service retry count */
-#define NCD_DEFAULT_SERVICE_RETRY_COUNT  50
+/* Default value for service retry count (10 * 100ms = 1 second max wait) */
+#define NCD_DEFAULT_SERVICE_RETRY_COUNT  10
 
 /*
  * NcdHeurEntryV2  --  enhanced heuristics entry with frequency and recency
