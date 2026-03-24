@@ -484,6 +484,7 @@ typedef struct {
     
     /* Directory history options */
     bool history_pingpong;        /* /0 or bare ncd -- ping-pong between last two */
+    int  history_index;           /* /1..9 -- jump to history entry (1=oldest, 9=newest) */
     bool history_browse;          /* /h -- interactive history browser       */
     bool history_list;            /* /hl -- print history list               */
     bool history_clear;           /* /hc -- clear all history                */

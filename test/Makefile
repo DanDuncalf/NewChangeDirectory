@@ -19,7 +19,7 @@ HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_
 
 # Test executables
 TESTS = test_database test_matcher test_history test_agent_mkdir \
-        test_strbuilder test_common test_platform \
+        test_strbuilder test_common test_platform test_metadata test_scanner \
         fuzz_database bench_matcher test_db_corruption test_bugs
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features
@@ -27,7 +27,8 @@ TESTS = test_database test_matcher test_history test_agent_mkdir \
 all: $(TESTS)
 
 # Database tests
-test_database: test_database.c test_framework.c $(DB_SOURCES)
+TEST_DB_SOURCES = test_database.c test_framework.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_database: $(TEST_DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Matcher tests
@@ -72,11 +73,21 @@ test_common: test_common.c test_framework.c ../../shared/common.c
 test_platform: test_platform.c test_framework.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c ../src/database.c ../src/matcher.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Tier 2 tests - metadata
+METADATA_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_metadata: test_metadata.c test_framework.c $(METADATA_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 2 tests - scanner
+SCANNER_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_scanner: test_scanner.c test_framework.c $(SCANNER_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform
+test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform test_metadata test_scanner
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -97,6 +108,12 @@ test: test_database test_matcher test_history test_agent_mkdir test_strbuilder t
 	@echo ""
 	@echo "Running agent mkdir tests..."
 	@./test_agent_mkdir
+	@echo ""
+	@echo "Running metadata tests..."
+	@./test_metadata
+	@echo ""
+	@echo "Running scanner tests..."
+	@./test_scanner
 	@echo ""
 	@echo "All unit tests complete."
 

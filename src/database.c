@@ -876,6 +876,14 @@ const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index)
     return &meta->dir_history.entries[index];
 }
 
+const NcdDirHistoryEntry *db_dir_history_get_by_display_index(NcdMetadata *meta, int display_index)
+{
+    if (!meta || display_index < 1 || display_index > meta->dir_history.count) return NULL;
+    /* display_index 1 = oldest (entries[count-1]), display_index count = newest (entries[0]) */
+    int internal_index = meta->dir_history.count - display_index;
+    return &meta->dir_history.entries[internal_index];
+}
+
 void db_dir_history_swap_first_two(NcdMetadata *meta)
 {
     if (!meta || meta->dir_history.count < 2) return;
@@ -926,13 +934,17 @@ void db_dir_history_print(NcdMetadata *meta)
     
     printf("Directory history (%d entries, max %d):\n", 
            meta->dir_history.count, NCD_DIR_HISTORY_MAX);
-    for (int i = 0; i < meta->dir_history.count; i++) {
+    /* Print oldest first (higher index = more recent, so reverse order) */
+    for (int i = meta->dir_history.count - 1; i >= 0; i--) {
         const NcdDirHistoryEntry *e = &meta->dir_history.entries[i];
-        printf("  /%-2d  %c:\\  %s\n", i + 1, e->drive, e->path);
+        int display_num = meta->dir_history.count - i;  /* /1 = oldest, /9 = newest */
+        printf("  /%-2d  %c:\\  %s\n", display_num, e->drive, e->path);
     }
     printf("\nUsage:\n");
     printf("  ncd       - ping-pong between last two directories\n");
     printf("  ncd /0    - same as ncd (ping-pong)\n");
+    printf("  ncd /1    - jump to oldest directory\n");
+    printf("  ncd /%d   - jump to most recent directory\n", meta->dir_history.count);
     printf("  ncd /h    - browse history (interactive)\n");
     printf("  ncd /hl   - list history\n");
     printf("  ncd /hc   - clear all history\n");

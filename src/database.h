@@ -462,6 +462,13 @@ bool db_dir_history_add(NcdMetadata *meta, const char *path, char drive);
 const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index);
 
 /*
+ * Get a directory from history by display index (1-based, FIFO order).
+ * Display index 1 is the oldest, display index count is the most recent.
+ * Returns pointer to entry, or NULL if index is out of range (1 to count).
+ */
+const NcdDirHistoryEntry *db_dir_history_get_by_display_index(NcdMetadata *meta, int display_index);
+
+/*
  * Swap the first two entries in the history list (ping-pong).
  * Only swaps if there are at least 2 entries.
  */

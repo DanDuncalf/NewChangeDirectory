@@ -113,6 +113,10 @@ echo Compiling matcher.c...
 cl %CFLAGS% %SRCDIR%\matcher.c
 if errorlevel 1 goto :error
 
+echo Compiling scanner.c...
+cl %CFLAGS% %SRCDIR%\scanner.c
+if errorlevel 1 goto :error
+
 echo Compiling platform.c (NCD-specific)...
 cl %CFLAGS% /Fo%OBJDIR%\ncd_platform.obj %SRCDIR%\platform.c
 if errorlevel 1 goto :error
@@ -141,48 +145,84 @@ echo Building test executables...
 echo ========================================
 
 set LINK_FLAGS=/nologo /SUBSYSTEM:CONSOLE
-set COMMON_OBJS=%OBJDIR%\database.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj
+set WIN_LIBS=kernel32.lib user32.lib shlwapi.lib advapi32.lib
+set COMMON_OBJS=%OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj
 
 :: test_database.exe (needs matcher.obj for name_index_free)
 echo Building test_database.exe...
 cl %CFLAGS% test_database.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:test_database.exe %OBJDIR%\test_database.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:test_database.exe %OBJDIR%\test_database.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: test_matcher.exe
 echo Building test_matcher.exe...
 cl %CFLAGS% test_matcher.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:test_matcher.exe %OBJDIR%\test_matcher.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:test_matcher.exe %OBJDIR%\test_matcher.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: test_db_corruption.exe (needs matcher.obj for name_index_free)
 echo Building test_db_corruption.exe...
 cl %CFLAGS% test_db_corruption.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:test_db_corruption.exe %OBJDIR%\test_db_corruption.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:test_db_corruption.exe %OBJDIR%\test_db_corruption.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: test_bugs.exe
 echo Building test_bugs.exe...
 cl %CFLAGS% test_bugs.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:test_bugs.exe %OBJDIR%\test_bugs.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:test_bugs.exe %OBJDIR%\test_bugs.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: fuzz_database.exe (needs matcher.obj for name_index_free)
 echo Building fuzz_database.exe...
 cl %CFLAGS% fuzz_database.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:fuzz_database.exe %OBJDIR%\fuzz_database.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:fuzz_database.exe %OBJDIR%\fuzz_database.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: bench_matcher.exe
 echo Building bench_matcher.exe...
 cl %CFLAGS% bench_matcher.c
 if errorlevel 1 goto :error
-link %LINK_FLAGS% /OUT:bench_matcher.exe %OBJDIR%\bench_matcher.obj %OBJDIR%\matcher.obj %COMMON_OBJS%
+link %LINK_FLAGS% /OUT:bench_matcher.exe %OBJDIR%\bench_matcher.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 1: test_strbuilder.exe
+echo Building test_strbuilder.exe...
+cl %CFLAGS% test_strbuilder.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_strbuilder.exe %OBJDIR%\test_strbuilder.obj %OBJDIR%\test_framework.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 1: test_common.exe
+echo Building test_common.exe...
+cl %CFLAGS% test_common.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_common.exe %OBJDIR%\test_common.obj %OBJDIR%\test_framework.obj %OBJDIR%\sh_common.obj %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 1: test_platform.exe
+echo Building test_platform.exe...
+cl %CFLAGS% test_platform.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_platform.exe %OBJDIR%\test_platform.obj %OBJDIR%\test_framework.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 2: test_metadata.exe
+echo Building test_metadata.exe...
+cl %CFLAGS% test_metadata.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_metadata.exe %OBJDIR%\test_metadata.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 2: test_scanner.exe
+echo Building test_scanner.exe...
+cl %CFLAGS% test_scanner.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_scanner.exe %OBJDIR%\test_scanner.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
 echo.
@@ -192,6 +232,36 @@ echo ========================================
 echo.
 
 :: Run all tests
+echo --- Running test_strbuilder.exe ---
+test_strbuilder.exe
+if errorlevel 1 (
+    echo FAILED: test_strbuilder.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_strbuilder.exe
+)
+echo.
+
+echo --- Running test_common.exe ---
+test_common.exe
+if errorlevel 1 (
+    echo FAILED: test_common.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_common.exe
+)
+echo.
+
+echo --- Running test_platform.exe ---
+test_platform.exe
+if errorlevel 1 (
+    echo FAILED: test_platform.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_platform.exe
+)
+echo.
+
 echo --- Running test_database.exe ---
 test_database.exe
 if errorlevel 1 (
@@ -209,6 +279,26 @@ if errorlevel 1 (
     set TEST_FAILED=1
 ) else (
     echo PASSED: test_matcher.exe
+)
+echo.
+
+echo --- Running test_metadata.exe ---
+test_metadata.exe
+if errorlevel 1 (
+    echo FAILED: test_metadata.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_metadata.exe
+)
+echo.
+
+echo --- Running test_scanner.exe ---
+test_scanner.exe
+if errorlevel 1 (
+    echo FAILED: test_scanner.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_scanner.exe
 )
 echo.
 

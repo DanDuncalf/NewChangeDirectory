@@ -595,6 +595,7 @@ static void print_usage(void)
         "\r\n"
         "History:\r\n"
         "  /0            Ping-pong: swap between last two directories\r\n"
+        "  /1 .. /9      Jump to Nth directory in history (/1=oldest, /9=newest)\r\n"
         "  /h            Browse history (interactive, Del to remove)\r\n"
         "  /hl           List directory history\r\n"
         "  /hc           Clear all directory history\r\n"
@@ -725,6 +726,13 @@ static bool parse_args(int argc, char *argv[], NcdOptions *opts)
         /* Directory history ping-pong: /0 */
         if (_stricmp(arg, "/0") == 0 || _stricmp(arg, "-0") == 0) {
             opts->history_pingpong = true;
+            continue;
+        }
+        
+        /* Directory history jump: /1 to /9 */
+        if ((arg[0] == '/' || arg[0] == '-') && 
+            arg[1] >= '1' && arg[1] <= '9' && arg[2] == '\0') {
+            opts->history_index = arg[1] - '0';  /* 1-9 */
             continue;
         }
         
@@ -1604,9 +1612,139 @@ static int agent_mode_ls(const NcdOptions *opts)
     closedir(dir);
 #endif
     
-    /* Recurse if depth > 1 */
+    /* Recurse if depth > 1 - BFS queue for subdirectories */
     if (opts->agent_depth > 1) {
-        /* TODO: Implement recursion */
+        typedef struct {
+            char path[NCD_MAX_PATH];
+            int depth;
+        } DirQueueItem;
+        
+        DirQueueItem *queue = NULL;
+        int qhead = 0, qtail = 0, qcapacity = 0;
+        
+        /* Enqueue all subdirectories from initial scan */
+        for (int i = 0; i < entry_count; i++) {
+            if (entries[i].is_dir) {
+                if (qtail >= qcapacity) {
+                    qcapacity = qcapacity ? qcapacity * 2 : 16;
+                    DirQueueItem *newq = (DirQueueItem *)realloc(queue, qcapacity * sizeof(DirQueueItem));
+                    if (!newq) break;
+                    queue = newq;
+                }
+                DirQueueItem *q = &queue[qtail++];
+                platform_strncpy_s(q->path, sizeof(q->path), entries[i].path);
+                q->depth = 1;
+            }
+        }
+        
+        /* BFS through subdirectories */
+        while (qhead < qtail) {
+            DirQueueItem cur = queue[qhead++];
+            if (cur.depth >= opts->agent_depth) continue;
+            
+            char sub_path[NCD_MAX_PATH];
+            platform_strncpy_s(sub_path, sizeof(sub_path), cur.path);
+            size_t sub_len = strlen(sub_path);
+            if (sub_len > 0 && sub_path[sub_len-1] != '\\' && sub_path[sub_len-1] != '/') {
+                platform_strncat_s(sub_path, sizeof(sub_path), "/");
+                sub_len++;
+            }
+            
+#if NCD_PLATFORM_WINDOWS
+            char sub_search[NCD_MAX_PATH];
+            snprintf(sub_search, sizeof(sub_search), "%s*", sub_path);
+            
+            WIN32_FIND_DATAA sub_find;
+            HANDLE sub_handle = FindFirstFileExA(sub_search, FindExInfoBasic, &sub_find,
+                                                  FindExSearchNameMatch, NULL, 0);
+            if (sub_handle != INVALID_HANDLE_VALUE) {
+                do {
+                    const char *name = sub_find.cFileName;
+                    if (name[0] == '.') continue;
+                    
+                    bool is_dir = (sub_find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    
+                    if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
+                        continue;
+                    if (opts->agent_dirs_only && !is_dir) continue;
+                    if (opts->agent_files_only && is_dir) continue;
+                    
+                    if (entry_count >= entry_capacity) {
+                        entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+                        LsEntry *new_entries = (LsEntry *)realloc(entries, entry_capacity * sizeof(LsEntry));
+                        if (!new_entries) break;
+                        entries = new_entries;
+                    }
+                    
+                    LsEntry *e = &entries[entry_count++];
+                    platform_strncpy_s(e->name, sizeof(e->name), name);
+                    e->is_dir = is_dir;
+                    e->depth = cur.depth;
+                    snprintf(e->path, sizeof(e->path), "%s%s", sub_path, name);
+                    
+                    if (is_dir && cur.depth + 1 < opts->agent_depth) {
+                        if (qtail >= qcapacity) {
+                            qcapacity = qcapacity ? qcapacity * 2 : 16;
+                            DirQueueItem *newq = (DirQueueItem *)realloc(queue, qcapacity * sizeof(DirQueueItem));
+                            if (!newq) break;
+                            queue = newq;
+                        }
+                        DirQueueItem *q = &queue[qtail++];
+                        platform_strncpy_s(q->path, sizeof(q->path), e->path);
+                        q->depth = cur.depth + 1;
+                    }
+                } while (FindNextFileA(sub_handle, &sub_find));
+                FindClose(sub_handle);
+            }
+#else
+            DIR *sub_dir = opendir(sub_path);
+            if (sub_dir) {
+                struct dirent *sub_ent;
+                while ((sub_ent = readdir(sub_dir)) != NULL) {
+                    const char *name = sub_ent->d_name;
+                    if (name[0] == '.') continue;
+                    
+                    char full_path[NCD_MAX_PATH];
+                    snprintf(full_path, sizeof(full_path), "%s%s", sub_path, name);
+                    struct stat st;
+                    bool is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+                    
+                    if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
+                        continue;
+                    if (opts->agent_dirs_only && !is_dir) continue;
+                    if (opts->agent_files_only && is_dir) continue;
+                    
+                    if (entry_count >= entry_capacity) {
+                        entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+                        LsEntry *new_entries = (LsEntry *)realloc(entries, entry_capacity * sizeof(LsEntry));
+                        if (!new_entries) break;
+                        entries = new_entries;
+                    }
+                    
+                    LsEntry *e = &entries[entry_count++];
+                    platform_strncpy_s(e->name, sizeof(e->name), name, sizeof(e->name));
+                    e->is_dir = is_dir;
+                    e->depth = cur.depth;
+                    snprintf(e->path, sizeof(e->path), "%s%s", sub_path, name);
+                    
+                    if (is_dir && cur.depth + 1 < opts->agent_depth) {
+                        if (qtail >= qcapacity) {
+                            qcapacity = qcapacity ? qcapacity * 2 : 16;
+                            DirQueueItem *newq = (DirQueueItem *)realloc(queue, qcapacity * sizeof(DirQueueItem));
+                            if (!newq) break;
+                            queue = newq;
+                        }
+                        DirQueueItem *q = &queue[qtail++];
+                        platform_strncpy_s(q->path, sizeof(q->path), e->path);
+                        q->depth = cur.depth + 1;
+                    }
+                }
+                closedir(sub_dir);
+            }
+#endif
+        }
+        
+        free(queue);
     }
     
     if (opts->agent_json) {
@@ -1634,6 +1772,225 @@ static int agent_mode_ls(const NcdOptions *opts)
     return entry_count;
 }
 
+/* Simple hash map for path -> dir_index lookup */
+typedef struct {
+    uint64_t hash;
+    int dir_index;
+    char *path;  /* owned by map */
+} PathMapEntry;
+
+typedef struct {
+    PathMapEntry *entries;
+    int count;
+    int capacity;
+} PathMap;
+
+static uint64_t hash_path(const char *path)
+{
+    /* FNV-1a hash */
+    uint64_t h = 14695981039346656037ULL;
+    while (*path) {
+        h ^= (unsigned char)(*path++);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static void path_map_init(PathMap *map, int expected_size)
+{
+    map->capacity = expected_size * 2;  /* 0.5 load factor */
+    if (map->capacity < 16) map->capacity = 16;
+    map->entries = ncd_calloc((size_t)map->capacity, sizeof(PathMapEntry));
+    map->count = 0;
+}
+
+static void path_map_free(PathMap *map)
+{
+    for (int i = 0; i < map->capacity; i++) {
+        if (map->entries[i].path)
+            free(map->entries[i].path);
+    }
+    free(map->entries);
+    map->entries = NULL;
+    map->count = 0;
+    map->capacity = 0;
+}
+
+static void path_map_put(PathMap *map, const char *path, int dir_index)
+{
+    uint64_t h = hash_path(path);
+    int idx = (int)(h % (uint64_t)map->capacity);
+    
+    while (map->entries[idx].path != NULL) {
+        idx = (idx + 1) % map->capacity;
+    }
+    
+    map->entries[idx].hash = h;
+    map->entries[idx].dir_index = dir_index;
+    map->entries[idx].path = ncd_strdup(path);
+    map->count++;
+}
+
+static int path_map_get(PathMap *map, const char *path)
+{
+    uint64_t h = hash_path(path);
+    int idx = (int)(h % (uint64_t)map->capacity);
+    
+    while (map->entries[idx].path != NULL) {
+        if (map->entries[idx].hash == h && _stricmp(map->entries[idx].path, path) == 0)
+            return map->entries[idx].dir_index;
+        idx = (idx + 1) % map->capacity;
+    }
+    return -1;
+}
+
+/* Children index: for each dir, store list of child indices */
+typedef struct {
+    int *children;      /* Array of child dir indices */
+    int child_count;
+    int child_capacity;
+} DirChildren;
+
+/* Build children index for a drive - O(n) time, O(n) space */
+static DirChildren *build_children_index(const DriveData *drv)
+{
+    DirChildren *children = ncd_calloc((size_t)drv->dir_count, sizeof(DirChildren));
+    
+    /* First pass: count children per parent */
+    for (int i = 0; i < drv->dir_count; i++) {
+        int parent = drv->dirs[i].parent;
+        if (parent >= 0 && parent < drv->dir_count)
+            children[parent].child_count++;
+    }
+    
+    /* Allocate arrays */
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (children[i].child_count > 0) {
+            children[i].children = ncd_malloc_array((size_t)children[i].child_count, sizeof(int));
+            children[i].child_capacity = children[i].child_count;
+            children[i].child_count = 0;  /* Reset for second pass */
+        }
+    }
+    
+    /* Second pass: fill arrays */
+    for (int i = 0; i < drv->dir_count; i++) {
+        int parent = drv->dirs[i].parent;
+        if (parent >= 0 && parent < drv->dir_count) {
+            DirChildren *pc = &children[parent];
+            pc->children[pc->child_count++] = i;
+        }
+    }
+    
+    return children;
+}
+
+static void free_children_index(DirChildren *children, int dir_count)
+{
+    for (int i = 0; i < dir_count; i++) {
+        if (children[i].children)
+            free(children[i].children);
+    }
+    free(children);
+}
+
+/* Build path map for a drive - optimized iterative path building.
+ * Uses explicit stack to avoid recursion depth issues on deeply nested trees.
+ */
+typedef struct { int dir; int path_len_before_name; } PathMapStackItem;
+
+static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter)
+{
+    /* Stack needs to handle worst case: all dirs are root-level and have children.
+     * Allocate 2x dir_count for safety (root dirs + their children on stack).
+     */
+    int stack_capacity = drv->dir_count * 2;
+    if (stack_capacity < 256) stack_capacity = 256;
+    
+    PathMapStackItem *stack = ncd_malloc_array((size_t)stack_capacity, sizeof(PathMapStackItem));
+    int stack_top = 0;
+    
+    char path[NCD_MAX_PATH];
+    int root_len;
+    
+    /* Initialize with drive root - ensure it ends with separator */
+#if NCD_PLATFORM_WINDOWS
+    root_len = snprintf(path, sizeof(path), "%c:%c", drive_letter, NCD_PATH_SEP[0]);
+#else
+    root_len = snprintf(path, sizeof(path), "%s", drv->label);
+    if (root_len > 0 && path[root_len-1] != NCD_PATH_SEP[0]) {
+        path[root_len] = NCD_PATH_SEP[0];
+        path[++root_len] = '\0';
+    }
+#endif
+    /* root_len now includes the separator */
+    
+    /* Pre-build children index */
+    DirChildren *children = build_children_index(drv);
+    
+    /* Start with root-level directories (parent == -1) */
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (drv->dirs[i].parent == -1) {
+            const char *name = drv->name_pool + drv->dirs[i].name_off;
+            int name_len = (int)strlen(name);
+            
+            /* Build path: root already ends with separator, just add name */
+            if (root_len + name_len >= sizeof(path))
+                continue;
+            
+            memcpy(path + root_len, name, name_len + 1);
+            int path_len = root_len + name_len;
+            
+            /* Add to map */
+            path_map_put(map, path, i);
+            
+            /* Push children */
+            DirChildren *dc = &children[i];
+            for (int j = dc->child_count - 1; j >= 0; j--) {
+                int child_idx = dc->children[j];
+                if (stack_top < stack_capacity) {
+                    /* Child will restore to this path_len before adding its name */
+                    stack[stack_top++] = (PathMapStackItem){child_idx, path_len};
+                }
+            }
+        }
+    }
+    
+    /* Process remaining stack items */
+    while (stack_top > 0) {
+        PathMapStackItem cur = stack[--stack_top];
+        
+        /* Restore path to parent length */
+        path[cur.path_len_before_name] = '\0';
+        
+        const char *name = drv->name_pool + drv->dirs[cur.dir].name_off;
+        int name_len = (int)strlen(name);
+        
+        /* Build path: parent + separator + name */
+        int path_len = cur.path_len_before_name;
+        if (path_len + 1 + name_len >= sizeof(path))
+            continue;
+        
+        path[path_len] = NCD_PATH_SEP[0];
+        memcpy(path + path_len + 1, name, name_len + 1);
+        path_len += 1 + name_len;
+        
+        /* Add to map */
+        path_map_put(map, path, cur.dir);
+        
+        /* Push children */
+        DirChildren *dc = &children[cur.dir];
+        for (int j = dc->child_count - 1; j >= 0; j--) {
+            int child_idx = dc->children[j];
+            if (stack_top < stack_capacity) {
+                stack[stack_top++] = (PathMapStackItem){child_idx, path_len};
+            }
+        }
+    }
+    
+    free_children_index(children, drv->dir_count);
+    free(stack);
+}
+
 /* Agent mode: tree - Show directory structure from DB */
 static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
 {
@@ -1656,22 +2013,39 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         if (*p == '/') *p = '\\';
     }
     
-    /* Find matching directory in database */
+    /* Build path-to-index map for O(1) lookup - much faster than scanning */
+    PathMap path_map;
+    int total_dirs = 0;
+    for (int d = 0; d < db->drive_count; d++)
+        total_dirs += db->drives[d].dir_count;
+    path_map_init(&path_map, total_dirs);
+    
+    for (int d = 0; d < db->drive_count; d++) {
+        build_path_map(&path_map, &db->drives[d], db->drives[d].letter);
+    }
+    
+    /* O(1) lookup instead of O(n) scan */
     int found_drive_idx = -1;
     int found_dir_idx = -1;
     
-    for (int d = 0; d < db->drive_count && found_dir_idx < 0; d++) {
+    for (int d = 0; d < db->drive_count; d++) {
         DriveData *drive = &db->drives[d];
-        for (int i = 0; i < drive->dir_count; i++) {
-            char full_path[NCD_MAX_PATH];
-            db_full_path(drive, i, full_path, sizeof(full_path));
-            if (_stricmp(full_path, search_path) == 0) {
-                found_drive_idx = d;
-                found_dir_idx = i;
+        char drive_root[NCD_MAX_PATH];
+#if NCD_PLATFORM_WINDOWS
+        snprintf(drive_root, sizeof(drive_root), "%c:%c", drive->letter, NCD_PATH_SEP[0]);
+#else
+        snprintf(drive_root, sizeof(drive_root), "%s", drive->label);
+#endif
+        
+        if (_strnicmp(search_path, drive_root, strlen(drive_root)) == 0) {
+            found_drive_idx = d;
+            found_dir_idx = path_map_get(&path_map, search_path);
+            if (found_dir_idx >= 0)
                 break;
-            }
         }
     }
+    
+    path_map_free(&path_map);
     
     if (found_dir_idx < 0) {
         if (opts->agent_json) {
@@ -1684,6 +2058,9 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         return 0;
     }
     
+    /* Build children index once for O(1) child access */
+    DirChildren *children_idx = build_children_index(&db->drives[found_drive_idx]);
+    
     /* Collect entries */
     typedef struct {
         char full_path[NCD_MAX_PATH];
@@ -1694,82 +2071,83 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     int entry_count = 0;
     int entry_capacity = 0;
     
-    /* BFS to find all descendants - store parent dirs to build full paths */
-    typedef struct { int drive; int dir; int depth; int parent_entry_idx; } QueueItem;
-    int max_queue_size = db->drives[found_drive_idx].dir_count;
+    /* BFS to find all descendants using children index */
+    typedef struct { int dir; int depth; int parent_entry_idx; } QueueItem;
+    int max_queue_size = db->drives[found_drive_idx].dir_count + 1;
     QueueItem *queue = (QueueItem *)malloc(max_queue_size * sizeof(QueueItem));
-    if (!queue) return 0;
+    if (!queue) {
+        free_children_index(children_idx, db->drives[found_drive_idx].dir_count);
+        return 0;
+    }
     
     int qhead = 0, qtail = 0;
-    /* Root entry: use search path as base */
-    queue[qtail++] = (QueueItem){found_drive_idx, found_dir_idx, 0, -1};
+    queue[qtail++] = (QueueItem){found_dir_idx, 0, -1};
+    
+    DriveData *drive = &db->drives[found_drive_idx];
     
     while (qhead < qtail) {
         QueueItem cur = queue[qhead++];
-        DriveData *drive = &db->drives[cur.drive];
+        DirChildren *dc = &children_idx[cur.dir];
         
-        /* Find children */
-        for (int i = 0; i < drive->dir_count; i++) {
-            if (drive->dirs[i].parent == cur.dir) {
-                const char *name = drive->name_pool + drive->dirs[i].name_off;
+        /* Iterate children directly using index - O(child_count) instead of O(n) */
+        for (int i = 0; i < dc->child_count; i++) {
+            int child_idx = dc->children[i];
+            const char *name = drive->name_pool + drive->dirs[child_idx].name_off;
+            
+            if (entry_count >= entry_capacity) {
+                entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
+                TreeEntry *new_entries = (TreeEntry *)realloc(entries, entry_capacity * sizeof(TreeEntry));
+                if (!new_entries) break;
+                entries = new_entries;
+            }
+            
+            TreeEntry *e = &entries[entry_count];
+            e->depth = cur.depth;
+            
+            /* Build full path efficiently */
+            if (cur.parent_entry_idx < 0) {
+                /* Direct child of root */
+                int len = (int)strlen(search_path);
+                memcpy(e->full_path, search_path, len + 1);
                 
-                if (entry_count >= entry_capacity) {
-                    entry_capacity = entry_capacity ? entry_capacity * 2 : 64;
-                    TreeEntry *new_entries = (TreeEntry *)realloc(entries, entry_capacity * sizeof(TreeEntry));
-                    if (!new_entries) break;
-                    entries = new_entries;
+                if (len > 0 && e->full_path[len - 1] != NCD_PATH_SEP[0]) {
+                    e->full_path[len] = NCD_PATH_SEP[0];
+                    e->full_path[len + 1] = '\0';
+                    len++;
                 }
                 
-                TreeEntry *e = &entries[entry_count];
-                e->depth = cur.depth;
+                int name_len = (int)strlen(name);
+                if (len + name_len < sizeof(e->full_path) - 1) {
+                    memcpy(e->full_path + len, name, name_len + 1);
+                }
+            } else {
+                /* Child of another entry - copy parent's path */
+                TreeEntry *parent = &entries[cur.parent_entry_idx];
+                int len = (int)strlen(parent->full_path);
+                memcpy(e->full_path, parent->full_path, len + 1);
                 
-                /* Build full path: parent's path + separator + name */
-                if (cur.parent_entry_idx < 0) {
-                    /* Direct child of root - prepend root path */
-                    platform_strncpy_s(e->full_path, sizeof(e->full_path), search_path);
-                    size_t len = strlen(e->full_path);
-                    /* Add trailing separator if needed */
-                    if (len > 0 && e->full_path[len-1] != NCD_PATH_SEP[0]) {
-                        if (len < sizeof(e->full_path) - 1) {
-                            e->full_path[len] = NCD_PATH_SEP[0];
-                            e->full_path[len+1] = '\0';
-                        }
-                    }
-                    /* Append name */
-                    size_t name_len = strlen(name);
-                    if (len + name_len < sizeof(e->full_path) - 1) {
-                        strcat(e->full_path, name);
-                    }
-                } else {
-                    /* Child of another entry - prepend parent's full path */
-                    TreeEntry *parent = &entries[cur.parent_entry_idx];
-                    platform_strncpy_s(e->full_path, sizeof(e->full_path), parent->full_path);
-                    size_t len = strlen(e->full_path);
-                    /* Add trailing separator if needed */
-                    if (len > 0 && e->full_path[len-1] != NCD_PATH_SEP[0]) {
-                        if (len < sizeof(e->full_path) - 1) {
-                            e->full_path[len] = NCD_PATH_SEP[0];
-                            e->full_path[len+1] = '\0';
-                            len++;
-                        }
-                    }
-                    /* Append name */
-                    size_t name_len = strlen(name);
-                    if (len + name_len < sizeof(e->full_path) - 1) {
-                        strcat(e->full_path, name);
-                    }
+                if (len > 0 && e->full_path[len - 1] != NCD_PATH_SEP[0]) {
+                    e->full_path[len] = NCD_PATH_SEP[0];
+                    e->full_path[len + 1] = '\0';
+                    len++;
                 }
                 
-                int current_idx = entry_count++;
-                
-                if (cur.depth + 1 < opts->agent_depth) {
-                    queue[qtail++] = (QueueItem){cur.drive, i, cur.depth + 1, current_idx};
+                int name_len = (int)strlen(name);
+                if (len + name_len < sizeof(e->full_path) - 1) {
+                    memcpy(e->full_path + len, name, name_len + 1);
                 }
+            }
+            
+            int current_idx = entry_count++;
+            
+            if (cur.depth + 1 < opts->agent_depth) {
+                queue[qtail++] = (QueueItem){child_idx, cur.depth + 1, current_idx};
             }
         }
     }
     
     free(queue);
+    free_children_index(children_idx, drive->dir_count);
     
     if (opts->agent_json) {
         agent_print("{\"v\":1,\"tree\":");
@@ -1837,7 +2215,7 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         /* Check if path exists in filesystem */
         found = platform_dir_exists(opts->search);
         
-        /* Check if path is in database */
+        /* Check if path is in database - use path map for O(1) lookup */
         bool in_db = false;
         if (db) {
             char search_path[NCD_MAX_PATH];
@@ -1845,17 +2223,19 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             for (char *p = search_path; *p; p++)
                 if (*p == '/') *p = '\\';
             
-            for (int d = 0; d < db->drive_count && !in_db; d++) {
-                DriveData *drive = &db->drives[d];
-                for (int i = 0; i < drive->dir_count; i++) {
-                    char full_path[NCD_MAX_PATH];
-                    db_full_path(drive, i, full_path, sizeof(full_path));
-                    if (_stricmp(full_path, search_path) == 0) {
-                        in_db = true;
-                        break;
-                    }
-                }
+            /* Build path map once for O(1) lookup instead of O(n²) scan */
+            PathMap path_map;
+            int total_dirs = 0;
+            for (int d = 0; d < db->drive_count; d++)
+                total_dirs += db->drives[d].dir_count;
+            path_map_init(&path_map, total_dirs);
+            
+            for (int d = 0; d < db->drive_count; d++) {
+                build_path_map(&path_map, &db->drives[d], db->drives[d].letter);
             }
+            
+            in_db = path_map_get(&path_map, search_path) >= 0;
+            path_map_free(&path_map);
         }
         
         if (opts->agent_json) {
@@ -2069,33 +2449,24 @@ static int agent_mode_mkdir(const NcdOptions *opts)
                 platform_strncpy_s(norm_path, sizeof(norm_path), path);
                 path_normalize_separators(norm_path);
                 
-                /* Find parent directory in database */
+                /* Find parent directory in database using path map */
                 char parent_path[NCD_MAX_PATH];
                 const char *leaf_name = path_leaf(norm_path);
                 int32_t parent_idx = -1;
                 
+                /* Build path map for O(1) lookups */
+                PathMap path_map;
+                path_map_init(&path_map, drv->dir_count);
+                build_path_map(&path_map, drv, drv->letter);
+                
                 if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-                    /* Search for parent in database */
-                    for (int i = 0; i < drv->dir_count; i++) {
-                        char full_path[NCD_MAX_PATH];
-                        db_full_path(drv, i, full_path, sizeof(full_path));
-                        if (_stricmp(full_path, parent_path) == 0) {
-                            parent_idx = i;
-                            break;
-                        }
-                    }
+                    parent_idx = path_map_get(&path_map, parent_path);
                 }
                 
-                /* Check if directory already exists in database */
-                bool in_db = false;
-                for (int i = 0; i < drv->dir_count; i++) {
-                    char full_path[NCD_MAX_PATH];
-                    db_full_path(drv, i, full_path, sizeof(full_path));
-                    if (_stricmp(full_path, norm_path) == 0) {
-                        in_db = true;
-                        break;
-                    }
-                }
+                /* Check if directory already exists in database - O(1) lookup */
+                bool in_db = path_map_get(&path_map, norm_path) >= 0;
+                
+                path_map_free(&path_map);
                 
                 if (!in_db && leaf_name) {
                     /* Add to database */
@@ -2335,8 +2706,8 @@ int main(int argc, char *argv[])
         !opts.group_list && !opts.group_set && !opts.group_remove &&
         !opts.show_history && !opts.clear_history && !opts.show_version &&
         !opts.force_rescan && !opts.has_search &&
-        !opts.history_pingpong && !opts.history_browse && !opts.history_list &&
-        !opts.history_clear && opts.history_remove == 0) {
+        !opts.history_pingpong && opts.history_index == 0 && !opts.history_browse && 
+        !opts.history_list && !opts.history_clear && opts.history_remove == 0) {
         ncd_println("Welcome to NCD! Let's set up your default options.");
         ncd_println("(Use 'ncd /c' anytime to change these settings)\r\n");
         
@@ -2706,6 +3077,50 @@ int main(int argc, char *argv[])
         db_metadata_save(meta);
         
         /* Return the (now) first entry */
+        result_ok(entry->path, entry->drive);
+        db_metadata_free(meta);
+        con_close();
+        return 0;
+    }
+    
+    /* ------------------------------------------------ directory history jump /1-/9 */
+    if (opts.history_index > 0) {
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        
+        int count = db_dir_history_count(meta);
+        if (count == 0) {
+            ncd_println("NCD: No history entries.\r\n");
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        if (opts.history_index > count) {
+            ncd_printf("NCD: History entry /%d not found (only %d entries).\r\n",
+                       opts.history_index, count);
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        /* /1 = oldest, /count = most recent */
+        const NcdDirHistoryEntry *entry = db_dir_history_get_by_display_index(meta, opts.history_index);
+        if (!entry) {
+            result_error("History entry not found.");
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
+        /* Verify directory still exists */
+        if (!platform_dir_exists(entry->path)) {
+            ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
+            db_metadata_free(meta);
+            con_close();
+            return 1;
+        }
+        
         result_ok(entry->path, entry->drive);
         db_metadata_free(meta);
         con_close();
