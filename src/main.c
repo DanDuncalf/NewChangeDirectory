@@ -43,11 +43,80 @@
 #include "ui.h"
 #include "platform.h"
 #include "control_ipc.h"
+#include "state_backend.h"
 
 /* forward declarations used by heuristics helpers */
 static void ncd_print(const char *s);
 static void ncd_println(const char *s);
 static void ncd_printf(const char *fmt, ...);
+
+/* ============================================================= state backend */
+
+/*
+ * Global state view for service-backed database access.
+ * Initialized on first use, closed at exit.
+ */
+static NcdStateView *g_state_view = NULL;
+static NcdStateSourceInfo g_state_info = {0};
+static bool g_state_initialized = false;
+
+/*
+ * Initialize the state backend (service-first, fallback to local).
+ * Returns true if state is available (either service or local).
+ */
+static bool ensure_state_initialized(void)
+{
+    if (g_state_initialized) {
+        return g_state_view != NULL;
+    }
+    
+    g_state_initialized = true;
+    
+    int result = state_backend_open_best_effort(&g_state_view, &g_state_info);
+    if (result != 0 || !g_state_view) {
+        g_state_view = NULL;
+        return false;
+    }
+    
+    return true;
+}
+
+/*
+ * Get database from state backend.
+ * Returns database pointer (owned by state view), or NULL if not available.
+ */
+static const NcdDatabase *get_state_database(void)
+{
+    if (!ensure_state_initialized()) {
+        return NULL;
+    }
+    return state_view_database(g_state_view);
+}
+
+/*
+ * Get metadata from state backend.
+ * Returns metadata pointer (owned by state view), or NULL if not available.
+ */
+static const NcdMetadata *get_state_metadata(void)
+{
+    if (!ensure_state_initialized()) {
+        return NULL;
+    }
+    return state_view_metadata(g_state_view);
+}
+
+/*
+ * Close the state backend and free resources.
+ * Called at program exit.
+ */
+static void close_state_backend(void)
+{
+    if (g_state_view) {
+        state_backend_close(g_state_view);
+        g_state_view = NULL;
+    }
+    g_state_initialized = false;
+}
 
 /* ============================================================= directory history */
 
@@ -3714,8 +3783,11 @@ int main(int argc, char *argv[])
         target_version_status = db_check_file_version(target_db);
     }
     
-    /* Now load the target database */
-    NcdDatabase *primary_db = db_load_auto(target_db);
+    /* Try to get database from state backend (service) first */
+    const NcdDatabase *primary_db = get_state_database();
+    bool using_service_db = (primary_db != NULL);
+    
+    /* Fall back to loading local database if service not available */
     if (!primary_db && target_version_status != DB_VERSION_SKIPPED) {
         /* Corrupt target DB (not just wrong version) -- rebuild that file */
         ncd_printf("NCD: Database for %c: is corrupt -- rebuilding...\r\n",
@@ -3758,7 +3830,7 @@ int main(int argc, char *argv[])
 
     /* -------------------- fallback: search all other drive databases     */
     if (!matches || match_count == 0) {
-        if (primary_db) { db_free(primary_db); primary_db = NULL; }
+        if (primary_db && !using_service_db) { db_free((NcdDatabase *)primary_db); primary_db = NULL; } else { primary_db = NULL; }
 
         /* 
          * Phase 1: Collect all available drive letters first, then load all
@@ -3836,7 +3908,7 @@ int main(int argc, char *argv[])
 
     if (!matches || match_count == 0) {
         result_error("NCD: No directory found matching \"%s\".", opts.search);
-        if (primary_db) db_free(primary_db);
+        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
         con_close();
         return 1;
     }
@@ -3861,7 +3933,7 @@ int main(int argc, char *argv[])
         /* User cancelled */
         result_cancel();
         free(matches);
-        if (primary_db) db_free(primary_db);
+        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
         con_close();
         return 0;   /* not an error -- don't show a message */
     }
@@ -3875,7 +3947,7 @@ int main(int argc, char *argv[])
     } else if (chosen == -2) {
         result_error("NCD: Navigation did not return a valid path.");
         free(matches);
-        if (primary_db) db_free(primary_db);
+        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
         con_close();
         return 1;
     } else {
@@ -3893,7 +3965,7 @@ int main(int argc, char *argv[])
             result_error("Drive %c: is not mounted.", resolved_drive);
             spawn_background_rescan(NULL);
             free(matches);
-            if (primary_db) db_free(primary_db);
+            if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
             con_close();
             return 2;
         }
@@ -3907,7 +3979,7 @@ int main(int argc, char *argv[])
                      resolved_path);
         spawn_background_rescan(NULL);
         free(matches);
-        if (primary_db) db_free(primary_db);
+        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
         con_close();
         return 2;
     }
@@ -3954,6 +4026,6 @@ int main(int argc, char *argv[])
     }
 
     con_close();
-    if (primary_db) db_free(primary_db);
+    if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
     return 0;
 }
