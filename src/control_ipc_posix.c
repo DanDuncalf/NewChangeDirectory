@@ -24,6 +24,12 @@
 #define NCD_SOCKET_NAME_FORMAT  "ncd_%s_control.sock"
 #define NCD_SOCKET_TIMEOUT_SEC  5
 
+/* --------------------------------------------------------- debug mode         */
+
+static int g_ipc_debug_mode = 0;
+
+void ipc_set_debug_mode(int enable) { g_ipc_debug_mode = enable; }
+
 /* --------------------------------------------------------- types              */
 
 struct NcdIpcClient {
@@ -598,13 +604,16 @@ void ipc_server_close_connection(NcdIpcConnection *conn) {
     free(conn);
 }
 
-int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len) {
+int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len, uint32_t *out_sequence) {
     if (!conn || !out_payload || !out_len) {
         return 0;
     }
     
     *out_payload = NULL;
     *out_len = 0;
+    if (out_sequence) {
+        *out_sequence = 0;
+    }
     
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
     ssize_t received = recv(conn->fd, msg_buf, NCD_IPC_MAX_MSG_SIZE, 0);
@@ -638,6 +647,11 @@ int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_l
         memcpy(payload, msg_buf + sizeof(NcdIpcHeader), hdr->payload_len);
         *out_payload = payload;
         *out_len = hdr->payload_len;
+    }
+    
+    /* Return sequence number if requested */
+    if (out_sequence) {
+        *out_sequence = hdr->sequence;
     }
     
     return hdr->type;

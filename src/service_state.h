@@ -34,14 +34,15 @@ typedef enum {
 
 /* Dirty flags for tracking changes */
 typedef enum {
-    DIRTY_NONE          = 0x00,
-    DIRTY_CONFIG        = 0x01,
-    DIRTY_GROUPS        = 0x02,
-    DIRTY_HEURISTICS    = 0x04,
-    DIRTY_EXCLUSIONS    = 0x08,
-    DIRTY_DIR_HISTORY   = 0x10,
-    DIRTY_METADATA_ALL  = 0x1F,  /* All metadata flags */
-    DIRTY_DATABASE      = 0x20,
+    DIRTY_NONE             = 0x00,
+    DIRTY_CONFIG           = 0x01,
+    DIRTY_GROUPS           = 0x02,
+    DIRTY_HEURISTICS       = 0x04,
+    DIRTY_EXCLUSIONS       = 0x08,
+    DIRTY_DIR_HISTORY      = 0x10,
+    DIRTY_METADATA_ALL     = 0x1F,  /* All metadata flags */
+    DIRTY_DATABASE         = 0x20,  /* Full rescan - flush immediately */
+    DIRTY_DATABASE_PARTIAL = 0x40,  /* Partial/subdir scan - use delayed flush */
 } DirtyFlags;
 
 /* Service statistics */
@@ -155,11 +156,24 @@ bool service_state_add_dir_history(ServiceState *state,
                                     char drive);
 
 /*
+ * service_state_remove_dir_history  --  Remove entry from directory history by index
+ */
+bool service_state_remove_dir_history(ServiceState *state, int index);
+
+/*
+ * service_state_swap_dir_history  --  Swap first two entries (ping-pong)
+ */
+bool service_state_swap_dir_history(ServiceState *state);
+
+/*
  * service_state_update_database  --  Replace database after rescan
  *
  * Takes ownership of the database (caller must not use after call).
+ * 
+ * is_partial: true for subdirectory scan (/r.), false for full rescan
+ *             Partial scans use delayed flush, full scans flush immediately
  */
-bool service_state_update_database(ServiceState *state, NcdDatabase *db);
+bool service_state_update_database(ServiceState *state, NcdDatabase *db, bool is_partial);
 
 /* --------------------------------------------------------- persistence        */
 
@@ -175,6 +189,15 @@ bool service_state_flush(ServiceState *state);
  * service_state_needs_flush  --  Check if flush is needed
  */
 bool service_state_needs_flush(const ServiceState *state);
+
+/*
+ * service_state_needs_immediate_flush  --  Check if immediate flush is required
+ *
+ * Returns true if a full rescan (DIRTY_DATABASE) is pending, which should
+ * be flushed immediately rather than waiting for the periodic interval.
+ * Partial rescans and metadata changes can use delayed flush.
+ */
+bool service_state_needs_immediate_flush(const ServiceState *state);
 
 /* --------------------------------------------------------- snapshot generation */
 

@@ -307,6 +307,21 @@ int state_backend_submit_metadata_update(NcdStateView *view,
             }
             break;
         }
+        case NCD_META_UPDATE_DIR_HISTORY_REMOVE: {
+            if (data_size >= sizeof(int)) {
+                int idx = *(const int *)data;
+                changed = db_dir_history_remove(meta, idx);
+            }
+            break;
+        }
+        case NCD_META_UPDATE_DIR_HISTORY_SWAP: {
+            /* Swap first two entries */
+            if (meta->dir_history.count >= 2) {
+                db_dir_history_swap_first_two(meta);
+                changed = true;
+            }
+            break;
+        }
         default:
             set_error("Unknown metadata update type");
             return -1;
@@ -370,7 +385,7 @@ int state_backend_open_best_effort(NcdStateView **out, NcdStateSourceInfo *info)
     }
 
     *out = NULL;
-
+    
     /* Try service first if available */
     if (state_backend_service_available()) {
         int result = state_backend_try_service(out, info);

@@ -45,6 +45,8 @@ COMMON_SOURCES := \
     $(SRCDIR)/scanner.c   \
     $(SRCDIR)/matcher.c   \
     $(SRCDIR)/platform.c  \
+    $(SRCDIR)/cli.c       \
+    $(SRCDIR)/result.c    \
     $(SRCDIR)/state_backend_local.c \
     $(SRCDIR)/state_backend_service.c \
     $(SRCDIR)/shared_state.c \

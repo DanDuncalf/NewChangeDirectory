@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <shlwapi.h>  /* For StrStrIA (case-insensitive substring search) */
@@ -318,4 +319,44 @@ int platform_strncasecmp(const char *s1, const char *s2, size_t n)
 #else
     return strncasecmp(s1, s2, n);
 #endif
+}
+
+/* ================================================================ console output */
+
+static PlatformHandle g_ncd_con = NULL;
+static bool g_ncd_con_initialized = false;
+
+static void ncd_con_init(void)
+{
+    if (!g_ncd_con_initialized) {
+        g_ncd_con = platform_console_open_out(false);
+        g_ncd_con_initialized = true;
+    }
+}
+
+void ncd_print(const char *s)
+{
+    if (!g_ncd_con_initialized) ncd_con_init();
+    if (g_ncd_con) {
+        platform_console_write(g_ncd_con, s);
+    } else {
+        fputs(s, stdout);
+        fflush(stdout);
+    }
+}
+
+void ncd_println(const char *s)
+{
+    ncd_print(s);
+    ncd_print("\r\n");
+}
+
+void ncd_printf(const char *fmt, ...)
+{
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    ncd_print(buf);
 }

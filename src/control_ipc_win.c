@@ -208,6 +208,11 @@ void ipc_client_disconnect(NcdIpcClient *client) {
     free(client);
 }
 
+/* Debug logging for IPC (enabled via /agdb flag from client) */
+static int g_ipc_debug_mode = 0;
+void ipc_set_debug_mode(int enable) { g_ipc_debug_mode = enable; }
+#define IPC_DBG(...) do { if (g_ipc_debug_mode) fprintf(stderr, __VA_ARGS__); } while(0)
+
 /* Helper: Send message and wait for response */
 static NcdIpcResult send_receive(NcdIpcClient *client,
                                   NcdMessageType type,
@@ -216,12 +221,14 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
                                   void **out_response,
                                   size_t *out_response_len) {
     if (!client || client->hPipe == INVALID_HANDLE_VALUE) {
+        IPC_DBG("IPC: send_receive - invalid client or pipe\n");
         return NCD_IPC_ERROR_GENERIC;
     }
     
     /* Build message */
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
     if (sizeof(NcdIpcHeader) + payload_len > NCD_IPC_MAX_MSG_SIZE) {
+        IPC_DBG("IPC: send_receive - message too large\n");
         return NCD_IPC_ERROR_INVALID;
     }
     
@@ -238,44 +245,69 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
     
     size_t msg_len = sizeof(NcdIpcHeader) + payload_len;
     
+    IPC_DBG("IPC: Sending msg type=%d seq=%u len=%zu\n", type, hdr->sequence, msg_len);
+    
     /* Send message */
     DWORD written;
     if (!WriteFile(client->hPipe, msg_buf, (DWORD)msg_len, &written, NULL)) {
-        return win_error_to_ipc(GetLastError());
+        DWORD err = GetLastError();
+        IPC_DBG("IPC: WriteFile failed, error=%lu\n", err);
+        return win_error_to_ipc(err);
     }
     
     if (written != msg_len) {
+        IPC_DBG("IPC: WriteFile incomplete, written=%lu expected=%zu\n", written, msg_len);
         return NCD_IPC_ERROR_GENERIC;
     }
+    
+    IPC_DBG("IPC: Message sent, waiting for response...\n");
     
     /* Read response */
     uint8_t resp_buf[NCD_IPC_MAX_MSG_SIZE];
     DWORD read;
     if (!ReadFile(client->hPipe, resp_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
-        return win_error_to_ipc(GetLastError());
+        DWORD err = GetLastError();
+        IPC_DBG("IPC: ReadFile failed, error=%lu\n", err);
+        return win_error_to_ipc(err);
     }
     
+    IPC_DBG("IPC: ReadFile succeeded, read=%lu bytes\n", read);
+    
     if (read < sizeof(NcdIpcHeader)) {
+        IPC_DBG("IPC: Response too small, read=%lu\n", read);
         return NCD_IPC_ERROR_INVALID;
     }
     
     NcdIpcHeader *resp_hdr = (NcdIpcHeader *)resp_buf;
     
+    IPC_DBG("IPC: Response header: magic=%X version=%d type=%d seq=%u payload=%u\n",
+            resp_hdr->magic, resp_hdr->version, resp_hdr->type, resp_hdr->sequence, resp_hdr->payload_len);
+    
     /* Validate response */
     if (resp_hdr->magic != NCD_IPC_MAGIC ||
         resp_hdr->version != NCD_IPC_VERSION) {
+        IPC_DBG("IPC: Invalid response header magic/version\n");
         return NCD_IPC_ERROR_INVALID;
     }
     
     if (resp_hdr->type == NCD_MSG_ERROR) {
         if (resp_hdr->payload_len >= sizeof(NcdErrorPayload)) {
             NcdErrorPayload *err = (NcdErrorPayload *)(resp_buf + sizeof(NcdIpcHeader));
+            IPC_DBG("IPC: Received error response, code=%d\n", err->error_code);
             return (NcdIpcResult)err->error_code;
         }
+        IPC_DBG("IPC: Received error response (no payload)\n");
         return NCD_IPC_ERROR_GENERIC;
     }
     
     if (resp_hdr->type != NCD_MSG_RESPONSE) {
+        IPC_DBG("IPC: Unexpected response type=%d (expected RESPONSE=%d)\n", resp_hdr->type, NCD_MSG_RESPONSE);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    /* Check sequence number matches */
+    if (resp_hdr->sequence != hdr->sequence) {
+        IPC_DBG("IPC: Sequence mismatch, sent=%u received=%u\n", hdr->sequence, resp_hdr->sequence);
         return NCD_IPC_ERROR_INVALID;
     }
     
@@ -296,6 +328,7 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
         }
     }
     
+    IPC_DBG("IPC: Request completed successfully\n");
     return NCD_IPC_OK;
 }
 
@@ -612,13 +645,16 @@ void ipc_server_close_connection(NcdIpcConnection *conn) {
     free(conn);
 }
 
-int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len) {
+int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len, uint32_t *out_sequence) {
     if (!conn || !out_payload || !out_len) {
         return 0;
     }
     
     *out_payload = NULL;
     *out_len = 0;
+    if (out_sequence) {
+        *out_sequence = 0;
+    }
     
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
     DWORD read;
@@ -652,6 +688,11 @@ int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_l
         memcpy(payload, msg_buf + sizeof(NcdIpcHeader), hdr->payload_len);
         *out_payload = payload;
         *out_len = hdr->payload_len;
+    }
+    
+    /* Return sequence number if requested */
+    if (out_sequence) {
+        *out_sequence = hdr->sequence;
     }
     
     return hdr->type;
@@ -804,6 +845,12 @@ bool ipc_service_exists(void) {
     );
     
     if (hPipe == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        /* ERROR_PIPE_BUSY (231) means the pipe exists but all instances are busy.
+         * This indicates the service IS running, just handling other clients. */
+        if (err == ERROR_PIPE_BUSY) {
+            return true;
+        }
         return false;
     }
     

@@ -40,6 +40,14 @@ Workflow orchestration and coding standards for AI agents working on the NCD pro
 - Zero context switching required from the user
 - Go fix failing CI tests without being told how
 
+### 7. Cross-Platform Build & Test Requirement
+- **BEFORE** any code modifications are considered complete:
+  1. Both **Windows** (`build.bat`) and **Linux** (`./build.sh`) builds must succeed
+  2. All tests must pass on **both platforms**
+- Do not mark tasks complete until both builds are verified working
+- Cross-platform compatibility is a hard requirement - no exceptions
+- **Note:** Kimi runs in Windows CMD; use `wsl` command to access Linux for building/testing
+
 ## Task Management
 
 - **Plan First:** Write plan to tasks/todo.md with checkable items

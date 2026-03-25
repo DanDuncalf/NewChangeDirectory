@@ -333,7 +333,38 @@ bool service_state_add_dir_history(ServiceState *state,
     return result;
 }
 
-bool service_state_update_database(ServiceState *state, NcdDatabase *db) {
+bool service_state_remove_dir_history(ServiceState *state, int index) {
+    if (!state || !state->metadata) {
+        return false;
+    }
+    
+    bool result = db_dir_history_remove(state->metadata, index);
+    if (result) {
+        state->dirty_flags |= DIRTY_DIR_HISTORY;
+        state->mutation_count++;
+    }
+    
+    return result;
+}
+
+bool service_state_swap_dir_history(ServiceState *state) {
+    if (!state || !state->metadata) {
+        return false;
+    }
+    
+    /* Need at least 2 entries to swap */
+    if (state->metadata->dir_history.count < 2) {
+        return false;
+    }
+    
+    db_dir_history_swap_first_two(state->metadata);
+    state->dirty_flags |= DIRTY_DIR_HISTORY;
+    state->mutation_count++;
+    
+    return true;
+}
+
+bool service_state_update_database(ServiceState *state, NcdDatabase *db, bool is_partial) {
     if (!state || !db) {
         return false;
     }
@@ -348,7 +379,12 @@ bool service_state_update_database(ServiceState *state, NcdDatabase *db) {
     state->last_rescan = time(NULL);
     state->database->last_scan = state->last_rescan;
     
-    state->dirty_flags |= DIRTY_DATABASE;
+    /* Use different dirty flag for partial vs full rescan */
+    if (is_partial) {
+        state->dirty_flags |= DIRTY_DATABASE_PARTIAL;
+    } else {
+        state->dirty_flags |= DIRTY_DATABASE;
+    }
     state->mutation_count++;
     
     return true;
@@ -374,8 +410,8 @@ bool service_state_flush(ServiceState *state) {
         }
     }
     
-    /* Save database if dirty */
-    if (state->dirty_flags & DIRTY_DATABASE) {
+    /* Save database if dirty (either full or partial rescan) */
+    if (state->dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) {
         /* Save per-drive databases */
         for (int i = 0; i < state->database->drive_count; i++) {
             DriveData *drv = &state->database->drives[i];
@@ -415,6 +451,17 @@ bool service_state_needs_flush(const ServiceState *state) {
         return false;
     }
     return state->dirty_flags != 0;
+}
+
+bool service_state_needs_immediate_flush(const ServiceState *state) {
+    if (!state) {
+        return false;
+    }
+    /* Full rescans (DIRTY_DATABASE) need immediate flush.
+     * Partial rescans (DIRTY_DATABASE_PARTIAL) can use delayed flush.
+     * Metadata changes can also use delayed flush.
+     */
+    return (state->dirty_flags & DIRTY_DATABASE) != 0;
 }
 
 /* --------------------------------------------------------- snapshot generation */

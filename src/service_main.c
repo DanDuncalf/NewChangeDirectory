@@ -36,6 +36,7 @@ static volatile int g_running = 1;
 static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
 static volatile int g_shutdown_requested = 0;
+static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
 
 #if NCD_PLATFORM_WINDOWS
 /* Named objects for service instance detection and control */
@@ -47,6 +48,9 @@ static HANDLE g_hStopEvent = NULL;
 /* Version info - must match NCD_APP_VERSION in control_ipc.h */
 #define SERVICE_VERSION     "1.3"
 #define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
+
+/* Debug logging macro */
+#define DBG_LOG(...) do { if (g_debug_mode) printf(__VA_ARGS__); } while(0)
 
 /* Forward declaration for background loader */
 static void start_background_loader(ServiceState *state, SnapshotPublisher *pub);
@@ -199,6 +203,17 @@ static void handle_submit_metadata(NcdIpcConnection *conn,
             success = service_state_add_dir_history(state, path, drive);
             break;
         }
+        case NCD_META_UPDATE_DIR_HISTORY_REMOVE: {
+            /* data is the 0-based index */
+            int idx = *(const int *)data;
+            success = service_state_remove_dir_history(state, idx);
+            break;
+        }
+        case NCD_META_UPDATE_DIR_HISTORY_SWAP: {
+            /* No data needed - just swap first two */
+            success = service_state_swap_dir_history(state);
+            break;
+        }
         default:
             ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_INVALID, 
                                   "Unknown update type");
@@ -277,6 +292,15 @@ void handle_pending_metadata(ServiceState *state, void *pub,
             const char *path = *(const char **)data;
             char drive = *((const char *)data + sizeof(const char *));
             success = service_state_add_dir_history(state, path, drive);
+            break;
+        }
+        case NCD_META_UPDATE_DIR_HISTORY_REMOVE: {
+            int idx = *(const int *)data;
+            success = service_state_remove_dir_history(state, idx);
+            break;
+        }
+        case NCD_META_UPDATE_DIR_HISTORY_SWAP: {
+            success = service_state_swap_dir_history(state);
             break;
         }
     }
@@ -475,45 +499,50 @@ static bool check_service_ready(NcdIpcConnection *conn,
     }
 }
 
-static void handle_client_connection(NcdIpcConnection *conn,
-                                      ServiceState *state,
-                                      SnapshotPublisher *pub) {
+/*
+ * handle_client_connection  --  Handle a single message from a client
+ *
+ * Returns: 0 on success (message handled), -1 on disconnect/error
+ */
+static int handle_client_connection(NcdIpcConnection *conn,
+                                     ServiceState *state,
+                                     SnapshotPublisher *pub) {
     void *payload = NULL;
     size_t payload_len = 0;
+    uint32_t sequence = 0;
     
-    int msg_type = ipc_server_receive(conn, &payload, &payload_len);
+    int msg_type = ipc_server_receive(conn, &payload, &payload_len, &sequence);
     if (msg_type == 0) {
-        return;
+        DBG_LOG("NCD Service: Failed to receive message or connection closed\n");
+        return -1;  /* Connection closed or error */
     }
     
-    /* Note: We need the sequence number from the header, but receive
-     * only returns the payload. For simplicity, assume sequence 0 here
-     * or extend the IPC layer to return header info. */
-    uint32_t sequence = 0;  /* Would come from header in real implementation */
+    DBG_LOG("NCD Service: Received message type=%d seq=%u payload_len=%zu\n",
+            msg_type, sequence, payload_len);
     
     /* PING and GET_STATE_INFO work regardless of service state */
     if (msg_type == NCD_MSG_PING) {
         ipc_server_send_response(conn, sequence, NULL, 0);
         if (payload) ipc_free_message(payload);
-        return;
+        return 0;
     }
     
     if (msg_type == NCD_MSG_GET_STATE_INFO) {
         handle_get_state_info(conn, sequence, state, pub);
         if (payload) ipc_free_message(payload);
-        return;
+        return 0;
     }
     
     if (msg_type == NCD_MSG_GET_VERSION) {
         handle_get_version(conn, sequence);
         if (payload) ipc_free_message(payload);
-        return;
+        return 0;
     }
     
     if (msg_type == NCD_MSG_REQUEST_SHUTDOWN) {
         handle_request_shutdown(conn, sequence);
         if (payload) ipc_free_message(payload);
-        return;
+        return 0;
     }
     
     /* Check service state - for mutations during LOADING/SCANNING, try to queue */
@@ -528,13 +557,13 @@ static void handle_client_connection(NcdIpcConnection *conn,
             /* Request queued for later processing */
             ipc_server_send_response(conn, sequence, NULL, 0);
             if (payload) ipc_free_message(payload);
-            return;
+            return 0;
         }
         
         /* Not queued - return busy error */
         if (!check_service_ready(conn, sequence, state)) {
             if (payload) ipc_free_message(payload);
-            return;
+            return 0;
         }
     }
     
@@ -584,6 +613,8 @@ static void handle_client_connection(NcdIpcConnection *conn,
     if (payload) {
         ipc_free_message(payload);
     }
+    
+    return 0;
 }
 
 /* --------------------------------------------------------- background loader  */
@@ -748,7 +779,8 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     
     /* Update database and publish */
     if (g_running) {
-        service_state_update_database(state, new_db);
+        /* Full rescan - not partial */
+        service_state_update_database(state, new_db, false);
         service_state_bump_db_generation(state);
         snapshot_publisher_publish_db(pub, state);
         printf("NCD Service: Rescan complete\n");
@@ -784,7 +816,24 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
         NcdIpcConnection *conn = ipc_server_accept(server, 100);  /* 100ms timeout */
         
         if (conn) {
-            handle_client_connection(conn, state, pub);
+            /* Handle multiple messages on this connection */
+            DBG_LOG("NCD Service: Client connected, handling messages...\n");
+            int msg_count = 0;
+            while (g_running) {
+                int result = handle_client_connection(conn, state, pub);
+                if (result < 0) {
+                    /* Client disconnected or error */
+                    break;
+                }
+                msg_count++;
+                /* Brief pause to prevent busy-waiting */
+                #if NCD_PLATFORM_WINDOWS
+                Sleep(1);
+                #else
+                usleep(1000);
+                #endif
+            }
+            DBG_LOG("NCD Service: Client disconnected after %d messages\n", msg_count);
             ipc_server_close_connection(conn);
         }
         
@@ -801,16 +850,26 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
             break;
         }
         
-        /* Check for flush request or periodic flush */
+        /* Check for flush:
+         * 1. Explicit flush request from client
+         * 2. Full rescan completed (immediate flush)
+         * 3. Periodic flush for partial rescans and metadata (30s interval)
+         */
         time_t now = time(NULL);
-        if (g_flush_requested || 
-            (service_state_needs_flush(state) && 
-             (now - last_flush_check) > FLUSH_INTERVAL_SEC)) {
+        bool needs_immediate = g_flush_requested || service_state_needs_immediate_flush(state);
+        bool needs_periodic = service_state_needs_flush(state) && 
+                              (now - last_flush_check) > FLUSH_INTERVAL_SEC;
+        
+        if (needs_immediate || needs_periodic) {
             g_flush_requested = 0;
             last_flush_check = now;
             
             if (service_state_flush(state)) {
-                printf("NCD Service: Flushed to disk\n");
+                if (needs_immediate && !needs_periodic) {
+                    printf("NCD Service: Flushed to disk (immediate)\n");
+                } else {
+                    printf("NCD Service: Flushed to disk\n");
+                }
             }
         }
         
@@ -947,7 +1006,20 @@ static int run_service(void) {
             NcdIpcConnection *conn = ipc_server_accept(server, 100);
             
             if (conn) {
-                handle_client_connection(conn, state, pub);
+                /* Handle multiple messages on this connection */
+                DBG_LOG("NCD Service: Client connected, handling messages...\n");
+                int msg_count = 0;
+                while (g_running) {
+                    int result = handle_client_connection(conn, state, pub);
+                    if (result < 0) {
+                        /* Client disconnected or error */
+                        break;
+                    }
+                    msg_count++;
+                    /* Brief pause to prevent busy-waiting */
+                    Sleep(1);
+                }
+                DBG_LOG("NCD Service: Client disconnected after %d messages\n", msg_count);
                 ipc_server_close_connection(conn);
             }
             
@@ -964,15 +1036,25 @@ static int run_service(void) {
                 break;
             }
             
-            /* Periodic flush */
+            /* Check for flush:
+             * 1. Explicit flush request from client
+             * 2. Full rescan completed (immediate flush)
+             * 3. Periodic flush for partial rescans and metadata (30s interval)
+             */
             time_t now = time(NULL);
-            if (g_flush_requested || 
-                (service_state_needs_flush(state) && 
-                 (now - last_flush_check) > FLUSH_INTERVAL_SEC)) {
+            bool needs_immediate = g_flush_requested || service_state_needs_immediate_flush(state);
+            bool needs_periodic = service_state_needs_flush(state) && 
+                                  (now - last_flush_check) > FLUSH_INTERVAL_SEC;
+            
+            if (needs_immediate || needs_periodic) {
                 g_flush_requested = 0;
                 last_flush_check = now;
                 if (service_state_flush(state)) {
-                    printf("NCD Service: Flushed to disk\n");
+                    if (needs_immediate && !needs_periodic) {
+                        printf("NCD Service: Flushed to disk (immediate)\n");
+                    } else {
+                        printf("NCD Service: Flushed to disk\n");
+                    }
                 }
             }
             
@@ -1013,6 +1095,20 @@ int main(int argc, char *argv[]) {
     
     /* Parse command line arguments */
     if (argc > 1) {
+        /* Check for debug flag */
+        if (strcmp(argv[1], "/agdb") == 0 || strcmp(argv[1], "-agdb") == 0) {
+            g_debug_mode = 1;
+            printf("NCD Service: Debug mode enabled\n");
+            /* Shift arguments and continue parsing */
+            if (argc > 2) {
+                argv[1] = argv[2];
+                argc--;
+            } else {
+                /* Only /agdb was passed, run service */
+                return run_service();
+            }
+        }
+        
         if (strcmp(argv[1], "start") == 0) {
             if (is_service_running()) {
                 printf("NCD Service: Already running\n");
@@ -1045,7 +1141,7 @@ int main(int argc, char *argv[]) {
         
         /* Unknown command - fall through to print usage */
         fprintf(stderr, "Unknown command: %s\n", argv[1]);
-        fprintf(stderr, "Usage: %s [start|stop|status]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [/agdb] [start|stop|status]\n", argv[0]);
         return 1;
     }
     
@@ -1054,9 +1150,13 @@ int main(int argc, char *argv[]) {
     
 #else /* Linux/POSIX */
     
-    /* Linux: No built-in command parsing - script handles it */
-    (void)argc;
-    (void)argv;
+    /* Parse command line arguments */
+    if (argc > 1) {
+        if (strcmp(argv[1], "/agdb") == 0 || strcmp(argv[1], "-agdb") == 0) {
+            g_debug_mode = 1;
+            printf("NCD Service: Debug mode enabled\n");
+        }
+    }
     
     printf("NCD State Service starting...\n");
     

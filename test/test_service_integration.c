@@ -20,6 +20,7 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <tlhelp32.h>
 #define sleep(x) Sleep((x) * 1000)
 #else
 #include <unistd.h>
@@ -32,12 +33,16 @@
 #define SERVICE_EXE "NCDService.exe"
 #define NCD_EXE "NewChangeDirectory.exe"
 #else
-#define SERVICE_EXE "ncd_service"
-#define NCD_EXE "ncd"
+/* Look for executables in parent directory first */
+#define SERVICE_EXE "../ncd_service"
+#define NCD_EXE "../ncd"
 #endif
 
 /* Maximum time to wait for service state changes */
 #define SERVICE_TIMEOUT 10
+
+/* Timeout for graceful shutdown */
+#define GRACEFUL_SHUTDOWN_TIMEOUT 3
 
 /* Run command and capture output */
 static int run_command(const char *cmd, char *output, size_t output_size) {
@@ -133,12 +138,57 @@ static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
     return false;
 }
 
-/* Ensure service is stopped */
-static void ensure_service_stopped(void) {
-    if (ipc_service_exists()) {
-        run_service_command("stop");
-        wait_for_service_state(false, SERVICE_TIMEOUT);
+/* Force terminate service process */
+static void force_terminate_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = {sizeof(pe)};
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
     }
+#else
+    system("pkill -9 -f ncd_service 2>/dev/null || killall -9 ncd_service 2>/dev/null");
+#endif
+    /* Wait for process to actually exit */
+    for (int i = 0; i < 20; i++) {
+        if (!ipc_service_exists()) break;
+#if NCD_PLATFORM_WINDOWS
+        Sleep(100);
+#else
+        usleep(100000);
+#endif
+    }
+}
+
+/* Ensure service is stopped - tries graceful first, then force kill */
+static void ensure_service_stopped(void) {
+    if (!ipc_service_exists()) {
+        return;
+    }
+    
+    /* Try graceful stop first */
+    run_service_command("stop");
+    
+    /* Wait for graceful shutdown */
+    bool stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
+    if (stopped) {
+        return;
+    }
+    
+    /* Graceful shutdown timed out - force kill */
+    printf("  [WARNING] Graceful shutdown timed out, force terminating...\n");
+    force_terminate_service();
 }
 
 /* Check if executables exist */
@@ -455,6 +505,19 @@ void suite_service_integration(void) {
     /* Operation parity tests */
     RUN_TEST(ncd_search_works_without_service);
     RUN_TEST(ncd_search_works_with_service);
+    
+    /* Final cleanup and ensure service is left running */
+    printf("\n--- Final cleanup: Leaving service running ---\n");
+    ensure_service_stopped();
+    if (executables_exist()) {
+        run_service_command("start");
+        bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
+        if (started) {
+            printf("Service left running for subsequent tests.\n");
+        } else {
+            printf("WARNING: Could not leave service running.\n");
+        }
+    }
 }
 
 TEST_MAIN(

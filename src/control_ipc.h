@@ -110,6 +110,8 @@ typedef struct {
 #define NCD_META_UPDATE_CONFIG          5
 #define NCD_META_UPDATE_CLEAR_HISTORY   6
 #define NCD_META_UPDATE_DIR_HISTORY_ADD 7
+#define NCD_META_UPDATE_DIR_HISTORY_REMOVE 8  /* Remove by index */
+#define NCD_META_UPDATE_DIR_HISTORY_SWAP   9  /* Swap first two entries (ping-pong) */
 
 /*
  * NcdSubmitMetadataPayload  --  SUBMIT_METADATA request
@@ -126,7 +128,9 @@ typedef struct {
 typedef struct {
     uint32_t drive_mask;            /* Bitmask of drives to scan (bit 0 = A:) */
     uint8_t  scan_root_only;        /* Linux: scan only root */
-    uint8_t  reserved[3];
+    uint8_t  is_partial;            /* 1 = subdirectory scan (/r.), 0 = full rescan */
+    uint8_t  reserved[2];
+    /* For partial scan: path follows this structure (null-terminated string) */
 } NcdRequestRescanPayload;
 
 /*
@@ -340,8 +344,9 @@ void ipc_server_close_connection(NcdIpcConnection *conn);
  *
  * Returns message type or 0 on error/timeout.
  * Caller must free returned payload with ipc_free_message().
+ * If out_sequence is not NULL, the sequence number from the header is stored there.
  */
-int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len);
+int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_len, uint32_t *out_sequence);
 
 /*
  * ipc_server_send_response  --  Send response to client
@@ -395,6 +400,11 @@ bool ipc_make_address(char *out_buf, size_t buf_size);
  * Quick check without full connect handshake.
  */
 bool ipc_service_exists(void);
+
+/*
+ * ipc_set_debug_mode  --  Enable/disable IPC debug logging
+ */
+void ipc_set_debug_mode(int enable);
 
 #ifdef __cplusplus
 }

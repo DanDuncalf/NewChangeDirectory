@@ -21,6 +21,7 @@
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
 #include <process.h>
+#include <tlhelp32.h>
 #define sleep(x) Sleep((x) * 1000)
 #else
 #include <unistd.h>
@@ -34,7 +35,8 @@
 #if NCD_PLATFORM_WINDOWS
 #define SERVICE_EXE "NCDService.exe"
 #else
-#define SERVICE_EXE "ncd_service"
+/* Look for service in parent directory first, then current directory */
+#define SERVICE_EXE "../ncd_service"
 #endif
 
 /* Maximum time to wait for service to start/stop (seconds) */
@@ -134,12 +136,75 @@ static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
     return false;
 }
 
-/* Ensure service is stopped before/after tests */
-static void ensure_service_stopped(void) {
-    if (ipc_service_exists()) {
-        run_service_command("stop", NULL, 0);
-        wait_for_service_state(false, SERVICE_STOP_TIMEOUT);
+/* Timeout for graceful shutdown (seconds) */
+#define GRACEFUL_SHUTDOWN_TIMEOUT 3
+
+/* Force terminate service process */
+static void force_terminate_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = {sizeof(pe)};
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
     }
+#else
+    /* Try pkill first, then killall as fallback */
+    system("pkill -9 -f ncd_service 2>/dev/null || killall -9 ncd_service 2>/dev/null");
+#endif
+    /* Wait for process to actually exit */
+    for (int i = 0; i < 20; i++) {
+        if (!ipc_service_exists()) break;
+#if NCD_PLATFORM_WINDOWS
+        Sleep(100);
+#else
+        usleep(100000);
+#endif
+    }
+}
+
+/* Ensure service is stopped - tries graceful first, then force kill */
+static void ensure_service_stopped(void) {
+    if (!ipc_service_exists()) {
+        return;
+    }
+    
+    /* Try graceful stop first */
+    run_service_command("stop", NULL, 0);
+    
+    /* Wait for graceful shutdown */
+    bool stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
+    if (stopped) {
+        return;
+    }
+    
+    /* Graceful shutdown timed out - force kill */
+    printf("  [WARNING] Graceful shutdown timed out, force terminating...\n");
+    force_terminate_service();
+}
+
+/* Ensure service is running - starts it if not */
+static bool ensure_service_running(void) {
+    if (ipc_service_exists()) {
+        return true;
+    }
+    
+    if (!service_executable_exists()) {
+        return false;
+    }
+    
+    run_service_command("start", NULL, 0);
+    return wait_for_service_state(true, SERVICE_START_TIMEOUT);
 }
 
 /* --------------------------------------------------------- basic lifecycle tests */
@@ -507,6 +572,49 @@ TEST(service_state_progression) {
     return 0;
 }
 
+/* --------------------------------------------------------- service termination test */
+
+TEST(service_termination_graceful_then_force) {
+    /* This test verifies service termination works correctly */
+    
+    /* First ensure service is running */
+    if (!service_executable_exists()) {
+        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
+        return 0;
+    }
+    
+    ensure_service_stopped();
+    
+    /* Start service */
+    char output[256] = {0};
+    int exit_code = run_service_command("start", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
+    
+    bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
+    ASSERT_TRUE(started);
+    ASSERT_TRUE(ipc_service_exists());
+    
+    /* Test graceful stop */
+    exit_code = run_service_command("stop", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
+    
+    bool stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
+    ASSERT_TRUE(stopped);
+    ASSERT_FALSE(ipc_service_exists());
+    
+    /* Test force termination path - start service again */
+    exit_code = run_service_command("start", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
+    started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
+    ASSERT_TRUE(started);
+    
+    /* Force terminate (simulates stuck service) */
+    force_terminate_service();
+    ASSERT_FALSE(ipc_service_exists());
+    
+    return 0;
+}
+
 /* --------------------------------------------------------- test suite         */
 
 void suite_service_lifecycle(void) {
@@ -529,6 +637,23 @@ void suite_service_lifecycle(void) {
     
     /* State progression tests */
     RUN_TEST(service_state_progression);
+    
+    /* Service termination test */
+    RUN_TEST(service_termination_graceful_then_force);
+    
+    /* Final cleanup and ensure service is left running */
+    printf("\n--- Final cleanup: Leaving service running ---\n");
+    ensure_service_stopped();
+    if (service_executable_exists()) {
+        char output[256] = {0};
+        run_service_command("start", output, sizeof(output));
+        bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
+        if (started) {
+            printf("Service left running for subsequent tests.\n");
+        } else {
+            printf("WARNING: Could not leave service running.\n");
+        }
+    }
 }
 
 TEST_MAIN(

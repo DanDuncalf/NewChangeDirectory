@@ -50,8 +50,15 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
  * Press Delete to remove the highlighted entry.
  * Returns the index of the selected entry, or -1 if cancelled.
  * The matches array and count may be modified if entries are deleted.
+ * 
+ * The delete_callback (if provided) is called when user presses Delete.
+ * It should return true on success, false on failure.
+ * If NULL, metadata is modified directly (legacy behavior).
  */
-int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta);
+typedef bool (*ui_history_delete_cb)(int index, const char *path, void *user_data);
+
+int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
+                      ui_history_delete_cb delete_callback, void *user_data);
 
 /*
  * Interactive filesystem navigator used by "ncd .".

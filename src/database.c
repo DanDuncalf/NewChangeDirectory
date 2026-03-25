@@ -253,18 +253,30 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     fclose(f);
     free(buf);
 
+    /*
+     * Atomic file replacement - same safe pattern as db_metadata_save()
+     * Never delete the current file directly.
+     */
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
     platform_delete_file(old_path);
+    
+    bool have_old_backup = false;
     if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            /* If we can't backup the old file, try to delete it */
-            platform_delete_file(path);
+        if (platform_move_file(path, old_path)) {
+            have_old_backup = true;
         }
     }
+    
     if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+        if (have_old_backup) {
+            platform_move_file(old_path, path);
+        }
         return false;
+    }
+    
+    if (have_old_backup) {
+        platform_delete_file(old_path);
     }
     return true;
 }
@@ -587,22 +599,31 @@ bool db_group_save(const NcdGroupDb *gdb)
     
     fclose(f);
     
-    /* Atomic rename */
+    /*
+     * Atomic file replacement - same safe pattern as db_metadata_save()
+     * Never delete the current file directly.
+     */
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
     platform_delete_file(old_path);
     
+    bool have_old_backup = false;
     if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            platform_delete_file(path);
+        if (platform_move_file(path, old_path)) {
+            have_old_backup = true;
         }
     }
     
     if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+        if (have_old_backup) {
+            platform_move_file(old_path, path);
+        }
         return false;
     }
     
+    if (have_old_backup) {
+        platform_delete_file(old_path);
+    }
     return true;
 }
 
@@ -1554,19 +1575,30 @@ bool db_save(const NcdDatabase *db, const char *path)
     fclose(f);
     free(sb.buf);
 
-    /* Rotate: current -> .old, .tmp -> current */
+    /*
+     * Atomic file replacement - same safe pattern as db_metadata_save()
+     * Never delete the current file directly.
+     */
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
     platform_delete_file(old_path);
+    
+    bool have_old_backup = false;
     if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            /* If we can't backup the old file, try to delete it */
-            platform_delete_file(path);
+        if (platform_move_file(path, old_path)) {
+            have_old_backup = true;
         }
     }
+    
     if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);             /* restore on failure */
+        if (have_old_backup) {
+            platform_move_file(old_path, path);
+        }
         return false;
+    }
+    
+    if (have_old_backup) {
+        platform_delete_file(old_path);
     }
     return true;
 }
@@ -2655,6 +2687,12 @@ void db_exclusion_init_defaults(NcdMetadata *meta)
     db_exclusion_add(meta, "*:$recycle.bin");
     /* Windows directory on C: drive only, root only */
     db_exclusion_add(meta, "C:\\Windows");
+#else
+    /* Linux default exclusions - pseudo-filesystems and system directories */
+    db_exclusion_add(meta, "/proc");      /* Process information pseudo-filesystem */
+    db_exclusion_add(meta, "/sys");       /* System information pseudo-filesystem */
+    db_exclusion_add(meta, "/dev");       /* Device files */
+    db_exclusion_add(meta, "/run");       /* Runtime variable data */
 #endif
 }
 
@@ -2867,17 +2905,43 @@ bool db_metadata_save(NcdMetadata *meta)
         return false;
     }
     
+    /*
+     * Atomic file replacement:
+     * 1. Write new data to .tmp file (done above)
+     * 2. Delete any stale .old backup (ignore failure)
+     * 3. Try to move current file to .old (ignore failure - current file stays put)
+     * 4. Move .tmp to current file (this is the critical operation)
+     * 5. Only delete .old on success (keep as backup if something went wrong)
+     * 
+     * CRITICAL: Never delete the current file directly. If move to .old fails,
+     * the temp file move will atomically replace the current file on most OSes.
+     */
     char old_path[MAX_PATH];
     snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
+    platform_delete_file(old_path);  /* Delete stale backup, ignore failure */
+    
+    /* Try to backup current file, but don't fail if we can't */
+    bool have_old_backup = false;
     if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            platform_delete_file(path);
+        if (platform_move_file(path, old_path)) {
+            have_old_backup = true;
         }
+        /* If move fails, current file stays in place - temp move will replace it */
     }
+    
+    /* Move temp file to final location (atomic on most OSes when replacing) */
     if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+        /* Failed to install new file - try to restore from backup if we have one */
+        if (have_old_backup) {
+            platform_move_file(old_path, path);
+        }
+        db_set_error("Failed to install metadata file: %s", strerror(errno));
         return false;
+    }
+    
+    /* Success - can safely delete the old backup now */
+    if (have_old_backup) {
+        platform_delete_file(old_path);
     }
     
     meta->config_dirty = false;
@@ -2916,8 +2980,15 @@ NcdMetadata *db_metadata_load(void)
         return meta;
     }
 
-    if (hdr.magic != NCD_META_MAGIC || hdr.version != NCD_META_VERSION) {
+    if (hdr.magic != NCD_META_MAGIC) {
         fclose(f);
+        fprintf(stderr, "NCD: Warning: Metadata file has invalid magic number (corrupted?).\n");
+        return meta;
+    }
+    if (hdr.version != NCD_META_VERSION) {
+        fclose(f);
+        fprintf(stderr, "NCD: Warning: Metadata file version mismatch (expected %d, got %d).\n",
+                NCD_META_VERSION, hdr.version);
         return meta;
     }
     
@@ -2955,6 +3026,7 @@ NcdMetadata *db_metadata_load(void)
     if (computed_crc != hdr.checksum) {
         /* CRC mismatch */
         free(data);
+        fprintf(stderr, "NCD: Warning: Metadata file CRC check failed (file corrupted?).\n");
         return meta;
     }
     

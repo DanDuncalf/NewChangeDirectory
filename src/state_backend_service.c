@@ -317,9 +317,12 @@ static bool load_database_from_snapshot(NcdStateView *view) {
         }
     }
     
-    /* Mark as blob-style so free logic knows not to free individual pools */
+    /* Mark as blob-style so free logic knows not to free individual pools.
+     * Note: blob_buf is NOT set because this database references shared memory,
+     * not a heap-allocated blob. The shared memory is unmapped when the state
+     * backend is closed, not when the database is freed. */
     view->database_view.is_blob = true;
-    view->database_view.blob_buf = view->db_addr;  /* Reference to shared memory */
+    view->database_view.blob_buf = NULL;
     
     view->has_database = true;
     return true;
@@ -331,6 +334,10 @@ static bool load_database_from_snapshot(NcdStateView *view) {
 static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry_delay_ms);
 static bool wait_for_service_ready(NcdIpcClient *client, int timeout_ms);
 
+/* Debug logging for state backend service */
+#include <stdio.h>
+#define SVC_DBG(...) fprintf(stderr, "SVC: " __VA_ARGS__)
+
 int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     if (!out) {
         set_error("Invalid output pointer");
@@ -340,15 +347,19 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     *out = NULL;
     memset(g_last_error, 0, sizeof(g_last_error));
     
+    SVC_DBG("Initializing platform subsystems...\n");
+    
     /* Initialize platform subsystems */
     if (shm_platform_init() != SHM_OK) {
         set_error("Failed to initialize shared memory platform");
+        SVC_DBG("Failed to initialize SHM platform\n");
         return -1;
     }
     
     if (ipc_client_init() != NCD_IPC_OK) {
         shm_platform_cleanup();
         set_error("Failed to initialize IPC client");
+        SVC_DBG("Failed to initialize IPC client\n");
         return -1;
     }
     
@@ -357,8 +368,11 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error("Service not running");
+        SVC_DBG("Service not running\n");
         return -1;
     }
+    
+    SVC_DBG("Service exists, connecting...\n");
     
     /* Allocate view structure */
     NcdStateView *view = (NcdStateView *)calloc(1, sizeof(NcdStateView));
@@ -370,25 +384,32 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     }
     
     /* Connect to service with retry */
+    SVC_DBG("Connecting to service...\n");
     if (!connect_with_retry(&view->ipc_client, 3, 100)) {
         free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
         /* set_error already called by connect_with_retry */
+        SVC_DBG("Failed to connect to service\n");
         return -1;
     }
+    SVC_DBG("Connected to service\n");
     
     /* Wait for service to be ready (not STARTING or LOADING) */
+    SVC_DBG("Waiting for service to be ready...\n");
     if (!wait_for_service_ready(view->ipc_client, 5000)) {
         ipc_client_disconnect(view->ipc_client);
         free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
         /* set_error already called by wait_for_service_ready */
+        SVC_DBG("Service not ready\n");
         return -1;
     }
+    SVC_DBG("Service is ready\n");
     
     /* Get state info to find shared memory names */
+    SVC_DBG("Getting state info...\n");
     NcdIpcStateInfo state_info;
     NcdIpcResult result = ipc_client_get_state_info(view->ipc_client, &state_info);
     if (result != NCD_IPC_OK) {
@@ -397,10 +418,13 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error(ipc_error_string(result));
+        SVC_DBG("Failed to get state info: %s\n", ipc_error_string(result));
         return -1;
     }
+    SVC_DBG("Got state info: meta_size=%u db_size=%u\n", state_info.meta_size, state_info.db_size);
     
     /* Check version compatibility */
+    SVC_DBG("Checking version compatibility...\n");
     NcdIpcVersionCheckResult ver_result;
     result = ipc_client_check_version(view->ipc_client, NCD_BUILD_VER, NCD_BUILD_STAMP, &ver_result);
     if (result != NCD_IPC_OK) {
@@ -409,6 +433,7 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error(ipc_error_string(result));
+        SVC_DBG("Version check failed: %s\n", ipc_error_string(result));
         return -1;
     }
     
@@ -418,10 +443,13 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error("Version mismatch with service");
+        SVC_DBG("Version mismatch\n");
         return -1;
     }
+    SVC_DBG("Versions match\n");
     
     /* Open and map metadata shared memory */
+    SVC_DBG("Opening metadata shared memory...\n");
     char meta_name[256];
     if (!shm_make_meta_name(meta_name, sizeof(meta_name))) {
         ipc_client_disconnect(view->ipc_client);
@@ -429,9 +457,11 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error("Failed to generate metadata SHM name");
+        SVC_DBG("Failed to generate metadata SHM name\n");
         return -1;
     }
     
+    SVC_DBG("Metadata SHM name: %s\n", meta_name);
     ShmResult shm_result = shm_open_existing(meta_name, SHM_ACCESS_READ, &view->meta_shm);
     if (shm_result != SHM_OK) {
         ipc_client_disconnect(view->ipc_client);
@@ -439,8 +469,10 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error(shm_error_string(shm_result));
+        SVC_DBG("Failed to open metadata SHM: %s\n", shm_error_string(shm_result));
         return -1;
     }
+    SVC_DBG("Metadata SHM opened\n");
     
     shm_result = shm_map(view->meta_shm, SHM_ACCESS_READ, &view->meta_addr, &view->meta_size);
     if (shm_result != SHM_OK) {
@@ -454,6 +486,7 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     }
     
     /* Open and map database shared memory */
+    SVC_DBG("Opening database shared memory...\n");
     char db_name[256];
     if (!shm_make_db_name(db_name, sizeof(db_name))) {
         shm_unmap(view->meta_addr, view->meta_size);
@@ -463,9 +496,11 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error("Failed to generate database SHM name");
+        SVC_DBG("Failed to generate database SHM name\n");
         return -1;
     }
     
+    SVC_DBG("Database SHM name: %s\n", db_name);
     shm_result = shm_open_existing(db_name, SHM_ACCESS_READ, &view->db_shm);
     if (shm_result != SHM_OK) {
         shm_unmap(view->meta_addr, view->meta_size);
@@ -475,8 +510,10 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error(shm_error_string(shm_result));
+        SVC_DBG("Failed to open database SHM: %s\n", shm_error_string(shm_result));
         return -1;
     }
+    SVC_DBG("Database SHM opened\n");
     
     shm_result = shm_map(view->db_shm, SHM_ACCESS_READ, &view->db_addr, &view->db_size);
     if (shm_result != SHM_OK) {
@@ -492,8 +529,10 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     }
     
     /* Load metadata from snapshot */
+    SVC_DBG("Loading metadata from snapshot...\n");
     if (!load_metadata_from_snapshot(view)) {
         /* set_error already called */
+        SVC_DBG("Failed to load metadata from snapshot: %s\n", g_last_error);
         shm_unmap(view->db_addr, view->db_size);
         shm_close(view->db_shm);
         shm_unmap(view->meta_addr, view->meta_size);
@@ -504,10 +543,13 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         ipc_client_cleanup();
         return -1;
     }
+    SVC_DBG("Metadata loaded successfully\n");
     
     /* Load database from snapshot */
+    SVC_DBG("Loading database from snapshot...\n");
     if (!load_database_from_snapshot(view)) {
         /* set_error already called - fall back to metadata-only mode */
+        SVC_DBG("Failed to load database from snapshot: %s\n", g_last_error);
         /* For now, we still return error, but future enhancement could allow
          * metadata-only operation for agent commands */
         shm_unmap(view->db_addr, view->db_size);
@@ -534,6 +576,7 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         ipc_client_cleanup();
         return -1;
     }
+    SVC_DBG("Database loaded successfully\n");
     
     /* Populate info structure */
     if (info) {
@@ -548,6 +591,8 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     view->info.from_service = true;
     view->info.generation = ((const ShmSnapshotHdr *)view->meta_addr)->generation;
     view->info.db_generation = ((const ShmSnapshotHdr *)view->db_addr)->generation;
+    
+    SVC_DBG("State backend initialized successfully (from_service=true)\n");
     
     *out = view;
     return 0;

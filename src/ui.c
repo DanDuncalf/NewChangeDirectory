@@ -1211,7 +1211,8 @@ static void history_draw_box(HistoryUiState *s, int inner, int list_start, const
  * Returns selected index, or -1 if cancelled.
  * The matches array and count may be modified if entries are deleted.
  */
-int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta)
+int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
+                      ui_history_delete_cb delete_callback, void *user_data)
 {
     if (!matches || !count || *count <= 0) return -1;
     if (*count == 1) return 0;
@@ -1289,8 +1290,14 @@ int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta)
                 for (int i = 0; i < db_dir_history_count(meta); i++) {
                     const NcdDirHistoryEntry *e = db_dir_history_get(meta, i);
                     if (e && _stricmp(e->path, path) == 0) {
-                        db_dir_history_remove(meta, i);
-                        db_metadata_save(meta);
+                        if (delete_callback) {
+                            /* Use callback (service mode) */
+                            delete_callback(i, e->path, user_data);
+                        } else {
+                            /* Direct modification (standalone mode) */
+                            db_dir_history_remove(meta, i);
+                            db_metadata_save(meta);
+                        }
                         break;
                     }
                 }

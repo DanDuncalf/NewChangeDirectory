@@ -95,6 +95,16 @@ int platform_write_help_suffix(char *buf, size_t buf_size);
 const char *platform_strcasestr(const char *haystack, const char *needle);
 int platform_strncasecmp(const char *s1, const char *s2, size_t n);
 
+/* ================================================================ console output */
+
+/*
+ * Console output functions for NCD.
+ * These bypass the CRT for reliable output on Windows.
+ */
+void ncd_print(const char *s);
+void ncd_println(const char *s);
+void ncd_printf(const char *fmt, ...);
+
 #ifdef __cplusplus
 }
 #endif
