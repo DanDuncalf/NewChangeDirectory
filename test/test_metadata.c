@@ -6,6 +6,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#if NCD_PLATFORM_WINDOWS
+#include <windows.h>
+#endif
+
 TEST(metadata_create_returns_valid_struct) {
     NcdMetadata *meta = db_metadata_create();
     ASSERT_NOT_NULL(meta);
@@ -20,8 +24,21 @@ TEST(metadata_create_returns_valid_struct) {
 }
 
 TEST(metadata_save_load_roundtrip) {
-    const char *test_file = "test_meta_roundtrip.tmp";
-    remove(test_file);
+    /* Use default metadata path for roundtrip test (db_metadata_load uses default path) */
+    char test_path[MAX_PATH];
+    if (!db_metadata_path(test_path, sizeof(test_path))) {
+        /* Skip test if we can't get metadata path */
+        return 0;
+    }
+    
+    /* Backup existing metadata file if present */
+    char backup_path[MAX_PATH];
+    snprintf(backup_path, sizeof(backup_path), "%s.bak", test_path);
+    bool had_existing = platform_file_exists(test_path);
+    if (had_existing) {
+        remove(backup_path);
+        rename(test_path, backup_path);
+    }
     
     /* Create and populate metadata */
     NcdMetadata *meta = db_metadata_create();
@@ -39,33 +56,37 @@ TEST(metadata_save_load_roundtrip) {
     /* Add an exclusion */
     db_exclusion_add(meta, "*/node_modules");
     
-    /* Set file path and save */
-    strncpy(meta->file_path, test_file, sizeof(meta->file_path) - 1);
-    meta->file_path[sizeof(meta->file_path) - 1] = '\0';
+    /* Save to default path */
     ASSERT_TRUE(db_metadata_save(meta));
     db_metadata_free(meta);
     
     /* Load and verify */
     NcdMetadata *loaded = db_metadata_load();
-    /* If file doesn't exist in default location, load may return defaults */
-    if (loaded) {
-        /* Check config preserved */
-        ASSERT_TRUE(loaded->cfg.default_show_hidden);
-        ASSERT_TRUE(loaded->cfg.default_show_system);
-        ASSERT_TRUE(loaded->cfg.default_fuzzy_match);
-        ASSERT_EQ_INT(48, loaded->cfg.rescan_interval_hours);
-        
-        db_metadata_free(loaded);
+    ASSERT_NOT_NULL(loaded);
+    
+    /* Check config preserved */
+    ASSERT_TRUE(loaded->cfg.default_show_hidden);
+    ASSERT_TRUE(loaded->cfg.default_show_system);
+    ASSERT_TRUE(loaded->cfg.default_fuzzy_match);
+    ASSERT_EQ_INT(48, loaded->cfg.rescan_interval_hours);
+    
+    db_metadata_free(loaded);
+    
+    /* Cleanup: remove test file and restore backup */
+    remove(test_path);
+    if (had_existing) {
+        rename(backup_path, test_path);
     }
     
-    remove(test_file);
     return 0;
 }
 
 TEST(metadata_exists_returns_false_before_save) {
     /* Note: This test may be affected by existing user metadata */
     /* We'll test by creating a temp metadata and checking file existence */
-    const char *test_path = "test_meta_existence.tmp";
+    /* Use unique filename with PID to avoid conflicts with previous test runs */
+    char test_path[256];
+    snprintf(test_path, sizeof(test_path), "test_meta_exist_%lu.tmp", (unsigned long)GetCurrentProcessId());
     remove(test_path);
     
     /* Before creating file, it shouldn't exist */

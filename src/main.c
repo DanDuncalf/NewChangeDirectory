@@ -32,11 +32,15 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+#include "ncd.h"  /* Must include first for NCD_PLATFORM_* macros */
+
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
 #endif
-
-#include "ncd.h"
 #include "database.h"
 #include "scanner.h"
 #include "matcher.h"
@@ -44,11 +48,20 @@
 #include "platform.h"
 #include "control_ipc.h"
 #include "state_backend.h"
+#include "cli.h"
+#include "result.h"
 
 /* forward declarations used by heuristics helpers */
 static void ncd_print(const char *s);
 static void ncd_println(const char *s);
 static void ncd_printf(const char *fmt, ...);
+
+/* When TEST_BUILD is defined, expose heuristic functions for testing */
+#ifdef TEST_BUILD
+#define HEUR_STATIC
+#else
+#define HEUR_STATIC static
+#endif
 
 /* ============================================================= state backend */
 
@@ -174,7 +187,7 @@ static void save_metadata_if_dirty(void)
     }
 }
 
-static void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
+HEUR_STATIC void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
 {
     if (!dst || dst_size == 0) return;
     dst[0] = '\0';
@@ -196,7 +209,7 @@ static void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_l
     dst[j] = '\0';
 }
 
-static bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
+HEUR_STATIC bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
 {
     if (!out_path || out_size == 0) return false;
     out_path[0] = '\0';
@@ -211,7 +224,7 @@ static bool heur_get_preferred(const char *search_raw, char *out_path, size_t ou
     return db_heur_get_preferred(meta, key, out_path, out_size);
 }
 
-static void heur_note_choice(const char *search_raw, const char *target_path)
+HEUR_STATIC void heur_note_choice(const char *search_raw, const char *target_path)
 {
     char key[NCD_MAX_PATH];
     char target[NCD_MAX_PATH];
@@ -226,7 +239,7 @@ static void heur_note_choice(const char *search_raw, const char *target_path)
     save_metadata_if_dirty();
 }
 
-static void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
+HEUR_STATIC void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
 {
     if (!matches || count <= 1 || !preferred_path || !preferred_path[0]) return;
     for (int i = 0; i < count; i++) {
@@ -240,7 +253,7 @@ static void heur_promote_match(NcdMatch *matches, int count, const char *preferr
     }
 }
 
-static void heur_print(void)
+HEUR_STATIC void heur_print(void)
 {
     NcdMetadata *meta = get_metadata();
     if (!meta) {
@@ -251,7 +264,7 @@ static void heur_print(void)
     db_heur_print(meta);
 }
 
-static void heur_clear(void)
+HEUR_STATIC void heur_clear(void)
 {
     NcdMetadata *meta = get_metadata();
     if (!meta) {
@@ -561,18 +574,27 @@ static void spawn_background_rescan(const char *db_path)
 /*
  * check_service_version  --  Check service version and handle mismatch
  *
- * Returns true if service version matches (or no service running).
+ * Returns true if versions match (or no service running).
  * Returns false if there's a version mismatch (service was stopped).
- * Prints appropriate messages to the user.
+ * Sets *out_service_was_stopped if service was stopped due to mismatch.
+ * Sets *out_service_running to indicate if service is currently running.
  */
-static bool check_service_version(bool *out_service_was_stopped)
+static bool check_service_version(bool *out_service_was_stopped, bool *out_service_running)
 {
     if (out_service_was_stopped) {
         *out_service_was_stopped = false;
     }
+    if (out_service_running) {
+        *out_service_running = false;
+    }
     
     if (!ipc_service_exists()) {
         return true;  /* No service running, OK to start new one */
+    }
+    
+    /* Service exists - mark as running */
+    if (out_service_running) {
+        *out_service_running = true;
     }
     
     NcdIpcClient *client = ipc_client_connect();
@@ -619,10 +641,8 @@ static void print_usage(void)
     /* Check service status for header line */
     const char *status_suffix;
     bool service_was_stopped = false;
-    bool version_ok = check_service_version(&service_was_stopped);
-    (void)version_ok;  /* We continue regardless, but log the issue */
-    
-    bool service_running = ipc_service_exists();
+    bool service_running = false;
+    check_service_version(&service_was_stopped, &service_running);
     if (!service_running) {
         status_suffix = "  [Standalone client.]";
     } else {
@@ -1517,22 +1537,27 @@ static int agent_mode_query(NcdDatabase *db, const NcdOptions *opts)
     if (limit <= 0) limit = match_count;
     if (match_count < limit) limit = match_count;
     
-    /* Sort by depth if requested */
-    if (opts->agent_depth_sort) {
-        /* Simple bubble sort by path depth (slash count) */
-        for (int i = 0; i < limit - 1; i++) {
-            for (int j = i + 1; j < limit; j++) {
-                int depth_i = 0, depth_j = 0;
-                for (const char *p = matches[i].full_path; *p; p++)
-                    if (*p == '\\' || *p == '/') depth_i++;
+    /* Sort by depth if requested - using insertion sort (O(n) for sorted/small data) */
+    if (opts->agent_depth_sort && limit > 1) {
+        /* Insertion sort - efficient for small or nearly-sorted data (O(n) best case)
+         * vs bubble sort O(n^2) always. For agent queries, result sets are typically small. */
+        for (int i = 1; i < limit; i++) {
+            NcdMatch key = matches[i];
+            /* Count depth once for key */
+            int key_depth = 0;
+            for (const char *p = key.full_path; *p; p++)
+                if (*p == '\\' || *p == '/') key_depth++;
+            
+            int j = i - 1;
+            while (j >= 0) {
+                int j_depth = 0;
                 for (const char *p = matches[j].full_path; *p; p++)
-                    if (*p == '\\' || *p == '/') depth_j++;
-                if (depth_i > depth_j) {
-                    NcdMatch tmp = matches[i];
-                    matches[i] = matches[j];
-                    matches[j] = tmp;
-                }
+                    if (*p == '\\' || *p == '/') j_depth++;
+                if (j_depth <= key_depth) break;
+                matches[j + 1] = matches[j];
+                j--;
             }
+            matches[j + 1] = key;
         }
     }
     
@@ -1651,11 +1676,20 @@ static int agent_mode_ls(const NcdOptions *opts)
         const char *name = ent->d_name;
         if (name[0] == '.') continue;  /* Skip hidden */
         
-        /* Get file stats to determine if directory */
-        char full_path[NCD_MAX_PATH];
-        snprintf(full_path, sizeof(full_path), "%s%s", path, name);
-        struct stat st;
-        bool is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+        /* Determine if directory - use d_type when available (Linux/BSD) to avoid stat() */
+        bool is_dir;
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(__linux__)
+        if (ent->d_type != DT_UNKNOWN) {
+            is_dir = (ent->d_type == DT_DIR);
+        } else
+#endif
+        {
+            /* Fallback to stat() for filesystems that don't support d_type */
+            char full_path[NCD_MAX_PATH];
+            snprintf(full_path, sizeof(full_path), "%s%s", path, name);
+            struct stat st;
+            is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+        }
         
         /* Pattern filtering */
         if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
@@ -1673,7 +1707,7 @@ static int agent_mode_ls(const NcdOptions *opts)
         }
         
         LsEntry *e = &entries[entry_count++];
-        platform_strncpy_s(e->name, sizeof(e->name), name, sizeof(e->name));
+        platform_strncpy_s(e->name, sizeof(e->name), name);
         e->is_dir = is_dir;
         e->depth = 0;
         snprintf(e->path, sizeof(e->path), "%s%s", path, name);
@@ -1773,10 +1807,19 @@ static int agent_mode_ls(const NcdOptions *opts)
                     const char *name = sub_ent->d_name;
                     if (name[0] == '.') continue;
                     
-                    char full_path[NCD_MAX_PATH];
-                    snprintf(full_path, sizeof(full_path), "%s%s", sub_path, name);
-                    struct stat st;
-                    bool is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+                    /* Use d_type when available to avoid stat() */
+                    bool is_dir;
+#if defined(_DIRENT_HAVE_D_TYPE) || defined(__linux__)
+                    if (sub_ent->d_type != DT_UNKNOWN) {
+                        is_dir = (sub_ent->d_type == DT_DIR);
+                    } else
+#endif
+                    {
+                        char full_path[NCD_MAX_PATH];
+                        snprintf(full_path, sizeof(full_path), "%s%s", sub_path, name);
+                        struct stat st;
+                        is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+                    }
                     
                     if (opts->agent_pattern[0] && !glob_match(opts->agent_pattern, name))
                         continue;
@@ -1791,7 +1834,7 @@ static int agent_mode_ls(const NcdOptions *opts)
                     }
                     
                     LsEntry *e = &entries[entry_count++];
-                    platform_strncpy_s(e->name, sizeof(e->name), name, sizeof(e->name));
+                    platform_strncpy_s(e->name, sizeof(e->name), name);
                     e->is_dir = is_dir;
                     e->depth = cur.depth;
                     snprintf(e->path, sizeof(e->path), "%s%s", sub_path, name);
@@ -3784,7 +3827,7 @@ int main(int argc, char *argv[])
     }
     
     /* Try to get database from state backend (service) first */
-    const NcdDatabase *primary_db = get_state_database();
+    NcdDatabase *primary_db = (NcdDatabase *)get_state_database();
     bool using_service_db = (primary_db != NULL);
     
     /* Fall back to loading local database if service not available */
@@ -3830,7 +3873,7 @@ int main(int argc, char *argv[])
 
     /* -------------------- fallback: search all other drive databases     */
     if (!matches || match_count == 0) {
-        if (primary_db && !using_service_db) { db_free((NcdDatabase *)primary_db); primary_db = NULL; } else { primary_db = NULL; }
+        if (primary_db && !using_service_db) { db_free(primary_db); primary_db = NULL; } else { primary_db = NULL; }
 
         /* 
          * Phase 1: Collect all available drive letters first, then load all
@@ -3908,7 +3951,7 @@ int main(int argc, char *argv[])
 
     if (!matches || match_count == 0) {
         result_error("NCD: No directory found matching \"%s\".", opts.search);
-        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+        if (primary_db && !using_service_db) db_free(primary_db);
         con_close();
         return 1;
     }
@@ -3933,7 +3976,7 @@ int main(int argc, char *argv[])
         /* User cancelled */
         result_cancel();
         free(matches);
-        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+        if (primary_db && !using_service_db) db_free(primary_db);
         con_close();
         return 0;   /* not an error -- don't show a message */
     }
@@ -3947,7 +3990,7 @@ int main(int argc, char *argv[])
     } else if (chosen == -2) {
         result_error("NCD: Navigation did not return a valid path.");
         free(matches);
-        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+        if (primary_db && !using_service_db) db_free(primary_db);
         con_close();
         return 1;
     } else {
@@ -3965,7 +4008,7 @@ int main(int argc, char *argv[])
             result_error("Drive %c: is not mounted.", resolved_drive);
             spawn_background_rescan(NULL);
             free(matches);
-            if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+            if (primary_db && !using_service_db) db_free(primary_db);
             con_close();
             return 2;
         }
@@ -3979,7 +4022,7 @@ int main(int argc, char *argv[])
                      resolved_path);
         spawn_background_rescan(NULL);
         free(matches);
-        if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+        if (primary_db && !using_service_db) db_free(primary_db);
         con_close();
         return 2;
     }
@@ -4026,6 +4069,6 @@ int main(int argc, char *argv[])
     }
 
     con_close();
-    if (primary_db && !using_service_db) db_free((NcdDatabase *)primary_db);
+    if (primary_db && !using_service_db) db_free(primary_db);
     return 0;
 }

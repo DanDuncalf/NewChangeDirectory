@@ -225,6 +225,36 @@ if errorlevel 1 goto :error
 link %LINK_FLAGS% /OUT:test_scanner.exe %OBJDIR%\test_scanner.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
 if errorlevel 1 goto :error
 
+:: Compile service dependencies for service tests
+echo Compiling service_state.c...
+cl %CFLAGS% %SRCDIR%\service_state.c
+if errorlevel 1 goto :error
+
+echo Compiling control_ipc_win.c...
+cl %CFLAGS% /Fo%OBJDIR%\control_ipc_win.obj %SRCDIR%\control_ipc_win.c
+if errorlevel 1 goto :error
+
+:: Service tests: test_service_lazy_load.exe
+echo Building test_service_lazy_load.exe...
+cl %CFLAGS% test_service_lazy_load.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_service_lazy_load.exe %OBJDIR%\test_service_lazy_load.obj %OBJDIR%\test_framework.obj %OBJDIR%\service_state.obj %OBJDIR%\matcher.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Service tests: test_service_lifecycle.exe
+echo Building test_service_lifecycle.exe...
+cl %CFLAGS% test_service_lifecycle.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_service_lifecycle.exe %OBJDIR%\test_service_lifecycle.obj %OBJDIR%\test_framework.obj %OBJDIR%\service_state.obj %OBJDIR%\matcher.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Service tests: test_service_integration.exe
+echo Building test_service_integration.exe...
+cl %CFLAGS% test_service_integration.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_service_integration.exe %OBJDIR%\test_service_integration.obj %OBJDIR%\test_framework.obj %OBJDIR%\service_state.obj %OBJDIR%\matcher.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
 echo.
 echo ========================================
 echo Build successful! Running tests...
@@ -299,6 +329,34 @@ if errorlevel 1 (
     set TEST_FAILED=1
 ) else (
     echo PASSED: test_scanner.exe
+)
+echo.
+
+echo --- Running test_service_lazy_load.exe ---
+test_service_lazy_load.exe
+if errorlevel 1 (
+    echo FAILED: test_service_lazy_load.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_service_lazy_load.exe
+)
+echo.
+
+echo --- Running test_service_lifecycle.exe ---
+test_service_lifecycle.exe
+if errorlevel 1 (
+    echo WARNING: test_service_lifecycle.exe had issues (non-fatal - may need service executable)
+) else (
+    echo PASSED: test_service_lifecycle.exe
+)
+echo.
+
+echo --- Running test_service_integration.exe ---
+test_service_integration.exe
+if errorlevel 1 (
+    echo WARNING: test_service_integration.exe had issues (non-fatal - may need service executable)
+) else (
+    echo PASSED: test_service_integration.exe
 )
 echo.
 

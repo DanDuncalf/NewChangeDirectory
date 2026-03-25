@@ -8,6 +8,7 @@
 
 #include "shm_platform.h"
 #include <windows.h>
+#include <sddl.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -160,7 +161,7 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
     return SHM_OK;
 }
 
-ShmResult shm_open(const char *name, ShmAccess access, ShmHandle **out_handle) {
+ShmResult shm_open_existing(const char *name, ShmAccess access, ShmHandle **out_handle) {
     if (!name || !out_handle) {
         return SHM_ERROR_GENERIC;
     }
@@ -213,7 +214,7 @@ void shm_close(ShmHandle *handle) {
     free(handle);
 }
 
-ShmResult shm_unlink(const char *name) {
+ShmResult shm_remove(const char *name) {
     if (!name) {
         return SHM_ERROR_GENERIC;
     }

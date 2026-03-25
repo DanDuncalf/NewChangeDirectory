@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "SRC_DIR=%~dp0"
 set "DEST_DIR=%USERPROFILE%\Tools\bin"
@@ -57,7 +57,7 @@ if "%ERRORLEVEL%"=="0" (
         tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul
         if "%ERRORLEVEL%"=="0" (
             set /a "WAIT_COUNT+=1"
-            if %WAIT_COUNT% LSS 10 goto WAIT_LOOP
+            if !WAIT_COUNT! LSS 10 goto WAIT_LOOP
             echo Warning: Service did not stop gracefully, forcing termination...
             taskkill /F /IM NCDService.exe >nul 2>&1
             timeout /t 1 /nobreak >nul
@@ -128,7 +128,9 @@ echo   [OK] ncd.bat
 if "%HAS_SERVICE%"=="1" (
     echo.
     echo Starting NCD Service...
-    start "" "%DEST_DIR%\NCDService.exe"
+    pushd "%DEST_DIR%"
+    call "%DEST_DIR%\ncd_service.bat" start
+    popd
     timeout /t 2 /nobreak >nul
     
     :: Verify service started

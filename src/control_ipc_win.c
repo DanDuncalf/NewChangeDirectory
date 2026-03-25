@@ -9,6 +9,7 @@
 
 #include "control_ipc.h"
 #include <windows.h>
+#include <sddl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

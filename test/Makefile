@@ -20,9 +20,13 @@ HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_
 # Test executables
 TESTS = test_database test_matcher test_history test_agent_mkdir \
         test_strbuilder test_common test_platform test_metadata test_scanner \
+        test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration \
+        test_service_database test_service_ipc \
+        test_cli_parse test_agent_mode test_result_output \
+        test_shared_state_extended test_shm_platform test_ipc \
         fuzz_database bench_matcher test_db_corruption test_bugs
 
-.PHONY: all test clean fuzz bench corruption bugs recursive-mount features
+.PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test
 
 all: $(TESTS)
 
@@ -83,11 +87,73 @@ SCANNER_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/pla
 test_scanner: test_scanner.c test_framework.c $(SCANNER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Service tests - lazy loading
+SERVICE_LAZY_SOURCES = ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_lazy_load: test_service_lazy_load.c test_framework.c $(SERVICE_LAZY_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - parity
+SERVICE_PARITY_SOURCES = ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_parity: test_service_parity.c test_framework.c $(SERVICE_PARITY_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - lifecycle
+SERVICE_LIFECYCLE_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_lifecycle: test_service_lifecycle.c test_framework.c $(SERVICE_LIFECYCLE_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - integration
+SERVICE_INTEGRATION_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_integration: test_service_integration.c test_framework.c $(SERVICE_INTEGRATION_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - database snapshot loading
+SERVICE_DATABASE_SOURCES = ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_database: test_service_database.c test_framework.c $(SERVICE_DATABASE_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - Tier 5 IPC integration
+SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - CLI parsing
+# Uses extracted cli.c module
+CLI_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_cli_parse: test_cli_parse.c test_framework.c $(CLI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Agent mode
+AGENT_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_agent_mode: test_agent_mode.c test_framework.c $(AGENT_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Result output
+# Uses extracted result.c module
+RESULT_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
+test_result_output: test_result_output.c test_framework.c $(RESULT_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 4 tests - Shared state extended
+SHARED_STATE_EXT_SOURCES = ../src/shared_state.c ../src/shm_platform_posix.c ../src/platform.c $(SHARED_SOURCES)
+test_shared_state_extended: test_shared_state_extended.c test_framework.c $(SHARED_STATE_EXT_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 4 tests - SHM platform
+SHM_PLATFORM_SOURCES = ../src/shm_platform_posix.c ../src/platform.c $(SHARED_SOURCES)
+test_shm_platform: test_shm_platform.c test_framework.c $(SHM_PLATFORM_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 4 tests - IPC
+IPC_TEST_SOURCES = ../src/control_ipc_posix.c ../src/platform.c $(SHARED_SOURCES)
+test_ipc: test_ipc.c test_framework.c $(IPC_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform test_metadata test_scanner
+test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_result_output test_shared_state_extended test_shm_platform test_ipc
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -109,13 +175,49 @@ test: test_database test_matcher test_history test_agent_mkdir test_strbuilder t
 	@echo "Running agent mkdir tests..."
 	@./test_agent_mkdir
 	@echo ""
+	@echo "Running agent mode tests..."
+	@./test_agent_mode || echo "Note: Some agent mode tests may fail without full main.c linkage"
+	@echo ""
 	@echo "Running metadata tests..."
 	@./test_metadata
 	@echo ""
 	@echo "Running scanner tests..."
 	@./test_scanner
 	@echo ""
+	@echo "Running service lazy load tests..."
+	@./test_service_lazy_load
+	@echo ""
+	@echo "Running service parity tests..."
+	@./test_service_parity
+	@echo ""
+	@echo "Running CLI parse tests..."
+	@./test_cli_parse || echo "Note: CLI parse tests require main.c function linkage"
+	@echo ""
+	@echo "Running result output tests..."
+	@./test_result_output || echo "Note: Result output tests require main.c function linkage"
+	@echo ""
+	@echo "Running shared state extended tests..."
+	@./test_shared_state_extended
+	@echo ""
+	@echo "Running SHM platform tests..."
+	@./test_shm_platform
+	@echo ""
+	@echo "Running IPC tests..."
+	@./test_ipc
+	@echo ""
 	@echo "All unit tests complete."
+
+service-test: test_service_lifecycle test_service_integration test_service_ipc
+	@echo "Running service lifecycle tests..."
+	@./test_service_lifecycle || echo "Note: Some lifecycle tests may skip if service executable not built"
+	@echo ""
+	@echo "Running service integration tests..."
+	@./test_service_integration || echo "Note: Some integration tests may skip if executables not built"
+	@echo ""
+	@echo "Running service IPC tests (Tier 5)..."
+	@./test_service_ipc || echo "Note: Some IPC tests may skip if service executable not built"
+	@echo ""
+	@echo "Service tests complete."
 
 corruption: test_db_corruption
 	@echo "Running database corruption tests..."

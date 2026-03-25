@@ -93,6 +93,7 @@ int platform_write_help_suffix(char *buf, size_t buf_size);
  * or NULL if not found.
  */
 const char *platform_strcasestr(const char *haystack, const char *needle);
+int platform_strncasecmp(const char *s1, const char *s2, size_t n);
 
 #ifdef __cplusplus
 }

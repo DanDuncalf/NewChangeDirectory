@@ -30,18 +30,22 @@ test_integration.bat
 
 ```
 test/
-├── test_framework.h      # Minimal unit testing framework
-├── test_framework.c      # Test framework implementation
-├── test_database.c       # Database module tests
-├── test_matcher.c        # Matcher module tests
-├── test_db_corruption.c  # Targeted database corruption tests
-├── fuzz_database.c       # Fuzz testing for database loading
-├── bench_matcher.c       # Performance benchmarks
-├── Makefile              # Test build system
-├── Win/                  # Windows-specific tests
-├── Wsl/                  # WSL-specific tests
-├── PowerShell/           # PowerShell-specific tests
-└── plans/                # Test plans
+├── test_framework.h           # Minimal unit testing framework
+├── test_framework.c           # Test framework implementation
+├── test_database.c            # Database module tests
+├── test_matcher.c             # Matcher module tests
+├── test_db_corruption.c       # Targeted database corruption tests
+├── test_service_lazy_load.c   # Service lazy loading tests
+├── test_service_parity.c      # Service vs standalone parity tests
+├── test_service_lifecycle.c   # Service start/stop lifecycle tests
+├── test_service_integration.c # NCD client service integration tests
+├── fuzz_database.c            # Fuzz testing for database loading
+├── bench_matcher.c            # Performance benchmarks
+├── Makefile                   # Test build system
+├── Win/                       # Windows-specific tests
+├── Wsl/                       # WSL-specific tests
+├── PowerShell/                # PowerShell-specific tests
+└── plans/                     # Test plans
 ```
 
 ## Test Categories
@@ -53,6 +57,10 @@ These test individual modules in isolation:
 - **test_database.c** - Database creation, manipulation, save/load
 - **test_matcher.c** - Search matching algorithm
 - **test_db_corruption.c** - Targeted database corruption tests
+- **test_service_lazy_load.c** - Service lazy loading and state machine
+- **test_service_parity.c** - Service vs standalone mode parity
+- **test_service_lifecycle.c** - Service start/stop/restart operations
+- **test_service_integration.c** - NCD client service status reporting
 
 ### 2. Fuzz Tests (`fuzz_*.c`)
 
@@ -169,6 +177,7 @@ The custom test framework (`test_framework.h`) provides:
 | `make fuzz` | Run fuzz tests (60 second timeout) |
 | `make bench` | Run performance benchmarks |
 | `make recursive-mount` | Run recursive mount tests (requires root) |
+| `make service-test` | Run service lifecycle and integration tests |
 | `make clean` | Remove build artifacts |
 
 ## Platform-Specific Notes

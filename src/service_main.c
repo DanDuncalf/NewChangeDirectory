@@ -49,7 +49,7 @@ static HANDLE g_hStopEvent = NULL;
 #define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
 
 /* Forward declaration for background loader */
-static void start_background_loader(ServiceState *state);
+static void start_background_loader(ServiceState *state, SnapshotPublisher *pub);
 static void wait_for_loader(void);
 static void signal_loader_stop(void);
 
@@ -653,7 +653,11 @@ static void start_background_loader(ServiceState *state, SnapshotPublisher *pub)
         fprintf(stderr, "NCD Service: Failed to allocate loader context\n");
         /* Continue synchronously */
         LoaderContext ctx = {state, pub};
+#if NCD_PLATFORM_WINDOWS
         LoaderThreadFunc(&ctx);
+#else
+        loader_thread_func(&ctx);
+#endif
         return;
     }
     

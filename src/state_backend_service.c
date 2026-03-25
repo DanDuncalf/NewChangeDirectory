@@ -10,9 +10,19 @@
 #include "shm_platform.h"
 #include "control_ipc.h"
 #include "database.h"
+#include "platform.h"
+#include "service_state.h"  /* For ServiceRuntimeState enum */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+/* Build version - must match NCD_APP_VERSION in control_ipc.h */
+#ifndef NCD_BUILD_VER
+#define NCD_BUILD_VER   "1.3"
+#endif
+#ifndef NCD_BUILD_STAMP
+#define NCD_BUILD_STAMP __DATE__ " " __TIME__
+#endif
 
 /* --------------------------------------------------------- internal state     */
 
@@ -216,15 +226,110 @@ static bool load_database_from_snapshot(NcdStateView *view) {
     view->database_view.version = 2;  /* Current version */
     view->database_view.last_scan = (time_t)hdr->generation;  /* Use generation as proxy */
     
-    /* Note: The full implementation would traverse the database section
-     * and set up DriveData pointers into the shared memory.
-     * For simplicity, this creates a minimal view. */
+    /* Locate database section header (after section descriptors) */
+    size_t section_table_size = hdr->section_count * sizeof(ShmSectionDesc);
+    size_t dbsec_offset = sizeof(ShmSnapshotHdr) + section_table_size;
+    
+    /* Align to 8 bytes */
+    dbsec_offset = (dbsec_offset + 7) & ~7;
+    
+    if (dbsec_offset + sizeof(ShmDatabaseSection) > view->db_size) {
+        set_error("Database section header out of bounds");
+        return false;
+    }
+    
+    const ShmDatabaseSection *dbsec = (const ShmDatabaseSection *)((uint8_t *)view->db_addr + dbsec_offset);
+    
+    view->database_view.default_show_hidden = dbsec->show_hidden;
+    view->database_view.default_show_system = dbsec->show_system;
+    view->database_view.drive_count = (int)dbsec->drive_count;
+    
+    if (dbsec->drive_count == 0) {
+        /* Empty database - valid but has no drives */
+        view->has_database = true;
+        return true;
+    }
+    
+    if (dbsec->drive_count > NCD_SHM_MAX_DRIVES) {
+        set_error("Too many drives in snapshot");
+        return false;
+    }
+    
+    /* Allocate DriveData array */
+    view->database_view.drives = (DriveData *)ncd_malloc_array(dbsec->drive_count, sizeof(DriveData));
+    if (!view->database_view.drives) {
+        set_error("Failed to allocate drive array");
+        return false;
+    }
+    
+    view->database_view.drive_capacity = (int)dbsec->drive_count;
+    
+    /* Drive sections array follows database section header */
+    size_t drive_secs_offset = dbsec_offset + sizeof(ShmDatabaseSection);
+    if (drive_secs_offset + dbsec->drive_count * sizeof(ShmDriveSection) > view->db_size) {
+        set_error("Drive sections out of bounds");
+        return false;
+    }
+    
+    const ShmDriveSection *drive_secs = (const ShmDriveSection *)((uint8_t *)view->db_addr + drive_secs_offset);
+    
+    /* Calculate base offset for directory entries and name pools */
+    uint32_t entries_base = (uint32_t)(drive_secs_offset + dbsec->drive_count * sizeof(ShmDriveSection));
+    
+    /* Reconstruct each drive */
+    for (uint32_t i = 0; i < dbsec->drive_count; i++) {
+        DriveData *drv = &view->database_view.drives[i];
+        const ShmDriveSection *shmdrv = &drive_secs[i];
+        
+        drv->letter = shmdrv->letter;
+        memcpy(drv->label, shmdrv->label, sizeof(drv->label));
+        drv->type = (UINT)shmdrv->type;
+        drv->dir_count = (int)shmdrv->dir_count;
+        drv->dir_capacity = (int)shmdrv->dir_count;
+        
+        /* Calculate this drive's data location */
+        uint32_t drive_entries_start = entries_base;
+        for (uint32_t k = 0; k < i; k++) {
+            drive_entries_start += drive_secs[k].dir_count * sizeof(ShmDirEntry) + drive_secs[k].pool_size;
+        }
+        
+        if (shmdrv->dir_count > 0) {
+            /* Directory entries array */
+            uint32_t dirs_offset = drive_entries_start;
+            uint32_t pool_offset = drive_entries_start + shmdrv->dir_count * sizeof(ShmDirEntry);
+            
+            if (pool_offset + shmdrv->pool_size > view->db_size) {
+                set_error("Drive data out of bounds");
+                /* Cleanup already allocated drives would happen in close */
+                return false;
+            }
+            
+            /* Point directly into shared memory - no copy needed */
+            drv->dirs = (DirEntry *)((uint8_t *)view->db_addr + dirs_offset);
+            drv->name_pool = (char *)((uint8_t *)view->db_addr + pool_offset);
+            drv->name_pool_len = shmdrv->pool_size;
+            drv->name_pool_cap = shmdrv->pool_size;
+        } else {
+            drv->dirs = NULL;
+            drv->name_pool = NULL;
+            drv->name_pool_len = 0;
+            drv->name_pool_cap = 0;
+        }
+    }
+    
+    /* Mark as blob-style so free logic knows not to free individual pools */
+    view->database_view.is_blob = true;
+    view->database_view.blob_buf = view->db_addr;  /* Reference to shared memory */
     
     view->has_database = true;
     return true;
 }
 
 /* --------------------------------------------------------- lifecycle          */
+
+/* Forward declarations for helper functions */
+static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry_delay_ms);
+static bool wait_for_service_ready(NcdIpcClient *client, int timeout_ms);
 
 int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     if (!out) {
@@ -235,108 +340,273 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     *out = NULL;
     memset(g_last_error, 0, sizeof(g_last_error));
     
-    /* Initialize IPC client */
-    if (ipc_client_init() != 0) {
-        set_error("Failed to initialize IPC");
-        return -1;
-    }
-    
-    /* Initialize shared memory platform */
+    /* Initialize platform subsystems */
     if (shm_platform_init() != SHM_OK) {
-        ipc_client_cleanup();
-        set_error("Failed to initialize shared memory");
+        set_error("Failed to initialize shared memory platform");
         return -1;
     }
     
-    /* Connect to service */
-    NcdIpcClient *client = ipc_client_connect();
-    if (!client) {
+    if (ipc_client_init() != NCD_IPC_OK) {
+        shm_platform_cleanup();
+        set_error("Failed to initialize IPC client");
+        return -1;
+    }
+    
+    /* Check if service exists */
+    if (!ipc_service_exists()) {
         shm_platform_cleanup();
         ipc_client_cleanup();
-        set_error("Failed to connect to service");
+        set_error("Service not running");
         return -1;
     }
     
-    /* Get state info from service */
-    NcdIpcStateInfo ipc_info;
-    NcdIpcResult result = ipc_client_get_state_info(client, &ipc_info);
+    /* Allocate view structure */
+    NcdStateView *view = (NcdStateView *)calloc(1, sizeof(NcdStateView));
+    if (!view) {
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error("Failed to allocate state view");
+        return -1;
+    }
+    
+    /* Connect to service with retry */
+    if (!connect_with_retry(&view->ipc_client, 3, 100)) {
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        /* set_error already called by connect_with_retry */
+        return -1;
+    }
+    
+    /* Wait for service to be ready (not STARTING or LOADING) */
+    if (!wait_for_service_ready(view->ipc_client, 5000)) {
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        /* set_error already called by wait_for_service_ready */
+        return -1;
+    }
+    
+    /* Get state info to find shared memory names */
+    NcdIpcStateInfo state_info;
+    NcdIpcResult result = ipc_client_get_state_info(view->ipc_client, &state_info);
     if (result != NCD_IPC_OK) {
-        ipc_client_disconnect(client);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
         set_error(ipc_error_string(result));
         return -1;
     }
     
-    /* Allocate view */
-    NcdStateView *view = (NcdStateView *)calloc(1, sizeof(NcdStateView));
-    if (!view) {
-        ipc_client_disconnect(client);
+    /* Check version compatibility */
+    NcdIpcVersionCheckResult ver_result;
+    result = ipc_client_check_version(view->ipc_client, NCD_BUILD_VER, NCD_BUILD_STAMP, &ver_result);
+    if (result != NCD_IPC_OK) {
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
-        set_error("Out of memory");
+        set_error(ipc_error_string(result));
         return -1;
     }
     
-    view->ipc_client = client;
-    view->info.from_service = true;
-    view->info.generation = ipc_info.meta_generation;
-    view->info.db_generation = ipc_info.db_generation;
+    if (!ver_result.versions_match) {
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error("Version mismatch with service");
+        return -1;
+    }
     
     /* Open and map metadata shared memory */
-    ShmHandle *meta_shm;
-    if (shm_open(ipc_info.meta_name, SHM_ACCESS_READ, &meta_shm) != SHM_OK) {
-        set_error("Failed to open metadata shared memory");
-        goto error;
+    char meta_name[256];
+    if (!shm_make_meta_name(meta_name, sizeof(meta_name))) {
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error("Failed to generate metadata SHM name");
+        return -1;
     }
-    view->meta_shm = meta_shm;
     
-    void *meta_addr;
-    size_t meta_size;
-    if (shm_map(meta_shm, SHM_ACCESS_READ, &meta_addr, &meta_size) != SHM_OK) {
-        set_error("Failed to map metadata shared memory");
-        goto error;
+    ShmResult shm_result = shm_open_existing(meta_name, SHM_ACCESS_READ, &view->meta_shm);
+    if (shm_result != SHM_OK) {
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error(shm_error_string(shm_result));
+        return -1;
     }
-    view->meta_addr = meta_addr;
-    view->meta_size = meta_size;
+    
+    shm_result = shm_map(view->meta_shm, SHM_ACCESS_READ, &view->meta_addr, &view->meta_size);
+    if (shm_result != SHM_OK) {
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error(shm_error_string(shm_result));
+        return -1;
+    }
     
     /* Open and map database shared memory */
-    ShmHandle *db_shm;
-    if (shm_open(ipc_info.db_name, SHM_ACCESS_READ, &db_shm) != SHM_OK) {
-        set_error("Failed to open database shared memory");
-        goto error;
+    char db_name[256];
+    if (!shm_make_db_name(db_name, sizeof(db_name))) {
+        shm_unmap(view->meta_addr, view->meta_size);
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error("Failed to generate database SHM name");
+        return -1;
     }
-    view->db_shm = db_shm;
     
-    void *db_addr;
-    size_t db_size;
-    if (shm_map(db_shm, SHM_ACCESS_READ, &db_addr, &db_size) != SHM_OK) {
-        set_error("Failed to map database shared memory");
-        goto error;
+    shm_result = shm_open_existing(db_name, SHM_ACCESS_READ, &view->db_shm);
+    if (shm_result != SHM_OK) {
+        shm_unmap(view->meta_addr, view->meta_size);
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error(shm_error_string(shm_result));
+        return -1;
     }
-    view->db_addr = db_addr;
-    view->db_size = db_size;
     
-    /* Load from snapshots */
+    shm_result = shm_map(view->db_shm, SHM_ACCESS_READ, &view->db_addr, &view->db_size);
+    if (shm_result != SHM_OK) {
+        shm_close(view->db_shm);
+        shm_unmap(view->meta_addr, view->meta_size);
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error(shm_error_string(shm_result));
+        return -1;
+    }
+    
+    /* Load metadata from snapshot */
     if (!load_metadata_from_snapshot(view)) {
-        goto error;
+        /* set_error already called */
+        shm_unmap(view->db_addr, view->db_size);
+        shm_close(view->db_shm);
+        shm_unmap(view->meta_addr, view->meta_size);
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        return -1;
     }
     
+    /* Load database from snapshot */
     if (!load_database_from_snapshot(view)) {
-        goto error;
+        /* set_error already called - fall back to metadata-only mode */
+        /* For now, we still return error, but future enhancement could allow
+         * metadata-only operation for agent commands */
+        shm_unmap(view->db_addr, view->db_size);
+        shm_close(view->db_shm);
+        view->db_addr = NULL;
+        view->db_shm = NULL;
+        
+        /* Cleanup metadata copy since we're failing */
+        if (view->metadata_copy.groups.groups) {
+            free(view->metadata_copy.groups.groups);
+        }
+        if (view->metadata_copy.heuristics.entries) {
+            free(view->metadata_copy.heuristics.entries);
+        }
+        if (view->metadata_copy.exclusions.entries) {
+            free(view->metadata_copy.exclusions.entries);
+        }
+        
+        shm_unmap(view->meta_addr, view->meta_size);
+        shm_close(view->meta_shm);
+        ipc_client_disconnect(view->ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        return -1;
     }
     
-    /* Fill output info */
+    /* Populate info structure */
     if (info) {
-        *info = view->info;
+        info->from_service = true;
+        /* Get generation numbers from shared memory headers */
+        const ShmSnapshotHdr *meta_hdr = (const ShmSnapshotHdr *)view->meta_addr;
+        const ShmSnapshotHdr *db_hdr = (const ShmSnapshotHdr *)view->db_addr;
+        info->generation = meta_hdr->generation;
+        info->db_generation = db_hdr->generation;
     }
+    
+    view->info.from_service = true;
+    view->info.generation = ((const ShmSnapshotHdr *)view->meta_addr)->generation;
+    view->info.db_generation = ((const ShmSnapshotHdr *)view->db_addr)->generation;
     
     *out = view;
     return 0;
+}
+
+/*
+ * Connect to service with retry logic.
+ * Service might be starting up during connection attempt.
+ */
+static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry_delay_ms) {
+    for (int i = 0; i < max_retries; i++) {
+        *client = ipc_client_connect();
+        if (*client != NULL) {
+            return true;
+        }
+        
+        if (i < max_retries - 1) {
+            platform_sleep_ms(retry_delay_ms);
+            /* Exponential backoff */
+            retry_delay_ms *= 2;
+        } else {
+            set_error("Failed to connect to service");
+        }
+    }
+    return false;
+}
+
+/*
+ * Wait for service to be ready by pinging it.
+ * Returns false if timeout or error.
+ */
+static bool wait_for_service_ready(NcdIpcClient *client, int timeout_ms) {
+    int waited = 0;
+    int check_interval = 100;  /* Check every 100ms */
     
-error:
-    state_backend_close(view);
-    return -1;
+    while (waited < timeout_ms) {
+        NcdIpcResult result = ipc_client_ping(client);
+        
+        if (result == NCD_IPC_OK) {
+            /* Service is ready */
+            return true;
+        }
+        
+        if (result == NCD_IPC_ERROR_BUSY_LOADING || 
+            result == NCD_IPC_ERROR_BUSY_SCANNING ||
+            result == NCD_IPC_ERROR_NOT_READY) {
+            /* Service is starting/loading/scanning - wait and retry */
+            platform_sleep_ms(check_interval);
+            waited += check_interval;
+            continue;
+        }
+        
+        /* Other error */
+        set_error(ipc_error_string(result));
+        return false;
+    }
+    
+    set_error("Timeout waiting for service to be ready");
+    return false;
 }
 
 /* This is the function called by state_backend_open_best_effort */

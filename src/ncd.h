@@ -44,6 +44,7 @@ typedef long          LONG;
 #endif
 /* Case-insensitive string compare (MSVC vs POSIX name) */
 #define _stricmp strcasecmp
+#define _strnicmp strncasecmp
 #endif
 
 /* --------------------------------------------------------- binary format   */

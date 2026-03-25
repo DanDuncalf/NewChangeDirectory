@@ -73,6 +73,10 @@ NewChangeDirectory/
 │   ├── test_db_corruption.c  # Database corruption handling tests
 │   ├── test_bugs.c           # Known bug detection tests
 │   ├── test_shared_state.c   # Shared state tests
+│   ├── test_service_lazy_load.c   # Service lazy loading tests
+│   ├── test_service_parity.c      # Service vs standalone parity tests
+│   ├── test_service_lifecycle.c   # Service lifecycle (start/stop) tests
+│   ├── test_service_integration.c # NCD client service integration tests
 │   ├── fuzz_database.c       # Fuzz testing for database loading
 │   ├── bench_matcher.c       # Performance benchmarks
 │   ├── Makefile              # Test build system
@@ -238,6 +242,58 @@ cd test && make service-parity
 - `checksum_validation` - CRC64 checksum verification
 - `section_lookup` - Section table navigation
 - `bounds_checking` - Memory bounds validation
+
+### Service Tests
+
+The service test suite validates the NCD State Service functionality across Windows and Linux:
+
+**Service Lifecycle Tests (`test_service_lifecycle.c`):**
+- `service_status_when_stopped` - Verify service reports stopped when not running
+- `service_start_when_stopped` - Start service successfully
+- `service_double_start_fails` - Prevent starting an already-running service
+- `service_stop_when_running` - Stop a running service
+- `service_stop_when_already_stopped` - Handle stop when service not running
+- `service_restart` - Stop and restart service
+- `service_ipc_ping` - Verify IPC connectivity when service is running
+- `service_ipc_ping_when_stopped` - Verify IPC fails when service stopped
+- `service_ipc_get_version` - Query service version via IPC
+- `service_ipc_get_state_info` - Query service state information
+- `service_ipc_shutdown_request` - Request graceful shutdown via IPC
+- `service_state_progression` - Verify STARTING → LOADING → READY progression
+
+**Service Integration Tests (`test_service_integration.c`):**
+- `help_shows_standalone_when_service_stopped` - Verify `ncd /?` shows "Standalone" when service stopped
+- `help_shows_service_running_when_service_active` - Verify `ncd /?` shows service status when running
+- `agent_service_status_not_running` - `ncd /agent check --service-status` when stopped
+- `agent_service_status_json_not_running` - JSON output format when service stopped
+- `agent_service_status_running` - Plain text status when service running
+- `agent_service_status_json_running` - JSON status when service running
+- `agent_service_status_after_stop` - Verify status reflects after stopping service
+- `ncd_search_works_without_service` - Verify NCD works in standalone mode
+- `ncd_search_works_with_service` - Verify NCD works with service backing
+
+**Running Service Tests:**
+
+```bash
+# Linux/WSL - All service tests
+make test_service_lifecycle
+make test_service_integration
+./test_service_lifecycle
+./test_service_integration
+
+# Or use the combined target
+make service-test
+
+# Windows - Service tests are included in build-and-run-tests.bat
+cd test
+build-and-run-tests.bat
+```
+
+**Note:** Service tests require the service executable to be built:
+- Windows: `NCDService.exe` 
+- Linux: `ncd_service`
+
+Tests will skip gracefully if the service executable is not available.
 
 ## Code Style Guidelines
 
@@ -697,6 +753,10 @@ Exit codes:
 | `test/test_database.c` | Database module unit tests |
 | `test/test_matcher.c` | Matcher module unit tests |
 | `test/test_shared_state.c` | Shared state validation tests |
+| `test/test_service_lazy_load.c` | Service lazy loading and state machine tests |
+| `test/test_service_parity.c` | Service vs standalone parity tests |
+| `test/test_service_lifecycle.c` | Service start/stop/restart lifecycle tests |
+| `test/test_service_integration.c` | NCD client service status integration tests |
 
 ## Version History
 

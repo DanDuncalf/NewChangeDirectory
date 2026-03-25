@@ -11,6 +11,7 @@ extern "C" {
 
 #include "ncd.h"
 #include "database.h"
+#include "platform.h"
 
 /*
  * DriveStatus  --  live per-drive scan state shared between a worker thread
@@ -86,6 +87,13 @@ int scan_subdirectory(NcdDatabase   *db,
                       bool           include_hidden,
                       bool           include_system,
                       const NcdExclusionList *exclusions);
+
+/*
+ * Platform find data helper functions for checking entry attributes.
+ */
+bool find_is_directory(const PlatformFindData *fd);
+bool find_is_hidden(const PlatformFindData *fd);
+bool find_is_reparse(const PlatformFindData *fd);
 
 /*
  * Check if a directory should be excluded based on exclusion list.

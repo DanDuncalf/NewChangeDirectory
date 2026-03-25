@@ -78,11 +78,16 @@ TEST(parse_drive_from_search_extracts_letter) {
 
 TEST(parse_drive_from_search_no_drive) {
     char clean[256];
+    char cwd[MAX_PATH];
     
-    /* Parse search without drive */
+    /* Parse search without drive - should default to current drive */
     char drive = platform_parse_drive_from_search("downloads", clean, sizeof(clean));
     
-    ASSERT_EQ_INT(0, drive);  /* No drive specified */
+    /* Get current drive from CWD */
+    platform_get_current_dir(cwd, sizeof(cwd));
+    char expected_drive = (char)toupper((unsigned char)cwd[0]);
+    
+    ASSERT_EQ_INT(expected_drive, drive);  /* Defaults to CWD drive */
     ASSERT_EQ_STR("downloads", clean);
     
     return 0;

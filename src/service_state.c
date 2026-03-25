@@ -595,10 +595,21 @@ bool service_state_dequeue_pending(ServiceState *state, PendingRequestType *out_
 }
 
 void service_state_process_pending(ServiceState *state, void *pub) {
-    (void)state;
+    if (!state) return;
     (void)pub;
-    /* This is implemented in service_main.c where handlers are defined */
-    /* The actual processing iterates using service_state_dequeue_pending */
+    
+    /* Process and dequeue all pending requests */
+    PendingRequestType type;
+    void *data;
+    size_t data_len;
+    
+    while (service_state_dequeue_pending(state, &type, &data, &data_len)) {
+        /* In the stub implementation, we just free the data */
+        /* The actual processing is implemented in service_main.c */
+        if (data) {
+            free(data);
+        }
+    }
 }
 
 void service_state_clear_pending(ServiceState *state) {

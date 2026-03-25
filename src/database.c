@@ -314,7 +314,7 @@ void db_config_init_defaults(NcdConfig *cfg)
     cfg->default_show_system = false;
     cfg->default_fuzzy_match = false;
     cfg->default_timeout = -1;  /* -1 means not set (use built-in default of 300) */
-    cfg->has_defaults = false;
+    cfg->has_defaults = true;
     cfg->service_retry_count = 0;  /* 0 means use default (NCD_DEFAULT_SERVICE_RETRY_COUNT) */
     cfg->rescan_interval_hours = NCD_RESCAN_HOURS_DEFAULT;  /* 24 hours default */
 }
@@ -1033,16 +1033,30 @@ char *db_full_path(const DriveData *drv, int dir_index,
     /*
      * First pass: Count depth and detect cycles using a visited bit vector.
      * A cycle exists if we visit the same index twice.
+     * 
+     * PERFORMANCE: Use stack allocation for small visited bitsets (up to 1024 dirs).
+     * This avoids heap allocation churn on the hot path.
      */
     int depth = 0;
     int cur = dir_index;
     bool has_cycle = false;
     
-    /* Bit vector for visited tracking - allocate on stack (8 bytes per 64 entries) */
+    /* Bit vector for visited tracking - use stack for small drives, heap for large */
     int visited_words = (drv->dir_count + 63) / 64;
     if (visited_words < 1) visited_words = 1;
-    uint64_t *visited = ncd_malloc_array((size_t)visited_words, sizeof(uint64_t));
-    memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
+    
+    /* Stack allocation for up to 1024 directories (16 x 64-bit words = 128 bytes) */
+    uint64_t visited_stack[16];
+    uint64_t *visited;
+    bool visited_on_stack = (visited_words <= 16);
+    
+    if (visited_on_stack) {
+        visited = visited_stack;
+        memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
+    } else {
+        visited = ncd_malloc_array((size_t)visited_words, sizeof(uint64_t));
+        memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
+    }
     
     while (cur >= 0) {
         /* Check if already visited (cycle detection) */
@@ -1063,7 +1077,9 @@ char *db_full_path(const DriveData *drv, int dir_index,
         cur = drv->dirs[cur].parent;
     }
     
-    free(visited);
+    if (!visited_on_stack) {
+        free(visited);
+    }
     
     if (has_cycle) {
         /* Return empty string to indicate error */
@@ -1073,9 +1089,20 @@ char *db_full_path(const DriveData *drv, int dir_index,
     
     /*
      * Second pass: Collect path components.
-     * Use alloca for dynamic array sized by actual depth.
+     * PERFORMANCE: Use stack allocation for typical path depths (up to 64 components).
+     * Heap allocation only for extremely deep paths.
      */
-    const char **parts = ncd_malloc_array((size_t)depth, sizeof(char *));
+    #define PATH_STACK_DEPTH 64
+    const char *parts_stack[PATH_STACK_DEPTH];
+    const char **parts;
+    bool parts_on_stack = (depth <= PATH_STACK_DEPTH);
+    
+    if (!parts_on_stack) {
+        parts = ncd_malloc_array((size_t)depth, sizeof(char *));
+    } else {
+        parts = parts_stack;
+    }
+    
     cur = dir_index;
     int idx = 0;
     while (cur >= 0 && idx < depth) {
@@ -1119,7 +1146,9 @@ char *db_full_path(const DriveData *drv, int dir_index,
     }
 #endif
     
-    free(parts);
+    if (!parts_on_stack) {
+        free(parts);
+    }
     return buf;
 }
 
@@ -2542,6 +2571,14 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
         if (pattern[1] == ':') {
             pattern += 2;
         }
+        
+        /* Normalize pattern separators to backslashes on Windows */
+        char norm_pattern[NCD_MAX_PATH];
+        platform_strncpy_s(norm_pattern, sizeof(norm_pattern), pattern);
+        for (char *p = norm_pattern; *p; p++) {
+            if (*p == '/') *p = '\\';
+        }
+        pattern = norm_pattern;
 #endif
         
         /* Handle root-only matches */
@@ -2684,7 +2721,12 @@ bool db_metadata_save(NcdMetadata *meta)
     if (!meta) return false;
     
     char path[MAX_PATH];
-    if (!db_metadata_path(path, sizeof(path))) return false;
+    /* Use file_path if set, otherwise use default metadata path */
+    if (meta->file_path[0] != '\0') {
+        platform_strncpy_s(path, sizeof(path), meta->file_path);
+    } else {
+        if (!db_metadata_path(path, sizeof(path))) return false;
+    }
     
     /* Calculate sizes with overflow checking */
     size_t config_size = sizeof(NcdConfig);
@@ -2960,6 +3002,9 @@ NcdMetadata *db_metadata_load(void)
                 if (section_size >= 4) {
                     uint32_t count;
                     memcpy(&count, data + pos, 4);
+                    /* Cap count to what can fit in the section_size */
+                    uint32_t max_count = (uint32_t)((section_size - 4) / sizeof(NcdHeurEntryV2));
+                    if (count > max_count) count = max_count;
                     if (count > 0 && count <= NCD_HEUR_MAX_ENTRIES) {
                         meta->heuristics.capacity = (int)count;
                         meta->heuristics.entries = ncd_malloc_array(

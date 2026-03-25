@@ -16,6 +16,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* Define PLATFORM_VK_DELETE if not available in platform headers */
+#ifndef PLATFORM_VK_DELETE
+#define PLATFORM_VK_DELETE 0x2E
+#endif
+
 /* ================================================================ helpers */
 
 /* ANSI colour sequences */
@@ -539,15 +544,8 @@ static void apply_filter(UiState *st)
             continue;
         }
 
-        /* Determine match target: last component or full path */
-        const char *target = path;
-        bool has_sep = (strchr(st->filter, '\\') != NULL || strchr(st->filter, '/') != NULL);
-        if (!has_sep) {
-            const char *last_sep = strrchr(path, NCD_PATH_SEP[0]);
-            if (last_sep) target = last_sep + 1;
-        }
-
-        if (platform_strcasestr(target, st->filter)) {
+        /* Filter against the complete text line shown in the UI (full path) */
+        if (platform_strcasestr(path, st->filter)) {
             st->filtered[st->filtered_count++] = i;
         }
     }

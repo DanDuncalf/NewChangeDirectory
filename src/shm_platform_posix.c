@@ -2,10 +2,10 @@
  * shm_platform_posix.c  --  POSIX shared memory implementation
  *
  * Uses POSIX shared memory:
- * - shm_open for creating/opening shared memory objects
+ * - shm_open/shm_open_existing for creating/opening shared memory objects
  * - ftruncate for sizing
  * - mmap for mapping into address space
- * - shm_unlink for removing
+ * - shm_remove (wraps shm_unlink) for removing
  */
 
 #include "shm_platform.h"
@@ -184,9 +184,8 @@ ShmResult shm_open_existing(const char *name, ShmAccess access, ShmHandle **out_
     return SHM_OK;
 }
 
-ShmResult shm_open(const char *name, ShmAccess access, ShmHandle **out_handle) {
-    return shm_open_existing(name, access, out_handle);
-}
+/* Note: shm_open_existing is defined above. The old name 'shm_open' was
+ * removed to avoid conflict with POSIX shm_open function. */
 
 void shm_close(ShmHandle *handle) {
     if (!handle) {
@@ -200,7 +199,7 @@ void shm_close(ShmHandle *handle) {
     free(handle);
 }
 
-ShmResult shm_unlink(const char *name) {
+ShmResult shm_remove(const char *name) {
     if (!name) {
         return SHM_ERROR_GENERIC;
     }

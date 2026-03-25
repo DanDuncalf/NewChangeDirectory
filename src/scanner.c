@@ -478,8 +478,9 @@ int scan_mounts(NcdDatabase *db,
     static char mount_bufs[26][MAX_PATH];
     static const char *mount_ptrs[26];
 
-    /* If no mounts specified, enumerate them via platform code. */
-    if (count == 0 || !mounts) {
+    /* If no mounts specified (NULL), enumerate them via platform code.
+     * Note: count==0 with explicit mounts array means empty list, not auto-enumerate. */
+    if (!mounts) {
         int mount_count = platform_enumerate_mounts(mount_bufs, mount_ptrs,
                                                      sizeof(mount_bufs[0]),
                                                      sizeof(mount_ptrs) / sizeof(mount_ptrs[0]));
@@ -489,6 +490,7 @@ int scan_mounts(NcdDatabase *db,
         count = mount_count;
     }
 
+    /* Empty mount list - nothing to scan */
     if (count == 0) return 0;
 
     /* Pre-allocate DriveData slots so worker threads can safely reference

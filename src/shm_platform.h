@@ -73,7 +73,7 @@ void shm_platform_cleanup(void);
 ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle);
 
 /*
- * shm_open  --  Open an existing shared memory object
+ * shm_open_existing  --  Open an existing shared memory object
  *
  * name: Name of existing object
  * access: Desired access mode
@@ -81,25 +81,25 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle);
  *
  * Returns SHM_OK on success. Caller must call shm_close() when done.
  */
-ShmResult shm_open(const char *name, ShmAccess access, ShmHandle **out_handle);
+ShmResult shm_open_existing(const char *name, ShmAccess access, ShmHandle **out_handle);
 
 /*
  * shm_close  --  Close a shared memory handle
  *
  * This unmaps the memory and closes the handle. For objects created with
- * shm_create(), the object persists until shm_unlink() is called.
+ * shm_create(), the object persists until shm_remove() is called.
  */
 void shm_close(ShmHandle *handle);
 
 /*
- * shm_unlink  --  Remove a shared memory object
+ * shm_remove  --  Remove a shared memory object
  *
  * name: Name of object to remove
  *
  * Removes the object from the system. Existing mappings remain valid
  * until closed. Returns SHM_OK on success.
  */
-ShmResult shm_unlink(const char *name);
+ShmResult shm_remove(const char *name);
 
 /* --------------------------------------------------------- memory mapping     */
 

@@ -307,3 +307,15 @@ const char *platform_strcasestr(const char *haystack, const char *needle)
     return strcasestr(haystack, needle);
 #endif
 }
+
+int platform_strncasecmp(const char *s1, const char *s2, size_t n)
+{
+    if (!s1 || !s2) return (s1 == s2) ? 0 : (s1 ? 1 : -1);
+    if (n == 0) return 0;
+    
+#if NCD_PLATFORM_WINDOWS
+    return _strnicmp(s1, s2, n);
+#else
+    return strncasecmp(s1, s2, n);
+#endif
+}

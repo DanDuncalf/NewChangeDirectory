@@ -94,36 +94,36 @@ set OBJDIR=obj
 :: Create object directory
 if not exist %OBJDIR% mkdir %OBJDIR%
 
-set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c /Fo%OBJDIR%\
+set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c
 
 echo Building object files...
 
 :: Compile NCD-specific source files
-cl %CFLAGS% %SRCDIR%\main.c
+cl %CFLAGS% /Fo%OBJDIR%\main.obj %SRCDIR%\main.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\database.c
+cl %CFLAGS% /Fo%OBJDIR%\database.obj %SRCDIR%\database.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\scanner.c
+cl %CFLAGS% /Fo%OBJDIR%\scanner.obj %SRCDIR%\scanner.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\matcher.c
+cl %CFLAGS% /Fo%OBJDIR%\matcher.obj %SRCDIR%\matcher.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\ui.c
+cl %CFLAGS% /Fo%OBJDIR%\ui.obj %SRCDIR%\ui.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\platform.c
+cl %CFLAGS% /Fo%OBJDIR%\platform.obj %SRCDIR%\platform.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\state_backend_local.c
+cl %CFLAGS% /Fo%OBJDIR%\state_backend_local.obj %SRCDIR%\state_backend_local.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\state_backend_service.c
+cl %CFLAGS% /Fo%OBJDIR%\state_backend_service.obj %SRCDIR%\state_backend_service.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\shared_state.c
+cl %CFLAGS% /Fo%OBJDIR%\shared_state.obj %SRCDIR%\shared_state.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\shm_platform_win.c
+cl %CFLAGS% /Fo%OBJDIR%\shm_platform_win.obj %SRCDIR%\shm_platform_win.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\control_ipc_win.c
+cl %CFLAGS% /Fo%OBJDIR%\control_ipc_win.obj %SRCDIR%\control_ipc_win.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\service_state.c
+cl %CFLAGS% /Fo%OBJDIR%\service_state.obj %SRCDIR%\service_state.c
 if errorlevel 1 goto :error
-cl %CFLAGS% %SRCDIR%\service_publish.c
+cl %CFLAGS% /Fo%OBJDIR%\service_publish.obj %SRCDIR%\service_publish.c
 if errorlevel 1 goto :error
 
 :: Compile shared source files (with sh_ prefix to avoid name collision)
@@ -174,7 +174,6 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:NCDService.exe ^
     %OBJDIR%\shared_state.obj ^
     %OBJDIR%\shm_platform_win.obj ^
     %OBJDIR%\control_ipc_win.obj ^
-    %OBJDIR%\state_backend_local.obj ^
     %OBJDIR%\sh_platform.obj ^
     %OBJDIR%\sh_strbuilder.obj ^
     %OBJDIR%\sh_common.obj ^

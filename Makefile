@@ -14,9 +14,10 @@
 # ===========================================================================
 
 # --------------------------------------------------------------------------
-#  Target executable name
+#  Target executable names
 # --------------------------------------------------------------------------
 TARGET  := NewChangeDirectory.exe
+SERVICE := NCDService.exe
 
 # --------------------------------------------------------------------------
 #  Install directory (edit or override on the command line)
@@ -30,21 +31,47 @@ INSTALL_DIR ?= C:/Windows/System32
 CC ?= gcc
 
 # --------------------------------------------------------------------------
-#  Source files
+#  Source directories
 # --------------------------------------------------------------------------
 SRCDIR  := src
+SHAREDDIR := ../shared
 OBJDIR  := obj
-SOURCES := \
-    $(SRCDIR)/main.c      \
+
+# --------------------------------------------------------------------------
+#  Common source files (shared between main and service)
+# --------------------------------------------------------------------------
+COMMON_SOURCES := \
     $(SRCDIR)/database.c  \
     $(SRCDIR)/scanner.c   \
     $(SRCDIR)/matcher.c   \
-    $(SRCDIR)/ui.c        \
     $(SRCDIR)/platform.c  \
-    $(SRCDIR)/strbuilder.c \
-    $(SRCDIR)/common.c
+    $(SRCDIR)/state_backend_local.c \
+    $(SRCDIR)/state_backend_service.c \
+    $(SRCDIR)/shared_state.c \
+    $(SRCDIR)/shm_platform_win.c \
+    $(SRCDIR)/control_ipc_win.c \
+    $(SRCDIR)/service_state.c \
+    $(SRCDIR)/service_publish.c \
+    $(SHAREDDIR)/platform.c \
+    $(SHAREDDIR)/strbuilder.c \
+    $(SHAREDDIR)/common.c
 
-OBJECTS := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SOURCES))
+# Main executable sources
+MAIN_SOURCES := \
+    $(SRCDIR)/main.c      \
+    $(SRCDIR)/ui.c        \
+    $(COMMON_SOURCES)
+
+# Service executable sources
+SERVICE_SOURCES := \
+    $(SRCDIR)/service_main.c \
+    $(COMMON_SOURCES)
+
+MAIN_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(MAIN_SOURCES)))
+SERVICE_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SERVICE_SOURCES)))
+
+# VPATH to find source files
+VPATH := $(SRCDIR):$(SHAREDDIR)
 
 # --------------------------------------------------------------------------
 #  Flags
@@ -55,6 +82,7 @@ CFLAGS_COMMON := \
     -Wextra                \
     -Wpedantic             \
     -I$(SRCDIR)            \
+    -I$(SHAREDDIR)         \
     -D_WIN32_WINNT=0x0601  \
     -DWINVER=0x0601
 
@@ -62,9 +90,7 @@ CFLAGS_RELEASE := $(CFLAGS_COMMON) -O2 -DNDEBUG
 CFLAGS_DEBUG   := $(CFLAGS_COMMON) -O0 -g3 -DDEBUG
 
 # Link against the Windows subsystem (console) and needed libs
-# -mconsole  -- keeps the console window
-# -municode  -- Unicode entry point (not needed here but harmless)
-LDFLAGS := -mconsole -mthreads -lkernel32 -luser32
+LDFLAGS := -mconsole -mthreads -lkernel32 -luser32 -ladvapi32 -lshlwapi
 
 # Default to release
 CFLAGS ?= $(CFLAGS_RELEASE)
@@ -74,18 +100,24 @@ CFLAGS ?= $(CFLAGS_RELEASE)
 # --------------------------------------------------------------------------
 .PHONY: all debug clean install
 
-all: $(TARGET)
+all: $(TARGET) $(SERVICE)
 
 debug: CFLAGS = $(CFLAGS_DEBUG)
-debug: $(TARGET)
+debug: all
 
-$(TARGET): $(OBJECTS)
+$(TARGET): $(MAIN_OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 	@echo ""
 	@echo "  Build successful: $(TARGET)"
 	@echo ""
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+$(SERVICE): $(SERVICE_OBJECTS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo ""
+	@echo "  Build successful: $(SERVICE)"
+	@echo ""
+
+$(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OBJDIR):
@@ -97,7 +129,7 @@ $(OBJDIR):
 # --------------------------------------------------------------------------
 .PHONY: deps
 deps:
-	$(CC) -MM $(CFLAGS) $(SOURCES) > .depend 2>/dev/null || true
+	$(CC) -MM $(CFLAGS) $(MAIN_SOURCES) $(SERVICE_SOURCES) > .depend 2>/dev/null || true
 
 -include .depend
 
@@ -106,7 +138,7 @@ deps:
 # --------------------------------------------------------------------------
 clean:
 	@if exist $(OBJDIR) rmdir /s /q $(OBJDIR) 2>nul
-	@rm -rf $(OBJDIR) $(TARGET) .depend 2>/dev/null || true
+	@rm -rf $(OBJDIR) $(TARGET) $(SERVICE) .depend 2>/dev/null || true
 
 # --------------------------------------------------------------------------
 #  Install  (copy exe + batch wrapper to INSTALL_DIR)
@@ -114,5 +146,6 @@ clean:
 install: all
 	@echo Installing to $(INSTALL_DIR) ...
 	copy /y $(TARGET) "$(INSTALL_DIR)\$(TARGET)"
+	copy /y $(SERVICE) "$(INSTALL_DIR)\$(SERVICE)" 2>nul || echo "  (Service not copied)"
 	copy /y ncd.bat   "$(INSTALL_DIR)\ncd.bat"
 	@echo Done.  Make sure $(INSTALL_DIR) is on your PATH.

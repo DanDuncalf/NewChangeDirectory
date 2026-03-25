@@ -420,8 +420,8 @@ SnapshotPublisher *snapshot_publisher_init(void) {
     }
     
     /* Try to unlink any old shared memory objects */
-    shm_unlink(pub->meta_name);
-    shm_unlink(pub->db_name);
+    shm_remove(pub->meta_name);
+    shm_remove(pub->db_name);
     
     return pub;
 }
@@ -449,10 +449,10 @@ void snapshot_publisher_cleanup(SnapshotPublisher *pub) {
     
     /* Unlink */
     if (pub->meta_name[0]) {
-        shm_unlink(pub->meta_name);
+        shm_remove(pub->meta_name);
     }
     if (pub->db_name[0]) {
-        shm_unlink(pub->db_name);
+        shm_remove(pub->db_name);
     }
     
     shm_platform_cleanup();
@@ -495,7 +495,7 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
     }
     if (pub->meta_shm) {
         shm_close(pub->meta_shm);
-        shm_unlink(pub->meta_name);
+        shm_remove(pub->meta_name);
         pub->meta_shm = NULL;
     }
     
@@ -517,7 +517,7 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
     if (result != SHM_OK) {
         shm_close(shm);
-        shm_unlink(pub->meta_name);
+        shm_remove(pub->meta_name);
         free(temp_buf);
         return false;
     }
@@ -530,7 +530,7 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
     
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
-        shm_unlink(pub->meta_name);
+        shm_remove(pub->meta_name);
         free(temp_buf);
         return false;
     }
@@ -579,7 +579,7 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     }
     if (pub->db_shm) {
         shm_close(pub->db_shm);
-        shm_unlink(pub->db_name);
+        shm_remove(pub->db_name);
         pub->db_shm = NULL;
     }
     
@@ -600,7 +600,7 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     size_t mapped_size;
     if (shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
-        shm_unlink(pub->db_name);
+        shm_remove(pub->db_name);
         free(temp_buf);
         return false;
     }
@@ -613,7 +613,7 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
-        shm_unlink(pub->db_name);
+        shm_remove(pub->db_name);
         free(temp_buf);
         return false;
     }

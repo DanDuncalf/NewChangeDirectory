@@ -36,15 +36,28 @@ set "NCD_MESSAGE=NewChangeDirectory.exe did not produce a result."
 :: 2.  Run the executable -- all arguments passed straight through
 :: ------------------------------------------------------------------
 NewChangeDirectory.exe %*
+set "NCD_EXIT_CODE=%ERRORLEVEL%"
 
 :: ------------------------------------------------------------------
-:: 3.  If the result file exists, call it to set the variables
+:: 3.  Check if result file was created and act on the result
 :: ------------------------------------------------------------------
-if exist "%TEMP%\ncd_result.bat" call "%TEMP%\ncd_result.bat"
-if exist "%TEMP%\ncd_result.bat" del /f /q "%TEMP%\ncd_result.bat" 2>nul
+:: If exe returned 0 (success) but no result file, it's an informational command
+if "%NCD_EXIT_CODE%"=="0" if not exist "%TEMP%\ncd_result.bat" goto ncd_cleanup
+
+:: If exe returned non-zero and no result file, show error
+if not "%NCD_EXIT_CODE%"=="0" if not exist "%TEMP%\ncd_result.bat" (
+    if not "%NCD_MESSAGE%"=="" echo(%NCD_MESSAGE%
+    goto ncd_cleanup
+)
+
+:: Result file exists - load it and then delete it
+if exist "%TEMP%\ncd_result.bat" (
+    call "%TEMP%\ncd_result.bat"
+    del /f /q "%TEMP%\ncd_result.bat" 2>nul
+)
 
 :: ------------------------------------------------------------------
-:: 4.  Act on the result
+:: 4.  Act on the result from the result file
 :: ------------------------------------------------------------------
 if /i "%NCD_STATUS%"=="OK" goto ncd_ok
 if not "%NCD_MESSAGE%"=="" echo(%NCD_MESSAGE%
@@ -69,3 +82,4 @@ set "NCD_STATUS="
 set "NCD_DRIVE="
 set "NCD_PATH="
 set "NCD_MESSAGE="
+set "NCD_EXIT_CODE="
