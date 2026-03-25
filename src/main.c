@@ -48,20 +48,15 @@
 #include "platform.h"
 #include "control_ipc.h"
 #include "state_backend.h"
+#include "shm_platform.h"
 #include "cli.h"
 #include "result.h"
 
-/* forward declarations used by heuristics helpers */
-static void ncd_print(const char *s);
-static void ncd_println(const char *s);
-static void ncd_printf(const char *fmt, ...);
-
 /* When TEST_BUILD is defined, expose heuristic functions for testing */
-#ifdef TEST_BUILD
-#define HEUR_STATIC
-#else
-#define HEUR_STATIC static
-#endif
+/* heur_* functions are declared in result.h - not static */
+
+/* Global agentic debug mode flag (used by IPC layer) */
+int g_agdb_mode = 0;
 
 /* ============================================================= state backend */
 
@@ -72,6 +67,9 @@ static void ncd_printf(const char *fmt, ...);
 static NcdStateView *g_state_view = NULL;
 static NcdStateSourceInfo g_state_info = {0};
 static bool g_state_initialized = false;
+
+/* Forward declaration for cleanup function */
+static void close_state_backend(void);
 
 /*
  * Initialize the state backend (service-first, fallback to local).
@@ -90,6 +88,9 @@ static bool ensure_state_initialized(void)
         g_state_view = NULL;
         return false;
     }
+    
+    /* Register cleanup handler to close state backend at exit */
+    atexit(close_state_backend);
     
     return true;
 }
@@ -131,6 +132,14 @@ static void close_state_backend(void)
     g_state_initialized = false;
 }
 
+/*
+ * Helper: Check if we're running with service backend
+ */
+static bool is_service_backend(void)
+{
+    return (g_state_view != NULL && g_state_info.from_service);
+}
+
 /* ============================================================= directory history */
 
 /*
@@ -147,15 +156,23 @@ static void add_current_dir_to_history(void)
         drive = cwd[0];
     }
     
-    NcdMetadata *meta = db_metadata_load();
-    if (!meta) meta = db_metadata_create();
-    if (!meta) return;
-    
-    if (db_dir_history_add(meta, cwd, drive)) {
-        meta->dir_history_dirty = true;
-        db_metadata_save(meta);
+    if (is_service_backend()) {
+        /* Service mode: send update via IPC */
+        struct { const char *path; char drive; } data = { cwd, drive };
+        state_backend_submit_metadata_update(g_state_view, NCD_META_UPDATE_DIR_HISTORY_ADD, 
+                                             &data, sizeof(data));
+    } else {
+        /* Standalone mode: load, modify, save */
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
+        if (!meta) return;
+        
+        if (db_dir_history_add(meta, cwd, drive)) {
+            meta->dir_history_dirty = true;
+            db_metadata_save(meta);
+        }
+        db_metadata_free(meta);
     }
-    db_metadata_free(meta);
 }
 
 /* ============================================================= heuristics */
@@ -170,6 +187,43 @@ static void add_current_dir_to_history(void)
  */
 static NcdMetadata *g_metadata = NULL;
 
+/*
+ * Helper: Save metadata using appropriate backend.
+ * If service is connected, sends update via IPC.
+ * If standalone, saves directly to disk.
+ * update_type: NCD_META_UPDATE_* constant
+ * data/data_size: update-specific data
+ */
+static bool save_metadata_via_backend(int update_type, const void *data, size_t data_size)
+{
+    if (g_state_view && g_state_info.from_service) {
+        /* Service mode: send update via IPC */
+        int result = state_backend_submit_metadata_update(g_state_view, update_type, data, data_size);
+        return (result == 0);
+    } else {
+        /* Standalone mode: save directly (g_metadata must be set) */
+        if (g_metadata) {
+            return db_metadata_save(g_metadata);
+        }
+    }
+    return false;
+}
+
+/*
+ * Callback for history deletion in UI (service mode)
+ */
+static bool history_delete_service_cb(int index, const char *path, void *user_data)
+{
+    (void)path;
+    (void)user_data;
+    if (g_state_view && g_state_info.from_service) {
+        int result = state_backend_submit_metadata_update(g_state_view,
+            NCD_META_UPDATE_DIR_HISTORY_REMOVE, &index, sizeof(index));
+        return (result == 0);
+    }
+    return false;
+}
+
 /* Helper: Ensure metadata is loaded */
 static NcdMetadata* get_metadata(void)
 {
@@ -179,15 +233,19 @@ static NcdMetadata* get_metadata(void)
     return g_metadata;
 }
 
-/* Helper: Save metadata if dirty */
+/* Helper: Save metadata if dirty (standalone mode only) */
 static void save_metadata_if_dirty(void)
 {
+    if (is_service_backend()) {
+        /* Service handles persistence - nothing to do here */
+        return;
+    }
     if (g_metadata && (g_metadata->heuristics_dirty || g_metadata->config_dirty)) {
         db_metadata_save(g_metadata);
     }
 }
 
-HEUR_STATIC void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
+void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
 {
     if (!dst || dst_size == 0) return;
     dst[0] = '\0';
@@ -209,7 +267,7 @@ HEUR_STATIC void heur_sanitize(const char *src, char *dst, size_t dst_size, bool
     dst[j] = '\0';
 }
 
-HEUR_STATIC bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
+bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
 {
     if (!out_path || out_size == 0) return false;
     out_path[0] = '\0';
@@ -224,7 +282,7 @@ HEUR_STATIC bool heur_get_preferred(const char *search_raw, char *out_path, size
     return db_heur_get_preferred(meta, key, out_path, out_size);
 }
 
-HEUR_STATIC void heur_note_choice(const char *search_raw, const char *target_path)
+void heur_note_choice(const char *search_raw, const char *target_path)
 {
     char key[NCD_MAX_PATH];
     char target[NCD_MAX_PATH];
@@ -239,7 +297,7 @@ HEUR_STATIC void heur_note_choice(const char *search_raw, const char *target_pat
     save_metadata_if_dirty();
 }
 
-HEUR_STATIC void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
+void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
 {
     if (!matches || count <= 1 || !preferred_path || !preferred_path[0]) return;
     for (int i = 0; i < count; i++) {
@@ -253,7 +311,7 @@ HEUR_STATIC void heur_promote_match(NcdMatch *matches, int count, const char *pr
     }
 }
 
-HEUR_STATIC void heur_print(void)
+void heur_print(void)
 {
     NcdMetadata *meta = get_metadata();
     if (!meta) {
@@ -264,7 +322,7 @@ HEUR_STATIC void heur_print(void)
     db_heur_print(meta);
 }
 
-HEUR_STATIC void heur_clear(void)
+void heur_clear(void)
 {
     NcdMetadata *meta = get_metadata();
     if (!meta) {
@@ -306,35 +364,6 @@ static void con_close(void)
     }
 }
 
-/* Write a string (no newline appended). */
-static void ncd_print(const char *s)
-{
-    if (g_con) {
-        platform_console_write(g_con, s);
-    } else {
-        fputs(s, stdout);
-        fflush(stdout);
-    }
-}
-
-/* Write a string followed by \r\n. */
-static void ncd_println(const char *s)
-{
-    ncd_print(s);
-    ncd_print("\r\n");
-}
-
-/* printf-style wrapper. */
-static void ncd_printf(const char *fmt, ...)
-{
-    char buf[1024];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    ncd_print(buf);
-}
-
 /* ============================================================== version   */
 /*
  * Bump NCD_BUILD_VER with every change so it is always possible to tell
@@ -372,182 +401,12 @@ static void print_version(void)
  *   NCD_PATH=
  *   NCD_MESSAGE=<reason>
  */
-static void write_result(bool ok, const char *drive, const char *path,
-                          const char *message)
-{
-    char tmp_dir[MAX_PATH] = {0};
-    if (!platform_get_temp_path(tmp_dir, sizeof(tmp_dir))) {
-        ncd_println("NCD: could not resolve temp path.");
-        return;
-    }
-
-    char result_path[MAX_PATH];
-    snprintf(result_path, sizeof(result_path), "%s%s", tmp_dir, NCD_RESULT_FILE);
-
-    FILE *f = fopen(result_path, "w");
-    if (!f) {
-        ncd_printf("NCD: could not write result file: %s\r\n", result_path);
-        return;
-    }
-
-    char safe_drive[64];
-    char safe_path[NCD_MAX_PATH * 2];
-    char safe_msg[1024];
-
-    const char *src_drive = (ok && drive) ? drive : "";
-    const char *src_path  = (ok && path)  ? path  : "";
-    const char *src_msg   = message ? message : "";
-
-#if NCD_PLATFORM_WINDOWS
-    /*
-     * Escape for: @set "VAR=value"
-     * Security: Reject control characters (except tab), replace quotes,
-     * and filter out percent signs to prevent batch variable expansion attacks.
-     */
-    size_t j = 0;
-    for (size_t i = 0; src_drive[i] && j + 2 < sizeof(safe_drive); i++) {
-        char c = src_drive[i];
-        /* Reject control characters except common whitespace */
-        if ((unsigned char)c < 32 && c != '\t') {
-            c = '_';  /* Replace control chars with underscore */
-        }
-        /* Replace dangerous characters for batch files */
-        if (c == '"') c = '\'';      /* Quotes could break out of string */
-        if (c == '%') c = '_';       /* Prevent %VAR% expansion */
-        if (c == '!') c = '_';       /* Prevent delayed expansion */
-        if (c == '\r' || c == '\n') c = ' ';
-        safe_drive[j++] = c;
-    }
-    safe_drive[j] = '\0';
-
-    j = 0;
-    for (size_t i = 0; src_path[i] && j + 2 < sizeof(safe_path); i++) {
-        char c = src_path[i];
-        /* Reject control characters except common whitespace */
-        if ((unsigned char)c < 32 && c != '\t') {
-            c = '_';
-        }
-        /* Replace dangerous characters */
-        if (c == '"') c = '\'';
-        if (c == '%') c = '_';
-        if (c == '!') c = '_';
-        if (c == '\r' || c == '\n') c = ' ';
-        safe_path[j++] = c;
-    }
-    safe_path[j] = '\0';
-
-    j = 0;
-    for (size_t i = 0; src_msg[i] && j + 2 < sizeof(safe_msg); i++) {
-        char c = src_msg[i];
-        /* Reject control characters except common whitespace */
-        if ((unsigned char)c < 32 && c != '\t') {
-            c = '_';
-        }
-        /* Replace dangerous characters */
-        if (c == '"') c = '\'';
-        if (c == '%') c = '_';
-        if (c == '!') c = '_';
-        if (c == '\r' || c == '\n') c = ' ';
-        safe_msg[j++] = c;
-    }
-    safe_msg[j] = '\0';
-
-    fprintf(f, "@set \"NCD_STATUS=%s\"\r\n", ok ? "OK" : "ERROR");
-    fprintf(f, "@set \"NCD_DRIVE=%s\"\r\n",  safe_drive);
-    fprintf(f, "@set \"NCD_PATH=%s\"\r\n",   safe_path);
-    fprintf(f, "@set \"NCD_MESSAGE=%s\"\r\n", safe_msg);
-#else
-    /*
-     * Escape for: export VAR='value'
-     * Security: Reject control characters and shell metacharacters
-     * that could be used for command injection.
-     */
-    size_t j = 0;
-    for (size_t i = 0; src_drive[i] && j + 2 < sizeof(safe_drive); i++) {
-        char c = src_drive[i];
-        /* Reject control characters */
-        if ((unsigned char)c < 32) c = '_';
-        /* Reject shell metacharacters */
-        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
-            c == '\\' || c == '|' || c == '&' || c == ';' ||
-            c == '<' || c == '>' || c == '(' || c == ')' ||
-            c == '{' || c == '}' || c == '*' || c == '?') {
-            c = '_';
-        }
-        safe_drive[j++] = c;
-    }
-    safe_drive[j] = '\0';
-
-    j = 0;
-    for (size_t i = 0; src_path[i] && j + 2 < sizeof(safe_path); i++) {
-        char c = src_path[i];
-        /* Reject control characters */
-        if ((unsigned char)c < 32) c = '_';
-        /* Reject shell metacharacters */
-        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
-            c == '\\' || c == '|' || c == '&' || c == ';' ||
-            c == '<' || c == '>' || c == '(' || c == ')' ||
-            c == '{' || c == '}' || c == '*' || c == '?') {
-            c = '_';
-        }
-        safe_path[j++] = c;
-    }
-    safe_path[j] = '\0';
-
-    j = 0;
-    for (size_t i = 0; src_msg[i] && j + 2 < sizeof(safe_msg); i++) {
-        char c = src_msg[i];
-        /* Reject control characters */
-        if ((unsigned char)c < 32) c = '_';
-        /* Reject shell metacharacters */
-        if (c == '\'' || c == '"' || c == '$' || c == '`' || 
-            c == '\\' || c == '|' || c == '&' || c == ';' ||
-            c == '<' || c == '>' || c == '(' || c == ')' ||
-            c == '{' || c == '}' || c == '*' || c == '?') {
-            c = '_';
-        }
-        safe_msg[j++] = c;
-    }
-    safe_msg[j] = '\0';
-
-    fprintf(f, "NCD_STATUS='%s'\n", ok ? "OK" : "ERROR");
-    fprintf(f, "NCD_DRIVE='%s'\n",  safe_drive);
-    fprintf(f, "NCD_PATH='%s'\n",   safe_path);
-    fprintf(f, "NCD_MESSAGE='%s'\n", safe_msg);
-#endif
-    fclose(f);
-}
-
-static void result_error(const char *fmt, ...)
-{
-    char msg[512];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, ap);
-    va_end(ap);
-    write_result(false, "", "", msg);
-    ncd_printf("NCD: %s\r\n", msg);
-}
-
-static void result_cancel(void)
-{
-    write_result(false, "", "", "NCD: Cancelled.");
-}
-
-static void result_ok(const char *full_path, char drive_letter)
-{
-    char msg[MAX_PATH + 32];
-    snprintf(msg, sizeof(msg), "Changed to %s", full_path);
-#if NCD_PLATFORM_WINDOWS
-    char drive[3] = { drive_letter, ':', '\0' };
-    write_result(true, drive, full_path, msg);
-#else
-    (void)drive_letter;
-    write_result(true, "", full_path, msg);
-#endif
-}
-
-
+/* Result functions are defined in result.c */
+extern void write_result(bool ok, const char *drive, const char *path,
+                         const char *message);
+extern void result_error(const char *fmt, ...);
+extern void result_cancel(void);
+extern void result_ok(const char *full_path, char drive_letter);
 
 /* ============================================= background rescan spawner  */
 
@@ -704,9 +563,9 @@ static void print_usage(void)
         "  /r-b-d        Rescan all drives except B: and D:\r\n"
         "\r\n"
         "Exclusions:\r\n"
-        "  -x <pat>      Add exclusion pattern (e.g., -x C:Windows)\r\n"
-        "  -x- <pat>     Remove exclusion pattern\r\n"
-        "  -xl           List exclusion patterns\r\n"
+        "  /x <pat>      Add exclusion pattern (e.g., /x C:Windows)\r\n"
+        "  /x- <pat>     Remove exclusion pattern\r\n"
+        "  /xl           List exclusion patterns\r\n"
         "\r\n"
         "Configuration:\r\n"
         "  /c            Edit default options interactively\r\n"
@@ -747,434 +606,8 @@ static void print_usage(void)
     );
 }
 
-static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
-{
-    if (!tok || !tok[0] || !mask || !count) return false;
-
-    bool saw_sep = false;
-    bool saw_letter = false;
-    int i = 0;
-    while (tok[i]) {
-        char c = tok[i];
-        if (isalpha((unsigned char)c)) {
-            char u = (char)toupper((unsigned char)c);
-            int idx = u - 'A';
-            if (!mask[idx]) {
-                mask[idx] = true;
-                (*count)++;
-            }
-            saw_letter = true;
-            i++;
-            if (tok[i] == ':') i++;  /* optional colon after drive letter */
-            continue;
-        }
-        if (c == ',' || c == '-') {
-            saw_sep = true;
-            i++;
-            continue;
-        }
-        return false;
-    }
-    return saw_letter && saw_sep;
-}
-
-/* Forward declaration for agent mode argument parsing */
-static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts);
-
-static bool parse_args(int argc, char *argv[], NcdOptions *opts)
-{
-    memset(opts, 0, sizeof(NcdOptions));
-    opts->timeout_seconds = 300;  /* default 5 minute timeout */
-
-    for (int i = 1; i < argc; i++) {
-        const char *arg = argv[i];
-
-        /* History browse: /h - must be checked BEFORE help (/h is not help!) */
-        if (_stricmp(arg, "/h") == 0 || _stricmp(arg, "-h") == 0) {
-            opts->history_browse = true;
-            continue;
-        }
-
-        /* Explicit help commands - note: /h is history browse, not help */
-        if (_stricmp(arg, "/?") == 0 || _stricmp(arg, "-?") == 0 ||
-            _stricmp(arg, "--help") == 0) {
-            opts->show_help = true;
-            continue;
-        }
-
-        /* Explicit frequent-history commands */
-        if (_stricmp(arg, "/f") == 0 || _stricmp(arg, "-f") == 0) {
-            opts->show_history = true;
-            continue;
-        }
-        if (_stricmp(arg, "/fc") == 0 || _stricmp(arg, "-fc") == 0) {
-            opts->clear_history = true;
-            continue;
-        }
-
-        /* Directory history ping-pong: /0 */
-        if (_stricmp(arg, "/0") == 0 || _stricmp(arg, "-0") == 0) {
-            opts->history_pingpong = true;
-            continue;
-        }
-        
-        /* Directory history jump: /1 to /9 */
-        if ((arg[0] == '/' || arg[0] == '-') && 
-            arg[1] >= '1' && arg[1] <= '9' && arg[2] == '\0') {
-            opts->history_index = arg[1] - '0';  /* 1-9 */
-            continue;
-        }
-        
-        /* History list: /hl */
-        if (_stricmp(arg, "/hl") == 0 || _stricmp(arg, "-hl") == 0) {
-            opts->history_list = true;
-            continue;
-        }
-        
-        /* History clear or remove by index: /hc or /hc# */
-        if ((_strnicmp(arg, "/hc", 3) == 0 || _strnicmp(arg, "-hc", 3) == 0)) {
-            const char *rest = arg + 3;
-            if (*rest == '\0') {
-                /* /hc - clear all */
-                opts->history_clear = true;
-            } else if (isdigit((unsigned char)*rest) && rest[1] == '\0') {
-                /* /hc# - remove specific entry */
-                int idx = *rest - '0';
-                if (idx >= 1 && idx <= 9) {
-                    opts->history_remove = idx;
-                } else {
-                    ncd_println("NCD: /hc# index must be 1-9");
-                    return false;
-                }
-            } else {
-                ncd_println("NCD: invalid history command");
-                return false;
-            }
-            continue;
-        }
-        
-        /* History remove by index (alternate form): /h-# (hidden, for testing) */
-        if ((_strnicmp(arg, "/h-", 3) == 0 || _strnicmp(arg, "-h-", 3) == 0)) {
-            const char *rest = arg + 3;
-            if (isdigit((unsigned char)*rest) && rest[1] == '\0') {
-                int idx = *rest - '0';
-                if (idx >= 1 && idx <= 9) {
-                    opts->history_remove = idx;
-                } else {
-                    ncd_println("NCD: /h-# index must be 1-9");
-                    return false;
-                }
-            } else {
-                ncd_println("NCD: invalid history command");
-                return false;
-            }
-            continue;
-        }
-
-        /*
-         * /r <drives> form:
-         *   ncd /r e,p
-         *   ncd /r e-p
-         *   ncd /r /      (Linux: scan only root, not /mnt drives)
-         * Only treat next arg as drive list if it looks like one (commas/hyphens).
-         * A bare letter like "c" is treated as search, not drive "C:".
-         */
-        if ((_stricmp(arg, "/r") == 0 || _stricmp(arg, "-r") == 0) &&
-            i + 1 < argc &&
-            (argv[i + 1][0] != '-' &&
-             (argv[i + 1][0] != '/' || strcmp(argv[i + 1], "/") == 0))) {
-            const char *next = argv[i + 1];
-#if NCD_PLATFORM_LINUX
-            /* Linux special: /r / scans only root filesystem */
-            if (strcmp(next, "/") == 0) {
-                opts->force_rescan = true;
-                opts->scan_root_only = true;
-                i++;  /* consume the '/' token */
-                continue;
-            }
-#endif
-            bool looks_like_drive_list = false;
-            for (int k = 0; next[k]; k++) {
-                if (next[k] == ',' || next[k] == '-') {
-                    looks_like_drive_list = true;
-                    break;
-                }
-            }
-            if (looks_like_drive_list) {
-                bool parsed = parse_drive_list_token(next,
-                                                     opts->scan_drive_mask,
-                                                     &opts->scan_drive_count);
-                if (parsed) {
-                    opts->force_rescan = true;
-                    i++;  /* consume drive-list token */
-                    continue;
-                }
-            }
-            /* Not a drive list - fall through, next arg is search term */
-        }
-
-        /*
-         * /r<drives> shorthand:
-         *   /r      => all drives
-         *   /rBDE   => B:, D:, E:
-         */
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] == '-') {
-            /* /r-b-d or /r-b,d => skip listed drives */
-            opts->force_rescan = true;
-            int k = 2;
-            while (arg[k]) {
-                if (arg[k] != '-' && arg[k] != ',') {
-                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
-                    return false;
-                }
-                k++;
-                if (!arg[k] || !isalpha((unsigned char)arg[k])) {
-                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
-                    return false;
-                }
-                char c = (char)toupper((unsigned char)arg[k]);
-                int idx = c - 'A';
-                if (!opts->skip_drive_mask[idx]) {
-                    opts->skip_drive_mask[idx] = true;
-                    opts->skip_drive_count++;
-                }
-                k++;
-            }
-            continue;
-        }
-
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] != '\0') {
-            bool drives_form = true;
-            for (int k = 2; arg[k]; k++) {
-                if (!isalpha((unsigned char)arg[k])) {
-                    drives_form = false;
-                    break;
-                }
-            }
-            if (!drives_form) {
-                /* Check for /r. (rescan current subdirectory) */
-                if (arg[2] == '.' && arg[3] == '\0') {
-                    opts->force_rescan = true;
-                    platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
-                    continue;
-                }
-                /* Fall through to normal option parsing (/ri, /rs, etc). */
-            } else {
-            opts->force_rescan = true;
-            for (int k = 2; arg[k]; k++) {
-                char c = (char)toupper((unsigned char)arg[k]);
-                int idx = c - 'A';
-                if (!opts->scan_drive_mask[idx]) {
-                    opts->scan_drive_mask[idx] = true;
-                    opts->scan_drive_count++;
-                }
-            }
-            continue;
-            }
-        }
-
-        /* /r . form: rescan current subdirectory */
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] == '\0' && i + 1 < argc) {
-            const char *next = argv[i + 1];
-            if (strcmp(next, ".") == 0) {
-                opts->force_rescan = true;
-                platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
-                i++;  /* consume the '.' */
-                continue;
-            }
-        }
-
-        /* Tag list: /gl or /gL */
-        if ((_stricmp(arg, "/gl") == 0 || _stricmp(arg, "-gl") == 0 ||
-             _stricmp(arg, "/gL") == 0 || _stricmp(arg, "-gL") == 0)) {
-            opts->group_list = true;
-            continue;
-        }
-        
-        /* Tag remove: /g- <tag> */
-        if ((_stricmp(arg, "/g-") == 0 || _stricmp(arg, "-g-") == 0)) {
-            if (i + 1 < argc) {
-                i++;
-                platform_strncpy_s(opts->group_name, sizeof(opts->group_name), argv[i]);
-                opts->group_remove = true;
-                continue;
-            } else {
-                ncd_println("NCD: /g- requires a tag name");
-                return false;
-            }
-        }
-        
-        /* Tag set: /g <tag> */
-        if ((_stricmp(arg, "/g") == 0 || _stricmp(arg, "-g") == 0)) {
-            if (i + 1 < argc) {
-                i++;
-                platform_strncpy_s(opts->group_name, sizeof(opts->group_name), argv[i]);
-                opts->group_set = true;
-                continue;
-            } else {
-                ncd_println("NCD: /g requires a tag name");
-                return false;
-            }
-        }
-        
-        /* Configuration editor: /c */
-        if ((_stricmp(arg, "/c") == 0 || _stricmp(arg, "-c") == 0)) {
-            opts->config_edit = true;
-            continue;
-        }
-        
-        /* Exclusion list: -xl */
-        if ((_stricmp(arg, "-xl") == 0 || _stricmp(arg, "/xl") == 0)) {
-            opts->exclusion_list = true;
-            continue;
-        }
-        
-        /* Exclusion remove: -x- <pattern> */
-        if ((_stricmp(arg, "-x-") == 0 || _stricmp(arg, "/x-") == 0)) {
-            if (i + 1 < argc) {
-                i++;
-                platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[i]);
-                opts->exclusion_remove = true;
-                continue;
-            } else {
-                ncd_println("NCD: -x- requires a pattern");
-                return false;
-            }
-        }
-        
-        /* Exclusion add: -x <pattern> */
-        if ((_stricmp(arg, "-x") == 0 || _stricmp(arg, "/x") == 0)) {
-            if (i + 1 < argc) {
-                i++;
-                platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[i]);
-                opts->exclusion_add = true;
-                continue;
-            } else {
-                ncd_println("NCD: -x requires a pattern");
-                return false;
-            }
-        }
-
-#if DEBUG
-        /* Hidden test options (debug builds only, not documented) */
-        if ((_stricmp(arg, "/test") == 0 || _stricmp(arg, "-test") == 0)) {
-            if (i + 1 < argc) {
-                i++;
-                const char *test_opt = argv[i];
-                if (_stricmp(test_opt, "NC") == 0) {
-                    opts->test_no_checksum = true;
-                } else if (_stricmp(test_opt, "SL") == 0) {
-                    opts->test_slow_mode = true;
-                } else {
-                    ncd_printf("NCD: unknown /test option: %s\r\n", test_opt);
-                    return false;
-                }
-                continue;
-            } else {
-                ncd_println("NCD: /test requires an option (NC, SL)");
-                return false;
-            }
-        }
-#endif
-        
-        /* Agent mode: /agent <subcommand> */
-        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0 ||
-            _stricmp(arg, "--agent") == 0) {
-            opts->agent_mode = true;
-            int consumed = 0;
-            if (!parse_agent_args(argc - i, &argv[i], &consumed, opts))
-                return false;
-            i += consumed;
-            continue;
-        }
-        
-        /* Options start with / or - */
-        if ((arg[0] == '/' || arg[0] == '-') && arg[1]) {
-            /* Multi-char flags after / are processed char by char */
-            for (int j = 1; arg[j]; j++) {
-                char flag = (char)tolower((unsigned char)arg[j]);
-                switch (flag) {
-                    case 'r': opts->force_rescan  = true; break;
-                    case 'v': opts->show_version  = true; break;
-                    case 'i': opts->show_hidden   = true; break;
-                    case 's': opts->show_system   = true; break;
-                    case 'a': opts->show_hidden   = true;
-                              opts->show_system   = true; break;
-                    case 'z': opts->fuzzy_match   = true; break;
-                    case 'c': opts->config_edit   = true; break;
-                    case 'd':
-                        /* /d requires a path as the next argument */
-                        if (arg[j + 1] == '\0' && i + 1 < argc) {
-                            i++;
-                            platform_strncpy_s(opts->db_override, NCD_MAX_PATH, argv[i]);
-                            goto next_arg;
-                        } else if (arg[j + 1]) {
-                            /* /d<path> (no space) */
-                            platform_strncpy_s(opts->db_override, NCD_MAX_PATH, arg + j + 1);
-                            goto next_arg;
-                        } else {
-                            ncd_println("NCD: /d requires a path argument");
-                            return false;
-                        }
-                    case 't':
-                        /* /t requires seconds as the next argument */
-                        if (arg[j + 1] == '\0' && i + 1 < argc) {
-                            i++;
-                            opts->timeout_seconds = atoi(argv[i]);
-                            if (opts->timeout_seconds <= 0) opts->timeout_seconds = 300;
-                            goto next_arg;
-                        } else if (arg[j + 1]) {
-                            /* /t<seconds> (no space) */
-                            opts->timeout_seconds = atoi(arg + j + 1);
-                            if (opts->timeout_seconds <= 0) opts->timeout_seconds = 300;
-                            goto next_arg;
-                        } else {
-                            ncd_println("NCD: /t requires a timeout in seconds");
-                            return false;
-                        }
-                    default:
-                        /* Check for /retry option */
-                        if (_strnicmp(arg + j, "retry", 5) == 0) {
-                            const char *val = arg + j + 5;
-                            if (*val == '\0' && i + 1 < argc) {
-                                i++;
-                                opts->service_retry_count = atoi(argv[i]);
-                                opts->service_retry_set = true;
-                                goto next_arg;
-                            } else if (*val) {
-                                opts->service_retry_count = atoi(val);
-                                opts->service_retry_set = true;
-                                goto next_arg;
-                            } else {
-                                ncd_println("NCD: /retry requires a count (0-255, 0=use config default)");
-                                return false;
-                            }
-                        }
-                        ncd_printf("NCD: unknown option /%c\r\n", flag);
-                        return false;
-                }
-            }
-        } else {
-            /* Not an option -- must be the search string */
-            if (opts->has_search) {
-                /* Append with backslash (allows: ncd scott downloads) */
-                platform_strncat_s(opts->search, NCD_MAX_PATH, "\\");
-                platform_strncat_s(opts->search, NCD_MAX_PATH, arg);
-                } else {
-                platform_strncpy_s(opts->search, NCD_MAX_PATH, arg);
-                opts->has_search = true;
-            }
-        }
-next_arg:;
-    }
-    return true;
-}
+/* parse_drive_list_token, parse_args, parse_agent_args, glob_match are defined in cli.c */
+extern bool parse_args(int argc, char *argv[], NcdOptions *opts);
 
 /* Agent subcommand identifiers */
 #define AGENT_SUB_NONE     0
@@ -1247,6 +680,7 @@ static void agent_print_usage(void)
         "  check <path>      Check if path exists in DB (exit code)\r\n"
         "  complete <partial>  Shell tab-completion candidates\r\n"
         "  mkdir <path>        Create a directory and add to database\r\n"
+        "  mkdirs <content>    Create directory tree from JSON or flat format\r\n"
         "  quit                Request graceful service shutdown\r\n"
         "\r\n"
         "Query Options:\r\n"
@@ -1275,240 +709,27 @@ static void agent_print_usage(void)
         "mkdir Options:\r\n"
         "  --json            JSON output with result code\r\n"
         "\r\n"
+        "mkdirs Options:\r\n"
+        "  --file <path>     Read tree specification from file\r\n"
+        "  --json            JSON output with per-directory results\r\n"
+        "\r\n"
+        "mkdirs Input Formats:\r\n"
+        "  JSON: [{\"name\":\"dir\",\"children\":[{\"name\":\"subdir\"}]}]\r\n"
+        "  Flat: 2-space indentation indicates child directories\r\n"
+        "        parent\r\n"
+        "          child1\r\n"
+        "          child2\r\n"
+        "            grandchild\r\n"
+        "\r\n"
         "Exit Codes:\r\n"
         "  0   Success / Found\r\n"
         "  1   Not found / Error\r\n"
     );
 }
 
-static bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
-{
-    /* Initialize defaults */
-    opts->agent_limit = 20;
-    opts->agent_depth = -1;  /* -1 means use subcommand default */
-    
-    if (argc < 2) {
-        ncd_println("NCD: /agent requires a subcommand");
-        return false;
-    }
-    
-    const char *sub = argv[1];
-    *consumed = 1;
-    
-    if (_stricmp(sub, "query") == 0) {
-        if (argc < 3) {
-            ncd_println("NCD: /agent query requires a search term");
-            return false;
-        }
-        opts->agent_subcommand = AGENT_SUB_QUERY;
-        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
-        opts->has_search = true;
-        *consumed = 2;
-        
-        /* Parse query options */
-        for (int i = 3; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--json") == 0) {
-                opts->agent_json = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--limit") == 0 && i + 1 < argc) {
-                opts->agent_limit = atoi(argv[++i]);
-                *consumed += 2;
-            } else if (strcmp(opt, "--all") == 0) {
-                opts->show_hidden = true;
-                opts->show_system = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--depth") == 0) {
-                opts->agent_depth_sort = true;
-                (*consumed)++;
-            } else {
-                break;
-            }
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "ls") == 0) {
-        if (argc < 3) {
-            ncd_println("NCD: /agent ls requires a path");
-            return false;
-        }
-        opts->agent_subcommand = AGENT_SUB_LS;
-        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
-        opts->has_search = true;
-        *consumed = 2;
-        opts->agent_depth = 1;  /* default for ls */
-        
-        /* Parse ls options */
-        for (int i = 3; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--json") == 0) {
-                opts->agent_json = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
-                opts->agent_depth = atoi(argv[++i]);
-                if (opts->agent_depth < 1) opts->agent_depth = 1;
-                if (opts->agent_depth > 5) opts->agent_depth = 5;
-                *consumed += 2;
-            } else if (strcmp(opt, "--dirs-only") == 0) {
-                opts->agent_dirs_only = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--files-only") == 0) {
-                opts->agent_files_only = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--pattern") == 0 && i + 1 < argc) {
-                platform_strncpy_s(opts->agent_pattern, sizeof(opts->agent_pattern), argv[++i]);
-                *consumed += 2;
-            } else {
-                break;
-            }
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "tree") == 0) {
-        if (argc < 3) {
-            ncd_println("NCD: /agent tree requires a path");
-            return false;
-        }
-        opts->agent_subcommand = AGENT_SUB_TREE;
-        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
-        opts->has_search = true;
-        *consumed = 2;
-        opts->agent_depth = 3;  /* default for tree */
-        
-        /* Parse tree options */
-        for (int i = 3; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--json") == 0) {
-                opts->agent_json = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
-                opts->agent_depth = atoi(argv[++i]);
-                if (opts->agent_depth < 1) opts->agent_depth = 1;
-                if (opts->agent_depth > 10) opts->agent_depth = 10;
-                *consumed += 2;
-            } else if (strcmp(opt, "--flat") == 0) {
-                opts->agent_flat = true;
-                (*consumed)++;
-            } else {
-                break;
-            }
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "check") == 0) {
-        opts->agent_subcommand = AGENT_SUB_CHECK;
-        
-        /* Parse check options */
-        for (int i = 2; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--json") == 0) {
-                opts->agent_json = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--db-age") == 0) {
-                opts->agent_check_db_age = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--stats") == 0) {
-                opts->agent_check_stats = true;
-                (*consumed)++;
-            } else if (strcmp(opt, "--service-status") == 0) {
-                opts->agent_check_service_status = true;
-                (*consumed)++;
-            } else if (opt[0] != '-') {
-                /* First non-option is the path */
-                platform_strncpy_s(opts->search, sizeof(opts->search), opt);
-                opts->has_search = true;
-                (*consumed)++;
-            } else {
-                break;
-            }
-        }
-        
-        /* check requires at least one of: path, --db-age, --stats, --service-status */
-        if (!opts->has_search && !opts->agent_check_db_age && !opts->agent_check_stats && !opts->agent_check_service_status) {
-            ncd_println("NCD: /agent check requires a path or --db-age or --stats or --service-status");
-            return false;
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "complete") == 0) {
-        opts->agent_subcommand = AGENT_SUB_COMPLETE;
-        
-        /* Parse complete options */
-        for (int i = 2; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--limit") == 0 && i + 1 < argc) {
-                opts->agent_limit = atoi(argv[++i]);
-                *consumed += 2;
-            } else if (opt[0] != '-') {
-                /* First non-option is the partial text to complete */
-                platform_strncpy_s(opts->search, sizeof(opts->search), opt);
-                opts->has_search = true;
-                (*consumed)++;
-            } else {
-                break;
-            }
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "mkdir") == 0) {
-        if (argc < 3) {
-            ncd_println("NCD: /agent mkdir requires a path");
-            return false;
-        }
-        opts->agent_subcommand = AGENT_SUB_MKDIR;
-        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
-        opts->has_search = true;
-        *consumed = 2;
-        
-        /* Parse mkdir options */
-        for (int i = 3; i < argc; i++) {
-            const char *opt = argv[i];
-            if (strcmp(opt, "--json") == 0) {
-                opts->agent_json = true;
-                (*consumed)++;
-            } else {
-                break;
-            }
-        }
-        return true;
-        
-    } else if (_stricmp(sub, "quit") == 0) {
-        opts->agent_subcommand = AGENT_SUB_QUIT;
-        *consumed = 1;
-        return true;
-        
-    } else {
-        ncd_printf("NCD: unknown /agent subcommand: %s\r\n", sub);
-        return false;
-    }
-}
-
-/* Simple glob matching for agent pattern filtering */
-static bool glob_match(const char *pattern, const char *text)
-{
-    const char *p = pattern;
-    const char *t = text;
-    const char *star = NULL;
-    const char *ss = NULL;
-    
-    while (*t) {
-        if (*p == '*') {
-            star = p++;
-            ss = t;
-        } else if (*p == '?' || tolower((unsigned char)*p) == tolower((unsigned char)*t)) {
-            p++;
-            t++;
-        } else if (star) {
-            p = star + 1;
-            t = ++ss;
-        } else {
-            return false;
-        }
-    }
-    
-    while (*p == '*') p++;
-    return *p == '\0';
-}
+/* parse_agent_args and glob_match are defined in cli.c */
+extern bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts);
+extern bool glob_match(const char *pattern, const char *text);
 
 /* ============================================================ agent mode   */
 
@@ -2404,8 +1625,11 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         return 0;
     }
     
+    fprintf(stderr, "AGENT: agent_mode_check entered\n");
+    
     if (opts->agent_check_service_status) {
         /* Check service status */
+        fprintf(stderr, "AGENT: Checking service status...\n");
         bool service_running = ipc_service_exists();
         
         if (!service_running) {
@@ -2445,6 +1669,7 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         }
         
         /* Service ready - running and has loaded databases */
+        fprintf(stderr, "AGENT: Service ready, printing result...\n");
         if (opts->agent_json) {
             agent_printf("{\"v\":1,\"status\":\"ready\",\"message\":\"Service ready\",\"meta_generation\":%llu,\"db_generation\":%llu}\r\n",
                 (unsigned long long)info.meta_generation,
@@ -2452,6 +1677,7 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         } else {
             agent_print("READY\r\n");
         }
+        fprintf(stderr, "AGENT: Returning 0...\n");
         return 0;
     }
     
@@ -2618,6 +1844,473 @@ static int agent_mode_mkdir(const NcdOptions *opts)
     }
     
     return (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) ? 0 : 1;
+}
+
+/* Agent mkdirs result codes */
+typedef enum {
+    AGENT_MKDIRS_OK,
+    AGENT_MKDIRS_ERROR_PATH,
+    AGENT_MKDIRS_ERROR_PARENT,
+    AGENT_MKDIRS_ERROR_PERMS,
+    AGENT_MKDIRS_ERROR_PARSE,
+    AGENT_MKDIRS_ERROR_FILE,
+    AGENT_MKDIRS_ERROR_OTHER
+} AgentMkdirsResult;
+
+/* Structure to hold a directory tree node */
+typedef struct MkdirsNode {
+    char name[NCD_MAX_NAME];
+    struct MkdirsNode *children;
+    int child_count;
+    int child_capacity;
+} MkdirsNode;
+
+/* Free a directory tree */
+static void mkdirs_free_tree(MkdirsNode *node)
+{
+    if (!node) return;
+    for (int i = 0; i < node->child_count; i++) {
+        mkdirs_free_tree(&node->children[i]);
+    }
+    free(node->children);
+}
+
+/* Add a child to a node */
+static MkdirsNode* mkdirs_add_child(MkdirsNode *parent, const char *name)
+{
+    if (!parent) return NULL;
+    
+    if (parent->child_count >= parent->child_capacity) {
+        int new_cap = parent->child_capacity ? parent->child_capacity * 2 : 4;
+        MkdirsNode *new_children = (MkdirsNode*)realloc(parent->children, new_cap * sizeof(MkdirsNode));
+        if (!new_children) return NULL;
+        parent->children = new_children;
+        parent->child_capacity = new_cap;
+    }
+    
+    MkdirsNode *child = &parent->children[parent->child_count++];
+    memset(child, 0, sizeof(MkdirsNode));
+    platform_strncpy_s(child->name, sizeof(child->name), name);
+    return child;
+}
+
+/* Skip whitespace in JSON */
+static const char* json_skip_ws(const char *p)
+{
+    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+        p++;
+    return p;
+}
+
+/* Parse a JSON string value (assumes starting quote already consumed) */
+static const char* json_parse_string(const char *p, char *out, size_t out_size)
+{
+    size_t i = 0;
+    while (*p && *p != '"' && i < out_size - 1) {
+        if (*p == '\\' && *(p+1)) {
+            p++;
+            switch (*p) {
+                case 'n': out[i++] = '\n'; break;
+                case 't': out[i++] = '\t'; break;
+                case 'r': out[i++] = '\r'; break;
+                case '\\': out[i++] = '\\'; break;
+                case '"': out[i++] = '"'; break;
+                default: out[i++] = *p; break;
+            }
+        } else {
+            out[i++] = *p;
+        }
+        p++;
+    }
+    out[i] = '\0';
+    if (*p == '"') p++;
+    return p;
+}
+
+/* Parse JSON array of directory names or objects with 'name' and 'children' */
+static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
+{
+    p = json_skip_ws(p);
+    if (*p != '[') return NULL;
+    p++;
+    
+    while (1) {
+        p = json_skip_ws(p);
+        if (*p == ']') {
+            p++;
+            break;
+        }
+        
+        if (*p == '"') {
+            /* Simple string: "dirname" */
+            p++;
+            char name[NCD_MAX_NAME];
+            p = json_parse_string(p, name, sizeof(name));
+            if (!p) return NULL;
+            mkdirs_add_child(parent, name);
+        } else if (*p == '{') {
+            /* Object: {"name":"dirname", "children":[...]} */
+            p++;
+            char name[NCD_MAX_NAME] = {0};
+            MkdirsNode *new_node = NULL;
+            
+            while (1) {
+                p = json_skip_ws(p);
+                if (*p == '}') {
+                    p++;
+                    break;
+                }
+                
+                if (*p == '"') {
+                    p++;
+                    char key[NCD_MAX_NAME];
+                    p = json_parse_string(p, key, sizeof(key));
+                    if (!p) return NULL;
+                    p = json_skip_ws(p);
+                    if (*p == ':') {
+                        p++;
+                        p = json_skip_ws(p);
+                        
+                        if (strcmp(key, "name") == 0 && *p == '"') {
+                            p++;
+                            p = json_parse_string(p, name, sizeof(name));
+                            if (!p) return NULL;
+                            new_node = mkdirs_add_child(parent, name);
+                        } else if (strcmp(key, "children") == 0 && *p == '[') {
+                            if (!new_node) new_node = mkdirs_add_child(parent, name);
+                            p = json_parse_dirs(p, new_node);
+                            if (!p) return NULL;
+                        } else {
+                            /* Skip unknown value */
+                            if (*p == '"') {
+                                p++;
+                                char skip[NCD_MAX_NAME];
+                                p = json_parse_string(p, skip, sizeof(skip));
+                            } else {
+                                while (*p && *p != ',' && *p != '}') p++;
+                            }
+                        }
+                    }
+                }
+                
+                p = json_skip_ws(p);
+                if (*p == ',') {
+                    p++;
+                    continue;
+                }
+            }
+        }
+        
+        p = json_skip_ws(p);
+        if (*p == ',') {
+            p++;
+            continue;
+        }
+    }
+    
+    return p;
+}
+
+/* Parse flat file format with 2-space indentation */
+static bool parse_flat_format(const char *content, MkdirsNode *root)
+{
+    const char *p = content;
+    MkdirsNode *stack[64];
+    int stack_depth = 0;
+    stack[0] = root;
+    
+    char line[NCD_MAX_PATH];
+    int line_num = 0;
+    
+    while (*p) {
+        line_num++;
+        
+        /* Read one line */
+        int line_len = 0;
+        while (*p && *p != '\n' && line_len < sizeof(line) - 1) {
+            line[line_len++] = *p++;
+        }
+        line[line_len] = '\0';
+        if (*p == '\n') p++;
+        
+        /* Skip empty lines */
+        char *line_p = line;
+        while (*line_p == ' ' || *line_p == '\t') line_p++;
+        if (*line_p == '\0' || *line_p == '\r') continue;
+        
+        /* Remove trailing whitespace */
+        char *end = line_p + strlen(line_p) - 1;
+        while (end > line_p && (*end == ' ' || *end == '\t' || *end == '\r'))
+            *end-- = '\0';
+        
+        /* Count leading spaces for depth */
+        int spaces = 0;
+        const char *orig_line = line;
+        while (*orig_line == ' ') {
+            spaces++;
+            orig_line++;
+        }
+        int depth = spaces / 2;
+        
+        /* Validate depth */
+        if (depth > stack_depth + 1) {
+            /* Indentation too deep - invalid */
+            return false;
+        }
+        
+        /* Adjust stack */
+        stack_depth = depth;
+        
+        /* Add directory to parent */
+        MkdirsNode *parent = stack[depth];
+        MkdirsNode *new_node = mkdirs_add_child(parent, orig_line);
+        if (!new_node) return false;
+        
+        /* This node could be a parent for next level */
+        if (stack_depth + 1 < 64) {
+            stack[stack_depth + 1] = new_node;
+        }
+    }
+    
+    return true;
+}
+
+/* Create directories recursively from tree */
+static int mkdirs_create_recursive(const char *base_path, MkdirsNode *node, 
+                                    AgentMkdirsResult *results, int *result_count,
+                                    int max_results, bool json_output)
+{
+    int created = 0;
+    char path[NCD_MAX_PATH];
+    
+    for (int i = 0; i < node->child_count && *result_count < max_results; i++) {
+        MkdirsNode *child = &node->children[i];
+        
+        /* Build full path */
+        if (base_path[0]) {
+            snprintf(path, sizeof(path), "%s%s%s", base_path, NCD_PATH_SEP, child->name);
+        } else {
+            platform_strncpy_s(path, sizeof(path), child->name);
+        }
+        
+        /* Try to create directory */
+        AgentMkdirsResult result = AGENT_MKDIRS_OK;
+        char result_msg[256] = {0};
+        
+        if (platform_dir_exists(path)) {
+            result = AGENT_MKDIRS_OK;
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory already exists");
+        } else {
+            /* Create parent if needed */
+            char parent_path[NCD_MAX_PATH];
+            if (path_parent(path, parent_path, sizeof(parent_path))) {
+                if (!platform_dir_exists(parent_path)) {
+                    if (!platform_create_dir(parent_path)) {
+                        result = AGENT_MKDIRS_ERROR_PARENT;
+                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create parent directory");
+                    }
+                }
+            }
+            
+            if (result == AGENT_MKDIRS_OK) {
+                if (platform_create_dir(path)) {
+                    result = AGENT_MKDIRS_OK;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created");
+                    created++;
+                } else {
+#if NCD_PLATFORM_WINDOWS
+                    DWORD err = GetLastError();
+                    if (err == ERROR_ACCESS_DENIED) {
+                        result = AGENT_MKDIRS_ERROR_PERMS;
+                        platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                    } else {
+                        result = AGENT_MKDIRS_ERROR_OTHER;
+                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+                    }
+#else
+                    if (errno == EACCES || errno == EPERM) {
+                        result = AGENT_MKDIRS_ERROR_PERMS;
+                        platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                    } else {
+                        result = AGENT_MKDIRS_ERROR_OTHER;
+                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+                    }
+#endif
+                }
+            }
+        }
+        
+        /* Record result */
+        results[*result_count] = result;
+        (*result_count)++;
+        
+        /* Output result */
+        if (json_output) {
+            const char *result_str;
+            switch (result) {
+                case AGENT_MKDIRS_OK: result_str = "created"; break;
+                case AGENT_MKDIRS_ERROR_PERMS: result_str = "error_perms"; break;
+                case AGENT_MKDIRS_ERROR_PARENT: result_str = "error_parent"; break;
+                case AGENT_MKDIRS_ERROR_PATH: result_str = "error_path"; break;
+                default: result_str = "error"; break;
+            }
+            if (*result_count == 1) {
+                agent_print("{\"v\":1,\"dirs\":[");
+            } else {
+                agent_print(",");
+            }
+            agent_print("{\"path\":\"");
+            agent_json_escape(path);
+            agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+            agent_json_escape(result_msg);
+            agent_print("\"}");
+        } else {
+            agent_print(path);
+            agent_print(": ");
+            agent_print(result_msg);
+            agent_print("\r\n");
+        }
+        
+        /* Recurse into children */
+        if (child->child_count > 0) {
+            created += mkdirs_create_recursive(path, child, results, result_count, max_results, json_output);
+        }
+    }
+    
+    return created;
+}
+
+/* Read entire file into memory */
+static char* read_file_contents(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    if (size < 0 || size > 1024 * 1024) { /* Max 1MB */
+        fclose(f);
+        return NULL;
+    }
+    
+    char *buf = (char*)malloc(size + 1);
+    if (!buf) {
+        fclose(f);
+        return NULL;
+    }
+    
+    size_t read = fread(buf, 1, size, f);
+    fclose(f);
+    
+    buf[read] = '\0';
+    return buf;
+}
+
+/* Agent mode: mkdirs - Create directory tree from JSON or flat file */
+static int agent_mode_mkdirs(const NcdOptions *opts)
+{
+    const char *base_path = NULL;
+    const char *content = NULL;
+    char *file_content = NULL;
+    bool is_json = false;
+    
+    /* Determine input source */
+    if (opts->agent_mkdirs_file[0]) {
+        /* Read from file */
+        file_content = read_file_contents(opts->agent_mkdirs_file);
+        if (!file_content) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"error\":\"failed to read file\",\"result\":\"error\"}\r\n");
+            } else {
+                agent_print("ERROR: Failed to read file\r\n");
+            }
+            return 1;
+        }
+        content = file_content;
+        /* Detect JSON by checking first non-whitespace char */
+        const char *p = content;
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+        is_json = (*p == '[' || *p == '{');
+    } else if (opts->has_search) {
+        /* Content from command line */
+        content = opts->search;
+        /* Detect JSON */
+        const char *p = content;
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+        is_json = (*p == '[' || *p == '{');
+    } else {
+        /* Try to read from stdin */
+        /* For now, error out */
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no input provided (use --file or provide content)\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No input provided. Use --file or provide content as argument.\r\n");
+            agent_print("Usage: ncd /agent mkdirs [--file <path>] [--json] <content>\r\n");
+            agent_print("\r\n");
+            agent_print("Flat file format (2 spaces = child):\r\n");
+            agent_print("  parent\r\n");
+            agent_print("    child1\r\n");
+            agent_print("    child2\r\n");
+            agent_print("      grandchild\r\n");
+            agent_print("\r\n");
+            agent_print("JSON format:\r\n");
+            agent_print("  [{\"name\":\"parent\",\"children\":[{\"name\":\"child\"}]}]\r\n");
+        }
+        return 1;
+    }
+    
+    /* Parse the directory tree */
+    MkdirsNode root;
+    memset(&root, 0, sizeof(root));
+    platform_strncpy_s(root.name, sizeof(root.name), "");
+    
+    bool parse_ok;
+    if (is_json) {
+        const char *p = json_skip_ws(content);
+        parse_ok = (json_parse_dirs(p, &root) != NULL);
+    } else {
+        parse_ok = parse_flat_format(content, &root);
+    }
+    
+    if (file_content) {
+        free(file_content);
+    }
+    
+    if (!parse_ok) {
+        mkdirs_free_tree(&root);
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"failed to parse input\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: Failed to parse input\r\n");
+        }
+        return 1;
+    }
+    
+    /* Create directories */
+    AgentMkdirsResult results[256];
+    int result_count = 0;
+    
+    if (opts->agent_json) {
+        /* JSON output - mkdirs_create_recursive outputs as it goes */
+        int created = mkdirs_create_recursive("", &root, results, &result_count, 256, true);
+        if (result_count > 0) {
+            agent_print("]}\r\n");
+        } else {
+            agent_print("{\"v\":1,\"dirs\":[]}\r\n");
+        }
+        mkdirs_free_tree(&root);
+        return 0;
+    } else {
+        /* Plain text output */
+        agent_print("Creating directory tree...\r\n\r\n");
+        int created = mkdirs_create_recursive("", &root, results, &result_count, 256, false);
+        mkdirs_free_tree(&root);
+        
+        agent_printf("\r\nCreated %d directories\r\n", created);
+        return 0;
+    }
 }
 
 /* Agent mode: complete - Shell tab-completion candidates */
@@ -2792,6 +2485,11 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
 
 int main(int argc, char *argv[])
 {
+    fprintf(stderr, "MAIN: Starting NCD, argc=%d\n", argc);
+    for (int i = 0; i < argc; i++) {
+        fprintf(stderr, "MAIN: argv[%d] = '%s'\n", i, argv[i]);
+    }
+    
     /* Open a direct console handle as early as possible so all subsequent
      * ncd_print / ncd_printf calls bypass CRT buffering.                  */
     con_init();
@@ -2812,8 +2510,124 @@ int main(int argc, char *argv[])
     g_test_slow_mode = opts.test_slow_mode;
 #endif
 
+    /* ------------------------------------------------ agentic debug mode */
+    if (opts.agentic_debug) {
+        /* Enable IPC debugging */
+        extern void ipc_set_debug_mode(int);
+        ipc_set_debug_mode(1);
+        
+        /* Use printf for agentic debug - must work even without console handle */
+        printf("=== AGENTIC DEBUG MODE ===\n");
+        printf("This mode is for agentic debugging and testing only.\n");
+        printf("\n");
+        fflush(stdout);
+        
+        /* Service diagnostics */
+        printf("--- Service Diagnostics ---\n");
+        fflush(stdout);
+        
+        /* Check if service exists and is connectable */
+        bool service_exists = ipc_service_exists();
+        printf("ipc_service_exists(): %s\n", service_exists ? "YES" : "NO");
+        
+        if (service_exists) {
+            NcdIpcClient *client = ipc_client_connect();
+            if (client) {
+                printf("ipc_client_connect(): SUCCESS\n");
+                
+                /* Try ping */
+                NcdIpcResult ping_result = ipc_client_ping(client);
+                printf("ipc_client_ping(): %s\n", ipc_error_string(ping_result));
+                
+                /* Try version check */
+                NcdIpcVersionCheckResult ver;
+                NcdIpcResult ver_result = ipc_client_check_version(client, NCD_BUILD_VER, NCD_BUILD_STAMP, &ver);
+                printf("ipc_client_check_version(): %s (code %d)\n", ipc_error_string(ver_result), (int)ver_result);
+                if (ver_result == NCD_IPC_OK) {
+                    printf("  versions_match: %s\n", ver.versions_match ? "YES" : "NO");
+                    printf("  service_version: %s\n", ver.service_version);
+                    printf("  service_build: %s\n", ver.service_build);
+                    printf("  message: %s\n", ver.message);
+                }
+                
+                /* Try state info */
+                NcdIpcStateInfo info;
+                NcdIpcResult info_result = ipc_client_get_state_info(client, &info);
+                printf("ipc_client_get_state_info(): %s (code %d)\n", ipc_error_string(info_result), (int)info_result);
+                if (info_result == NCD_IPC_OK) {
+                    printf("  protocol_version: %u\n", info.protocol_version);
+                    printf("  db_generation: %llu\n", (unsigned long long)info.db_generation);
+                    printf("  meta_generation: %llu\n", (unsigned long long)info.meta_generation);
+                    printf("  meta_size: %lu\n", (unsigned long)info.meta_size);
+                    printf("  db_size: %lu\n", (unsigned long)info.db_size);
+                    printf("  meta_name: '%s'\n", info.meta_name);
+                    printf("  db_name: '%s'\n", info.db_name);
+                    
+                    if (info.meta_generation == 0 && info.db_generation == 0) {
+                        printf("  WARNING: Generations are 0 - service may still be loading\n");
+                    }
+                    if (info.meta_name[0] == '\0') {
+                        printf("  WARNING: meta_name is empty - metadata snapshot not published\n");
+                    }
+                    if (info.db_name[0] == '\0') {
+                        printf("  WARNING: db_name is empty - database snapshot not published\n");
+                    }
+                } else {
+                    printf("  State info failed - service may be in invalid state\n");
+                }
+                
+                /* Additional diagnostics: check shared memory directly */
+                printf("\n--- Shared Memory Diagnostics ---\n");
+                ShmHandle *meta_shm = NULL;
+                ShmHandle *db_shm = NULL;
+                ShmResult meta_shm_result = shm_open_existing(info.meta_name, SHM_ACCESS_READ, &meta_shm);
+                ShmResult db_shm_result = shm_open_existing(info.db_name, SHM_ACCESS_READ, &db_shm);
+                printf("shm_open_existing(meta_name='%s'): %d (0=OK)\n", info.meta_name, (int)meta_shm_result);
+                printf("shm_open_existing(db_name='%s'): %d (0=OK)\n", info.db_name, (int)db_shm_result);
+                if (meta_shm) shm_close(meta_shm);
+                if (db_shm) shm_close(db_shm);
+                
+                ipc_client_disconnect(client);
+            } else {
+                printf("ipc_client_connect(): FAILED\n");
+                printf("  (Service exists but we cannot connect - may be starting or dead)\n");
+            }
+        }
+        
+        printf("\n");
+        printf("--- State Backend Diagnostics ---\n");
+        
+        /* Test state backend initialization */
+        NcdStateView *state_view = NULL;
+        NcdStateSourceInfo state_info = {0};
+        int state_result = state_backend_open_best_effort(&state_view, &state_info);
+        printf("state_backend_open_best_effort(): %d (0=OK)\n", state_result);
+        if (state_result == 0 && state_view) {
+            printf("  from_service: %s\n", state_info.from_service ? "YES" : "NO");
+            printf("  generation: %llu\n", (unsigned long long)state_info.generation);
+            printf("  db_generation: %llu\n", (unsigned long long)state_info.db_generation);
+            
+            const NcdMetadata *meta = state_view_metadata(state_view);
+            printf("  metadata: %s\n", meta ? "AVAILABLE" : "NULL");
+            
+            const NcdDatabase *db = state_view_database(state_view);
+            printf("  database: %s\n", db ? "AVAILABLE" : "NULL");
+            
+            state_backend_close(state_view);
+        } else {
+            printf("  State backend initialization FAILED\n");
+        }
+        
+        printf("\n");
+        printf("=== END AGENTIC DEBUG ===\n");
+        fflush(stdout);
+        con_close();
+        return 0;
+    }
+
     /* ------------------------------------------------ first-run configuration */
     /* If no config file exists and user didn't specify /c, prompt for configuration */
+    fprintf(stderr, "MAIN: Checking first-run config, agent_mode=%d\n", opts.agent_mode);
     if (!db_metadata_exists() && !opts.config_edit && !opts.show_help && 
         !opts.group_list && !opts.group_set && !opts.group_remove &&
         !opts.show_history && !opts.clear_history && !opts.show_version &&
@@ -2829,10 +2643,21 @@ int main(int argc, char *argv[])
         
         if (ui_edit_config(meta)) {
             meta->config_dirty = true;
-            if (db_metadata_save(meta)) {
-                ncd_println("Configuration saved.\r\n");
+            if (is_service_backend()) {
+                /* Service mode: send update via IPC */
+                if (state_backend_submit_metadata_update(g_state_view, NCD_META_UPDATE_CONFIG,
+                                                         &meta->cfg, sizeof(meta->cfg)) == 0) {
+                    ncd_println("Configuration saved.\r\n");
+                } else {
+                    ncd_println("Warning: Could not save configuration via service.\r\n");
+                }
             } else {
-                ncd_println("Warning: Could not save configuration.\r\n");
+                /* Standalone mode: save directly */
+                if (db_metadata_save(meta)) {
+                    ncd_println("Configuration saved.\r\n");
+                } else {
+                    ncd_println("Warning: Could not save configuration.\r\n");
+                }
             }
         } else {
             ncd_println("Using default settings. (Run 'ncd /c' to configure later)\r\n");
@@ -2897,17 +2722,31 @@ int main(int argc, char *argv[])
     
     /* ----------------------------------------------- group remove command */
     if (opts.group_remove) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
-        
-        /* Get current directory for targeted removal */
         char cwd[MAX_PATH] = {0};
         bool have_cwd = platform_get_current_dir(cwd, sizeof(cwd));
+        
+        if (is_service_backend()) {
+            /* Service mode: send update via IPC */
+            /* Note: Service handles both single-path removal and full group removal */
+            int result = state_backend_submit_metadata_update(g_state_view, 
+                NCD_META_UPDATE_GROUP_REMOVE, opts.group_name, 
+                strlen(opts.group_name) + 1);
+            if (result == 0) {
+                ncd_printf("Group '%s' removed.\r\n", opts.group_name);
+            } else {
+                ncd_printf("Group '%s' not found or could not be removed.\r\n", opts.group_name);
+            }
+            con_close();
+            return 0;
+        }
+        
+        /* Standalone mode: load, modify, save */
+        NcdMetadata *meta = db_metadata_load();
+        if (!meta) meta = db_metadata_create();
         
         /* Check if current directory is in the group */
         bool in_group = false;
         if (have_cwd) {
-            const NcdGroupEntry *entry = NULL;
             int count = 0;
             for (int i = 0; i < meta->groups.count; i++) {
                 if (_stricmp(meta->groups.groups[i].name, opts.group_name) == 0) {
@@ -2953,6 +2792,46 @@ int main(int argc, char *argv[])
             return 1;
         }
         
+        if (is_service_backend()) {
+            /* Service mode: use state view to check current status, then send update */
+            const NcdMetadata *meta = get_state_metadata();
+            
+            /* Check if already in group before adding */
+            bool already_in_group = false;
+            int existing_count = 0;
+            if (meta) {
+                for (int i = 0; i < meta->groups.count; i++) {
+                    if (_stricmp(meta->groups.groups[i].name, opts.group_name) == 0) {
+                        existing_count++;
+                        if (_stricmp(meta->groups.groups[i].path, cwd) == 0) {
+                            already_in_group = true;
+                        }
+                    }
+                }
+            }
+            
+            /* Send update via IPC */
+            const char *args[2] = { opts.group_name, cwd };
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_GROUP_ADD, args, sizeof(args));
+            
+            if (result == 0) {
+                if (already_in_group) {
+                    ncd_printf("'%s' is already in group '%s'.\r\n", cwd, opts.group_name);
+                } else if (existing_count > 0) {
+                    ncd_printf("Added to group '%s' (%d entries) -> '%s'\r\n", 
+                               opts.group_name, existing_count + 1, cwd);
+                } else {
+                    ncd_printf("Group '%s' -> '%s'\r\n", opts.group_name, cwd);
+                }
+            } else {
+                ncd_println("Failed to set group (too many groups?).");
+            }
+            con_close();
+            return 0;
+        }
+        
+        /* Standalone mode: load, modify, save */
         NcdMetadata *meta = db_metadata_load();
         if (!meta) meta = db_metadata_create();
         
@@ -3010,33 +2889,59 @@ int main(int argc, char *argv[])
     
     /* ------------------------------------------------ exclusion remove command */
     if (opts.exclusion_remove) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
-        
-        if (db_exclusion_remove(meta, opts.exclusion_pattern)) {
-            db_metadata_save(meta);
-            ncd_printf("Removed exclusion: %s\r\n", opts.exclusion_pattern);
+        if (is_service_backend()) {
+            /* Service mode: send update via IPC */
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_EXCLUSION_REMOVE, opts.exclusion_pattern,
+                strlen(opts.exclusion_pattern) + 1);
+            if (result == 0) {
+                ncd_printf("Removed exclusion: %s\r\n", opts.exclusion_pattern);
+            } else {
+                ncd_printf("Exclusion not found: %s\r\n", opts.exclusion_pattern);
+            }
         } else {
-            ncd_printf("Exclusion not found: %s\r\n", opts.exclusion_pattern);
+            /* Standalone mode: load, modify, save */
+            NcdMetadata *meta = db_metadata_load();
+            if (!meta) meta = db_metadata_create();
+            
+            if (db_exclusion_remove(meta, opts.exclusion_pattern)) {
+                db_metadata_save(meta);
+                ncd_printf("Removed exclusion: %s\r\n", opts.exclusion_pattern);
+            } else {
+                ncd_printf("Exclusion not found: %s\r\n", opts.exclusion_pattern);
+            }
+            db_metadata_free(meta);
         }
-        db_metadata_free(meta);
         con_close();
         return 0;
     }
     
     /* ------------------------------------------------ exclusion add command */
     if (opts.exclusion_add) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
-        
-        if (db_exclusion_add(meta, opts.exclusion_pattern)) {
-            db_metadata_save(meta);
-            ncd_printf("Added exclusion: %s\r\n", opts.exclusion_pattern);
+        if (is_service_backend()) {
+            /* Service mode: send update via IPC */
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_EXCLUSION_ADD, opts.exclusion_pattern,
+                strlen(opts.exclusion_pattern) + 1);
+            if (result == 0) {
+                ncd_printf("Added exclusion: %s\r\n", opts.exclusion_pattern);
+            } else {
+                ncd_printf("Failed to add exclusion.\r\n");
+            }
         } else {
-            const char *err = db_get_last_error();
-            ncd_printf("Failed to add exclusion: %s\r\n", err);
+            /* Standalone mode: load, modify, save */
+            NcdMetadata *meta = db_metadata_load();
+            if (!meta) meta = db_metadata_create();
+            
+            if (db_exclusion_add(meta, opts.exclusion_pattern)) {
+                db_metadata_save(meta);
+                ncd_printf("Added exclusion: %s\r\n", opts.exclusion_pattern);
+            } else {
+                const char *err = db_get_last_error();
+                ncd_printf("Failed to add exclusion: %s\r\n", err);
+            }
+            db_metadata_free(meta);
         }
-        db_metadata_free(meta);
         con_close();
         return 0;
     }
@@ -3056,12 +2961,24 @@ int main(int argc, char *argv[])
     
     /* ------------------------------------------------ directory history clear */
     if (opts.history_clear) {
-        NcdMetadata *meta = db_metadata_load();
-        if (meta) {
-            db_dir_history_clear(meta);
-            db_metadata_save(meta);
-            ncd_println("Directory history cleared.");
-            db_metadata_free(meta);
+        if (is_service_backend()) {
+            /* Service mode: send update via IPC */
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_CLEAR_HISTORY, NULL, 0);
+            if (result == 0) {
+                ncd_println("Directory history cleared.");
+            } else {
+                ncd_println("Failed to clear directory history.");
+            }
+        } else {
+            /* Standalone mode: load, modify, save */
+            NcdMetadata *meta = db_metadata_load();
+            if (meta) {
+                db_dir_history_clear(meta);
+                db_metadata_save(meta);
+                ncd_println("Directory history cleared.");
+                db_metadata_free(meta);
+            }
         }
         con_close();
         return 0;
@@ -3069,35 +2986,75 @@ int main(int argc, char *argv[])
     
     /* ------------------------------------------------ directory history remove by index */
     if (opts.history_remove > 0) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) {
-            ncd_println("No history.");
-            con_close();
-            return 1;
-        }
-        
         int idx = opts.history_remove - 1;  /* convert 1-based to 0-based */
-        const NcdDirHistoryEntry *entry = db_dir_history_get(meta, idx);
-        if (!entry) {
-            ncd_printf("History entry %d not found (only %d entries).\r\n",
-                       opts.history_remove, db_dir_history_count(meta));
-            db_metadata_free(meta);
-            con_close();
-            return 1;
-        }
         
-        ncd_printf("Removed from history: %s\r\n", entry->path);
-        db_dir_history_remove(meta, idx);
-        db_metadata_save(meta);
-        db_metadata_free(meta);
+        if (is_service_backend()) {
+            /* Service mode: read from state view, then send update via IPC */
+            const NcdMetadata *meta = get_state_metadata();
+            if (!meta) {
+                ncd_println("No history.");
+                con_close();
+                return 1;
+            }
+            
+            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, idx);
+            if (!entry) {
+                ncd_printf("History entry %d not found (only %d entries).\r\n",
+                           opts.history_remove, db_dir_history_count(meta));
+                con_close();
+                return 1;
+            }
+            
+            ncd_printf("Removed from history: %s\r\n", entry->path);
+            
+            /* Send update via IPC */
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_DIR_HISTORY_REMOVE, &idx, sizeof(idx));
+            if (result != 0) {
+                ncd_println("Warning: Failed to update service.");
+            }
+        } else {
+            /* Standalone mode: load, modify, save */
+            NcdMetadata *meta = db_metadata_load();
+            if (!meta) {
+                ncd_println("No history.");
+                con_close();
+                return 1;
+            }
+            
+            const NcdDirHistoryEntry *entry = db_dir_history_get(meta, idx);
+            if (!entry) {
+                ncd_printf("History entry %d not found (only %d entries).\r\n",
+                           opts.history_remove, db_dir_history_count(meta));
+                db_metadata_free(meta);
+                con_close();
+                return 1;
+            }
+            
+            ncd_printf("Removed from history: %s\r\n", entry->path);
+            db_dir_history_remove(meta, idx);
+            db_metadata_save(meta);
+            db_metadata_free(meta);
+        }
         con_close();
         return 0;
     }
     
     /* ------------------------------------------------ directory history browse */
     if (opts.history_browse) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta || db_dir_history_count(meta) == 0) {
+        NcdMetadata *meta = NULL;
+        const NcdMetadata *meta_view = NULL;
+        
+        if (is_service_backend()) {
+            /* Service mode: use state view */
+            meta_view = get_state_metadata();
+        } else {
+            /* Standalone mode: load metadata */
+            meta = db_metadata_load();
+            meta_view = meta;
+        }
+        
+        if (!meta_view || db_dir_history_count(meta_view) == 0) {
             ncd_println("No history entries.");
             if (meta) db_metadata_free(meta);
             con_close();
@@ -3105,12 +3062,12 @@ int main(int argc, char *argv[])
         }
         
         /* Build match array from history entries */
-        int count = db_dir_history_count(meta);
+        int count = db_dir_history_count(meta_view);
         NcdMatch *matches = ncd_malloc(sizeof(NcdMatch) * count);
         int valid = 0;
         
         for (int i = 0; i < count; i++) {
-            const NcdDirHistoryEntry *e = db_dir_history_get(meta, i);
+            const NcdDirHistoryEntry *e = db_dir_history_get(meta_view, i);
             if (e && platform_dir_exists(e->path)) {
                 platform_strncpy_s(matches[valid].full_path, 
                                    sizeof(matches[valid].full_path), e->path);
@@ -3126,7 +3083,7 @@ int main(int argc, char *argv[])
         if (valid == 0) {
             ncd_println("No valid history entries (directories may have been removed).");
             free(matches);
-            db_metadata_free(meta);
+            if (meta) db_metadata_free(meta);
             con_close();
             return 0;
         }
@@ -3135,7 +3092,9 @@ int main(int argc, char *argv[])
         if (valid == 1) {
             chosen = 0;
         } else {
-            chosen = ui_select_history(matches, &valid, meta);
+            /* Use callback for service mode, NULL for standalone */
+            ui_history_delete_cb delete_cb = is_service_backend() ? history_delete_service_cb : NULL;
+            chosen = ui_select_history(matches, &valid, (NcdMetadata *)meta_view, delete_cb, NULL);
             /* Note: valid may have decreased if user deleted entries */
         }
         
@@ -3147,7 +3106,7 @@ int main(int argc, char *argv[])
         }
         
         free(matches);
-        db_metadata_free(meta);
+        if (meta) db_metadata_free(meta);
         con_close();
         return 0;
     }
@@ -3155,22 +3114,34 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------ directory history ping-pong */
     if (opts.history_pingpong || (!opts.has_search && argc == 1)) {
         /* /0 or no args: ping-pong between [0] and [1], swapping them */
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
+        const NcdMetadata *meta_view = NULL;
         
-        if (db_dir_history_count(meta) < 2) {
+        if (is_service_backend()) {
+            meta_view = get_state_metadata();
+        } else {
+            /* Standalone: load metadata */
+            NcdMetadata *meta = db_metadata_load();
+            if (!meta) meta = db_metadata_create();
+            meta_view = meta;
+        }
+        
+        if (!meta_view || db_dir_history_count(meta_view) < 2) {
             ncd_println("NCD: Not enough history entries to ping-pong.\r\n");
             ncd_println("Navigate to a directory first with 'ncd <search>'.\r\n");
-            db_metadata_free(meta);
+            if (!is_service_backend() && meta_view) {
+                db_metadata_free((NcdMetadata *)meta_view);
+            }
             con_close();
             return 1;
         }
         
         /* Get the second entry (will become first after swap) */
-        const NcdDirHistoryEntry *entry = db_dir_history_get(meta, 1);
+        const NcdDirHistoryEntry *entry = db_dir_history_get(meta_view, 1);
         if (!entry) {
             result_error("History entry not found.");
-            db_metadata_free(meta);
+            if (!is_service_backend()) {
+                db_metadata_free((NcdMetadata *)meta_view);
+            }
             con_close();
             return 1;
         }
@@ -3178,19 +3149,31 @@ int main(int argc, char *argv[])
         /* Verify directory still exists */
         if (!platform_dir_exists(entry->path)) {
             ncd_printf("NCD: Directory no longer exists: %s\r\n", entry->path);
-            db_metadata_free(meta);
+            if (!is_service_backend()) {
+                db_metadata_free((NcdMetadata *)meta_view);
+            }
             con_close();
             return 1;
         }
         
-        /* Swap first two entries */
-        db_dir_history_swap_first_two(meta);
-        meta->dir_history_dirty = true;
-        db_metadata_save(meta);
+        if (is_service_backend()) {
+            /* Service mode: send swap update via IPC */
+            int result = state_backend_submit_metadata_update(g_state_view,
+                NCD_META_UPDATE_DIR_HISTORY_SWAP, NULL, 0);
+            if (result != 0) {
+                ncd_println("Warning: Failed to update service.");
+            }
+        } else {
+            /* Standalone mode: swap and save */
+            NcdMetadata *meta = (NcdMetadata *)meta_view;
+            db_dir_history_swap_first_two(meta);
+            meta->dir_history_dirty = true;
+            db_metadata_save(meta);
+            db_metadata_free(meta);
+        }
         
         /* Return the (now) first entry */
         result_ok(entry->path, entry->drive);
-        db_metadata_free(meta);
         con_close();
         return 0;
     }
@@ -3309,8 +3292,11 @@ int main(int argc, char *argv[])
                     }
                 }
                 
+                fprintf(stderr, "MAIN: About to call agent_mode_check...\n");
                 result = agent_mode_check(db, &opts);
+                fprintf(stderr, "MAIN: agent_mode_check returned %d\n", result);
                 if (db) db_free(db);
+                fprintf(stderr, "MAIN: db freed (if needed)\n");
                 break;
             }
             case AGENT_SUB_COMPLETE: {
@@ -3331,6 +3317,10 @@ int main(int argc, char *argv[])
             }
             case AGENT_SUB_MKDIR: {
                 result = agent_mode_mkdir(&opts);
+                break;
+            }
+            case AGENT_SUB_MKDIRS: {
+                result = agent_mode_mkdirs(&opts);
                 break;
             }
             case AGENT_SUB_QUIT: {
@@ -3384,6 +3374,7 @@ int main(int argc, char *argv[])
         }
         
         con_close();
+        fprintf(stderr, "MAIN: Agent mode returning %d\n", result);
         return result;
     }
     
@@ -3398,10 +3389,21 @@ int main(int argc, char *argv[])
         
         if (ui_edit_config(meta)) {
             meta->config_dirty = true;
-            if (db_metadata_save(meta)) {
-                ncd_println("Configuration saved.");
+            if (is_service_backend()) {
+                /* Service mode: send update via IPC */
+                if (state_backend_submit_metadata_update(g_state_view, NCD_META_UPDATE_CONFIG,
+                                                         &meta->cfg, sizeof(meta->cfg)) == 0) {
+                    ncd_println("Configuration saved.");
+                } else {
+                    ncd_println("Failed to save configuration via service.");
+                }
             } else {
-                ncd_println("Failed to save configuration.");
+                /* Standalone mode: save directly */
+                if (db_metadata_save(meta)) {
+                    ncd_println("Configuration saved.");
+                } else {
+                    ncd_println("Failed to save configuration.");
+                }
             }
         } else {
             ncd_println("Configuration cancelled.");

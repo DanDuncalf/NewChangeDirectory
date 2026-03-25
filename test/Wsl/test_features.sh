@@ -548,7 +548,7 @@ test_output_lacks "H8" "Removed group not in list" "@users" /gl
 test_ncd_no_match "H9" "Removed group returns error" @users
 
 # ==========================================================================
-# CATEGORY I: Exclusion Patterns (9 tests)
+# CATEGORY I: Exclusion Patterns (11 tests)
 # ==========================================================================
 
 category "I: Exclusion Patterns"
@@ -573,7 +573,23 @@ test_ncd_finds  "I8" "Rescan after remove finds Deep" "L10" L10
 # I9: Remove nonexistent pattern (should not crash)
 test_exit_ok    "I9" "Remove nonexistent exclusion" -x- "nonexistent_pattern_xyz"
 
+# I10: Agent tree should not show excluded directories
+# Add exclusion for Deep, then rescan
+ncd_run -x "*/Deep"
+rescan_testroot
+# Verify regular search doesn't find it
+test_ncd_no_match "I10a" "Search excludes Deep" L10
+# Verify agent tree also doesn't show it
+test_custom "I10b" "Agent tree excludes excluded directories"
+OUTPUT=$("$NCD" /agent tree "$TESTROOT" --flat --depth 3 2>&1)
+if echo "$OUTPUT" | grep -q "Deep"; then
+    fail "I10b" "Agent tree excludes excluded directories" "found 'Deep' in agent tree output"
+else
+    pass "I10b" "Agent tree excludes excluded directories"
+fi
+
 # Clean up exclusions for subsequent tests
+ncd_run -x- "*/Deep"
 ncd_run -x- "*/EmptyDrive"
 
 # ==========================================================================

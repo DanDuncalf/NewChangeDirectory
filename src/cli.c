@@ -55,7 +55,7 @@ static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
         }
         return false;
     }
-    return saw_letter && saw_sep;
+    return saw_letter;  /* Allow single drive without separator */
 }
 
 /* ============================================================= agent mode arg parsing */
@@ -241,6 +241,32 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
         }
         return true;
         
+    } else if (_stricmp(sub, "mkdirs") == 0) {
+        /* mkdirs creates a directory tree from JSON or flat file format */
+        opts->agent_subcommand = AGENT_SUB_MKDIRS;
+        *consumed = 1;
+        
+        /* Parse mkdirs options */
+        for (int i = 2; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--file") == 0 && i + 1 < argc) {
+                platform_strncpy_s(opts->agent_mkdirs_file, sizeof(opts->agent_mkdirs_file), argv[i + 1]);
+                (*consumed) += 2;
+                i++;
+            } else if (opt[0] != '-') {
+                /* JSON content directly as argument */
+                platform_strncpy_s(opts->search, sizeof(opts->search), opt);
+                opts->has_search = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
     } else if (_stricmp(sub, "quit") == 0) {
         opts->agent_subcommand = AGENT_SUB_QUIT;
         *consumed = 1;
@@ -393,11 +419,19 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
 #endif
             bool looks_like_drive_list = false;
+            bool all_alpha = true;
             for (int k = 0; next[k]; k++) {
                 if (next[k] == ',' || next[k] == '-') {
                     looks_like_drive_list = true;
                     break;
                 }
+                if (!isalpha((unsigned char)next[k])) {
+                    all_alpha = false;
+                }
+            }
+            /* Single or multiple drive letters without separators also count */
+            if (all_alpha && strlen(next) > 0 && strlen(next) <= 26) {
+                looks_like_drive_list = true;
             }
             if (looks_like_drive_list) {
                 bool parsed = parse_drive_list_token(next,
@@ -486,6 +520,30 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
                 i++;  /* consume the '.' */
                 continue;
+            }
+        }
+
+        /* Agentic debug mode: /agdb (check BEFORE combined flags to avoid /a match) */
+        if (_stricmp(arg, "/agdb") == 0 || _stricmp(arg, "-agdb") == 0) {
+            opts->agentic_debug = true;
+            continue;
+        }
+
+        /* Agent mode: /agent <subcommand> (check BEFORE combined flags to avoid /a match) */
+        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0 ||
+            _stricmp(arg, "/a") == 0 || _stricmp(arg, "-a") == 0) {
+            opts->agent_mode = true;
+            
+            if (i + 1 < argc) {
+                int consumed = 0;
+                int remaining = argc - i;
+                bool ok = parse_agent_args(remaining, &argv[i], &consumed, opts);
+                if (!ok) return false;
+                i += consumed;
+                continue;
+            } else {
+                ncd_println("NCD: /agent requires a subcommand");
+                return false;
             }
         }
 
@@ -601,26 +659,8 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             continue;
         }
 
-        /* Agent mode: /agent <subcommand> */
-        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0 ||
-            _stricmp(arg, "/a") == 0 || _stricmp(arg, "-a") == 0) {
-            opts->agent_mode = true;
-            
-            if (i + 1 < argc) {
-                int consumed = 0;
-                int remaining = argc - i;
-                bool ok = parse_agent_args(remaining, &argv[i], &consumed, opts);
-                if (!ok) return false;
-                i += consumed;
-                continue;
-            } else {
-                ncd_println("NCD: /agent requires a subcommand");
-                return false;
-            }
-        }
-
-        /* Exclusion add: -x <pattern> */
-        if (strcmp(arg, "-x") == 0) {
+        /* Exclusion add: -x <pattern> or /x <pattern> */
+        if (_stricmp(arg, "-x") == 0 || _stricmp(arg, "/x") == 0) {
             if (i + 1 < argc) {
                 opts->exclusion_add = true;
                 platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[++i]);
@@ -630,8 +670,8 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             return false;
         }
 
-        /* Exclusion remove: -x- <pattern> */
-        if (strcmp(arg, "-x-") == 0) {
+        /* Exclusion remove: -x- <pattern> or /x- <pattern> */
+        if (_stricmp(arg, "-x-") == 0 || _stricmp(arg, "/x-") == 0) {
             if (i + 1 < argc) {
                 opts->exclusion_remove = true;
                 platform_strncpy_s(opts->exclusion_pattern, sizeof(opts->exclusion_pattern), argv[++i]);
@@ -641,8 +681,8 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             return false;
         }
 
-        /* Exclusion list: -xl */
-        if (strcmp(arg, "-xl") == 0) {
+        /* Exclusion list: -xl or /xl */
+        if (_stricmp(arg, "-xl") == 0 || _stricmp(arg, "/xl") == 0) {
             opts->exclusion_list = true;
             continue;
         }

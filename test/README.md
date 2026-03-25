@@ -44,8 +44,7 @@ test/
 ├── Makefile                   # Test build system
 ├── Win/                       # Windows-specific tests
 ├── Wsl/                       # WSL-specific tests
-├── PowerShell/                # PowerShell-specific tests
-└── plans/                     # Test plans
+└── PowerShell/                # PowerShell-specific tests
 ```
 
 ## Test Categories
@@ -158,6 +157,33 @@ test_matcher.exe
 - `match_no_results` - Empty result handling
 - `match_empty_search` - Empty search handling
 
+### Scanner Tests (test_scanner.c)
+
+- `scan_mount_populates_database` - Basic directory scanning
+- `scan_mount_respects_hidden_flag` - Hidden directory filtering during scan
+- `scan_mount_applies_exclusions` - Exclusion list is accepted by scanner
+- `scan_mount_excludes_directories_from_database` - **Excluded directories are NOT added to database**
+- `scan_subdirectory_merges_into_existing_db` - Partial scanning merges correctly
+- `find_is_directory_returns_true_for_dirs` - Directory detection helper
+- `find_is_hidden_detects_hidden_entries` - Hidden attribute detection
+- `find_is_reparse_detects_symlinks` - Symlink/junction detection
+- `scan_mounts_handles_empty_mount_list` - Empty mount list handling
+
+### Mkdirs Tests (test_mkdirs.c)
+
+Integration tests for the `/agent mkdirs` command that creates directory trees:
+
+- `mkdirs_flat_format_simple` - Basic flat file format with 2-space indentation
+- `mkdirs_flat_format_nested` - Deeply nested directory structures
+- `mkdirs_flat_format_empty_lines` - Handling empty lines in flat format
+- `mkdirs_json_format_simple` - JSON format with objects and children
+- `mkdirs_json_format_nested` - Deeply nested JSON structures
+- `mkdirs_json_format_string_array` - Simple JSON string array format
+- `mkdirs_json_inline_argument` - JSON passed as command line argument
+- `mkdirs_json_output_format` - JSON output with per-directory results
+- `mkdirs_missing_file_error` - Error handling for missing input file
+- `mkdirs_no_input_error` - Error handling when no input provided
+
 ## Test Framework
 
 The custom test framework (`test_framework.h`) provides:
@@ -178,6 +204,7 @@ The custom test framework (`test_framework.h`) provides:
 | `make bench` | Run performance benchmarks |
 | `make recursive-mount` | Run recursive mount tests (requires root) |
 | `make service-test` | Run service lifecycle and integration tests |
+| `make test_mkdirs` | Run mkdirs agent command integration tests |
 | `make clean` | Remove build artifacts |
 
 ## Platform-Specific Notes
@@ -200,6 +227,30 @@ The recursive mount test requires root privileges:
 ```bash
 sudo make recursive-mount
 ```
+
+## Integration Tests (Wsl/test_features.sh, Win/test_features.bat)
+
+Comprehensive end-to-end tests that verify NCD behavior through the actual executable:
+
+### Category I: Exclusion Patterns
+
+Tests that verify exclusion patterns prevent directories from being added to the database:
+
+- `I1-I2` - Adding and listing exclusion patterns
+- `I3` - Excluded directories not found in search
+- `I4-I5` - Multiple exclusions work correctly
+- `I6-I7` - Removing exclusions works
+- `I8` - After removing exclusion, directory is findable again
+- `I9` - Removing nonexistent exclusion doesn't crash
+- **`I10a`** - **Excluded directories not found via regular search**
+- **`I10b`** - **Excluded directories not shown in `/agent tree` output**
+
+### Category V: Agent Tree
+
+Tests for the `/agent tree` command output formats:
+
+- `V1-V5` - JSON, flat, indented, and depth-limited output formats
+- `V6-V10` - Error handling and path validation
 
 ## Adding New Tests
 

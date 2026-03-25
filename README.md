@@ -84,6 +84,9 @@ ncd /hc                   # Clear all history
 ncd /hc3                  # Remove history entry #3
 ncd /f                    # Show frequent searches
 ncd /fc                   # Clear frequent searches
+ncd /x <pattern>          # Add exclusion pattern
+ncd /x- <pattern>         # Remove exclusion pattern
+ncd /xl                   # List exclusion patterns
 ncd /agent query <term>   # Agent mode (JSON output)
 ncd /?                    # Help
 ```
@@ -182,6 +185,7 @@ ncd /agent check --stats
 ncd /agent check --service-status
 ncd /agent complete dow              # Shell tab-completion candidates
 ncd /agent mkdir <path>              # Create directory and parents if needed
+ncd /agent mkdirs <content>          # Create directory tree from JSON/flat format
 ```
 
 Exit codes:

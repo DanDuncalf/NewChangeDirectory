@@ -464,7 +464,7 @@ typedef struct {
 #endif
     /* Agent mode options (/agent command) */
     bool agent_mode;              /* /agent -- agent API mode                */
-    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir */
+    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir, 8=mkdirs */
     bool agent_json;              /* --json output                           */
     int  agent_limit;             /* --limit N (default 20, 0=unlimited)     */
     bool agent_depth_sort;        /* --depth (sort shallowest first)         */
@@ -476,6 +476,7 @@ typedef struct {
     bool agent_check_db_age;      /* --db-age (for check)                    */
     bool agent_check_stats;       /* --stats (for check)                     */
     bool agent_check_service_status; /* --service-status (for check)         */
+    char agent_mkdirs_file[NCD_MAX_PATH]; /* --file <path> (for mkdirs)      */
     
     /* Exclusion list options */
     bool exclusion_add;           /* -x <pattern> -- add exclusion pattern   */
@@ -494,6 +495,9 @@ typedef struct {
     /* Service retry count */
     int  service_retry_count;     /* /retry <n> -- max retries for service busy (0=use config default) */
     bool service_retry_set;       /* true if /retry was specified on command line */
+    
+    /* Agentic debug mode */
+    bool agentic_debug;           /* /agdb -- agentic debugging mode         */
 } NcdOptions;
 
 /*

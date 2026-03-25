@@ -398,7 +398,7 @@ call :test_exit_ok H8 "List groups after remove" /gl
 call :test_ncd_no_match H9 "Removed group returns error"          @users
 
 :: ==========================================================================
-:: CATEGORY I: Exclusion Patterns (9 tests)
+:: CATEGORY I: Exclusion Patterns (11 tests)
 :: ==========================================================================
 
 echo --- Category I: Exclusion Patterns ---
@@ -422,7 +422,23 @@ call :test_ncd_finds I8 "Rescan after remove finds Deep" "L10" L10
 
 call :test_exit_ok I9 "Remove nonexistent exclusion" -x- "nonexistent_pattern_xyz"
 
+:: I10: Agent tree should not show excluded directories
+:: Add exclusion for Deep, then rescan
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+call :rescan_testroot
+:: I10a: Verify regular search doesn't find it
+call :test_ncd_no_match I10a "Search excludes Deep" L10
+:: I10b: Verify agent tree also doesn't show it
+"%NCD%" /agent tree "%TESTROOT%" --flat --depth 3 > "%TEMP%\i10_out.txt" 2>&1
+findstr /I /C:"Deep" "%TEMP%\i10_out.txt" >nul 2>&1
+if errorlevel 1 (
+    call :pass I10b "Agent tree excludes excluded directories"
+) else (
+    call :fail I10b "Agent tree excludes excluded directories" "found 'Deep' in agent tree output"
+)
+
 :: Clean up exclusions
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x- ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x- ""*/EmptyDrive""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 
 :: ==========================================================================

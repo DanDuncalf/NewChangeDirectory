@@ -271,11 +271,146 @@ TEST(scan_mounts_handles_empty_mount_list) {
     return 0;
 }
 
+/* Helper to recursively remove directory tree */
+static void rm_rf(const char *path) {
+#if NCD_PLATFORM_WINDOWS
+    char cmd[NCD_MAX_PATH];
+    snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\" 2>nul", path);
+    system(cmd);
+#else
+    char cmd[NCD_MAX_PATH];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" 2>/dev/null", path);
+    system(cmd);
+#endif
+}
+
+/* Helper to create directory */
+static bool make_dir(const char *path) {
+#if NCD_PLATFORM_WINDOWS
+    return _mkdir(path) == 0;
+#else
+    return mkdir(path, 0755) == 0;
+#endif
+}
+
+TEST(scan_mount_excludes_directories_from_database) {
+    const char *test_dir = "test_scan_exclusion_db";
+    
+    /* Clean up any previous test residue */
+    rm_rf(test_dir);
+    
+    /* Create test directory structure:
+     * test_scan_exclusion_db/
+     *   include_dir/
+     *     nested_include/
+     *   exclude_dir/
+     *     nested_exclude/
+     */
+    if (!make_dir(test_dir)) {
+        printf("    SKIPPED (cannot create test directory)\n");
+        return 0;
+    }
+    
+    char path[NCD_MAX_PATH];
+    snprintf(path, sizeof(path), "%s/include_dir", test_dir);
+    if (!make_dir(path)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create include_dir)\n");
+        return 0;
+    }
+    
+    snprintf(path, sizeof(path), "%s/include_dir/nested_include", test_dir);
+    if (!make_dir(path)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create nested_include)\n");
+        return 0;
+    }
+    
+    snprintf(path, sizeof(path), "%s/exclude_dir", test_dir);
+    if (!make_dir(path)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create exclude_dir)\n");
+        return 0;
+    }
+    
+    snprintf(path, sizeof(path), "%s/exclude_dir/nested_exclude", test_dir);
+    if (!make_dir(path)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create nested_exclude)\n");
+        return 0;
+    }
+    
+    /* Create exclusion list that excludes "exclude_dir" */
+    NcdExclusionList exclusions;
+    memset(&exclusions, 0, sizeof(exclusions));
+    exclusions.entries = (NcdExclusionEntry *)ncd_malloc(sizeof(NcdExclusionEntry) * 2);
+    exclusions.capacity = 2;
+    
+    strncpy(exclusions.entries[0].pattern, "*/exclude_dir", sizeof(exclusions.entries[0].pattern));
+    exclusions.entries[0].drive = 0;
+    exclusions.entries[0].match_from_root = false;
+    exclusions.entries[0].has_parent_match = false;
+    exclusions.count = 1;
+    
+    /* Scan with exclusions */
+    NcdDatabase *db = db_create();
+    int count = scan_mount(db, test_dir, true, true, NULL, NULL, &exclusions);
+    
+    /* Should succeed and find some directories */
+    ASSERT_TRUE(count > 0);
+    
+    /* Verify that the test drive was added */
+    ASSERT_EQ_INT(1, db->drive_count);
+    DriveData *drv = &db->drives[0];
+    
+    /* Build path map to check for specific directories */
+    bool found_include_dir = false;
+    bool found_nested_include = false;
+    bool found_exclude_dir = false;
+    bool found_nested_exclude = false;
+    
+    for (int i = 0; i < drv->dir_count; i++) {
+        char full_path[NCD_MAX_PATH];
+        db_full_path(drv, i, full_path, sizeof(full_path));
+        
+        /* Check if path contains our test directories */
+        if (strstr(full_path, "include_dir")) {
+            found_include_dir = true;
+        }
+        if (strstr(full_path, "nested_include")) {
+            found_nested_include = true;
+        }
+        if (strstr(full_path, "exclude_dir")) {
+            found_exclude_dir = true;
+        }
+        if (strstr(full_path, "nested_exclude")) {
+            found_nested_exclude = true;
+        }
+    }
+    
+    /* Verify included directories ARE in database */
+    ASSERT_TRUE(found_include_dir);
+    ASSERT_TRUE(found_nested_include);
+    
+    /* Verify excluded directories are NOT in database */
+    ASSERT_FALSE(found_exclude_dir);
+    ASSERT_FALSE(found_nested_exclude);
+    
+    db_free(db);
+    free(exclusions.entries);
+    
+    /* Cleanup */
+    rm_rf(test_dir);
+    
+    return 0;
+}
+
 /* Test suites */
 void suite_scanner(void) {
     RUN_TEST(scan_mount_populates_database);
     RUN_TEST(scan_mount_respects_hidden_flag);
     RUN_TEST(scan_mount_applies_exclusions);
+    RUN_TEST(scan_mount_excludes_directories_from_database);
     RUN_TEST(scan_subdirectory_merges_into_existing_db);
     RUN_TEST(find_is_directory_returns_true_for_dirs);
     RUN_TEST(find_is_hidden_detects_hidden_entries);

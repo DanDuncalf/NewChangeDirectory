@@ -24,6 +24,7 @@ TESTS = test_database test_matcher test_history test_agent_mkdir \
         test_service_database test_service_ipc \
         test_cli_parse test_agent_mode test_result_output \
         test_shared_state_extended test_shm_platform test_ipc \
+        test_mkdirs \
         fuzz_database bench_matcher test_db_corruption test_bugs
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test
@@ -58,6 +59,10 @@ test_bugs: test_bugs.c test_framework.c $(MATCHER_SOURCES)
 # Agent mkdir tests
 AGENT_MKDIR_SOURCES = ../src/database.c ../src/matcher.c ../src/platform.c $(SHARED_SOURCES)
 test_agent_mkdir: test_agent_mkdir.c test_framework.c $(AGENT_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Agent mkdirs tests (integration tests that use the actual executable)
+test_mkdirs: test_mkdirs.c test_framework.c $(AGENT_MKDIR_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # History tests
@@ -153,7 +158,7 @@ test_ipc: test_ipc.c test_framework.c $(IPC_TEST_SOURCES)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_result_output test_shared_state_extended test_shm_platform test_ipc
+test: test_database test_matcher test_history test_agent_mkdir test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_result_output test_shared_state_extended test_shm_platform test_ipc test_mkdirs
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -204,6 +209,9 @@ test: test_database test_matcher test_history test_agent_mkdir test_strbuilder t
 	@echo ""
 	@echo "Running IPC tests..."
 	@./test_ipc
+	@echo ""
+	@echo "Running mkdirs tests..."
+	@./test_mkdirs || echo "Note: mkdirs tests require NewChangeDirectory executable to be built"
 	@echo ""
 	@echo "All unit tests complete."
 

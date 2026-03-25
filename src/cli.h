@@ -23,6 +23,7 @@ extern "C" {
 #define AGENT_SUB_CHECK     4
 #define AGENT_SUB_COMPLETE  5
 #define AGENT_SUB_MKDIR     6
+#define AGENT_SUB_MKDIRS    8
 #define AGENT_SUB_QUIT      7
 
 /*

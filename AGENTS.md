@@ -346,6 +346,7 @@ typedef struct {
     uint32_t name_off;     // Offset into name_pool
     uint8_t  is_hidden;
     uint8_t  is_system;
+    uint8_t  pad[2];       // Explicit padding for 4-byte alignment
 } DirEntry;
 ```
 
@@ -422,9 +423,11 @@ ncd /hc                   # Clear all history
 ncd /hc3                  # Remove history entry #3
 
 # Exclusions
-ncd -x C:Windows          # Add exclusion pattern
-ncd -x- C:Windows         # Remove exclusion pattern
-ncd -xl                   # List all exclusions
+ncd /x <pattern>          # Add exclusion pattern (e.g., /x C:Windows)
+ncd /x- <pattern>         # Remove exclusion pattern
+ncd /xl                   # List all exclusions
+
+(Note: `-x`, `-x-`, `-xl` are also accepted)
 
 # Configuration
 ncd /c                    # Edit configuration (set default options)
@@ -439,6 +442,8 @@ ncd /agent ls <path> [--json] [--depth N] [--dirs-only|--files-only]
 ncd /agent tree <path> [--json] [--depth N] [--flat]  # Show directory tree from DB
 ncd /agent check <path> | --db-age | --stats | --service-status
 ncd /agent complete <partial> [--limit N]  # Shell tab-completion
+ncd /agent mkdir <path>  # Create single directory
+ncd /agent mkdirs [--file <path>] [--json] <content>  # Create directory tree
 
 # Service management
 ncd_service start         # Start resident service (faster startup)
@@ -626,23 +631,15 @@ Displays directories as an indented tree with 2 spaces per level:
 $ ncd /agent tree /home/user --depth 2
 docs
   architecture
-    code_quality.md
-    linux_port.md
-    test_strategy.md
   history
-    baseline.md
-    final_summary.md
 ```
 
 **2. Flat Format with Full Paths (`--flat`)**
 Displays directories as relative paths with platform-specific separators:
 ```bash
 $ ncd /agent tree /home/user --depth 2 --flat
-architecture/code_quality.md
-architecture/linux_port.md
-architecture/test_strategy.md
-history/baseline.md
-history/final_summary.md
+docs/architecture
+docs/history
 ```
 
 **3. JSON Format (`--json`)**
@@ -650,13 +647,9 @@ Returns structured JSON with name and depth fields:
 ```bash
 $ ncd /agent tree /home/user --depth 2 --json
 {"v":1,"tree":[
-  {"n":"architecture","d":0},
-  {"n":"code_quality.md","d":1},
-  {"n":"linux_port.md","d":1},
-  {"n":"test_strategy.md","d":1},
-  {"n":"history","d":0},
-  {"n":"baseline.md","d":1},
-  {"n":"final_summary.md","d":1}
+  {"n":"docs","d":0},
+  {"n":"architecture","d":1},
+  {"n":"history","d":1}
 ]}
 ```
 
@@ -665,11 +658,8 @@ Combines JSON structure with full relative paths:
 ```bash
 $ ncd /agent tree /home/user --depth 2 --json --flat
 {"v":1,"tree":[
-  {"n":"architecture/code_quality.md","d":1},
-  {"n":"architecture/linux_port.md","d":1},
-  {"n":"architecture/test_strategy.md","d":1},
-  {"n":"history/baseline.md","d":1},
-  {"n":"history/final_summary.md","d":1}
+  {"n":"docs/architecture","d":1},
+  {"n":"docs/history","d":1}
 ]}
 ```
 
@@ -700,7 +690,70 @@ ncd /agent complete dow --limit 20
 
 # Create directory (creates parent directories as needed)
 ncd /agent mkdir /home/user/new/project
+
+# Create directory tree from JSON or flat file format
+ncd /agent mkdirs --file tree.txt
+ncd /agent mkdirs '[{"name":"project","children":[{"name":"src"}]}]' --json
 ```
+
+### Agent Mkdirs Input Formats
+
+The `/agent mkdirs` command creates a complete directory tree structure from either a flat file or JSON input.
+
+**1. Flat File Format (default)**
+Uses 2-space indentation to indicate directory nesting:
+```
+$ cat tree.txt
+project
+  src
+    core
+    ui
+  docs
+  tests
+
+$ ncd /agent mkdirs --file tree.txt
+Creating directory tree...
+
+project: Directory created
+project\src: Directory created
+project\src\core: Directory created
+project\src\ui: Directory created
+project\docs: Directory created
+project\tests: Directory created
+
+Created 6 directories
+```
+
+**2. JSON Format**
+Supports two JSON structures:
+
+*Simple string array:*
+```bash
+$ ncd /agent mkdirs '["dir1", "dir2", "dir3"]'
+```
+
+*Object tree with children:*
+```bash
+$ ncd /agent mkdirs '[{"name":"project","children":[{"name":"src","children":[{"name":"core"}]}]}]'
+```
+
+**3. JSON Output Format (`--json`)**
+Returns structured JSON with per-directory results:
+```bash
+$ ncd /agent mkdirs --file tree.txt --json
+{"v":1,"dirs":[
+  {"path":"project","result":"created","message":"Directory created"},
+  {"path":"project\\src","result":"created","message":"Directory created"}
+]}
+```
+
+Result codes:
+- `created` - Directory was created
+- `exists` - Directory already exists
+- `error_perms` - Permission denied
+- `error_parent` - Failed to create parent directory
+- `error_path` - Invalid path
+- `error` - Other error
 
 Exit codes:
 - `0` - Success / Found
@@ -722,7 +775,7 @@ Exit codes:
 
 1. No symlink cycle detection on Linux
 2. Windows-only: No Unicode/wide-char support (ANSI only)
-3. History limited to 100 entries (NCD_HEUR_MAX_ENTRIES)
+3. Directory history limited to 9 entries (NCD_DIR_HISTORY_MAX); frequent search history limited to 100 entries (NCD_HEUR_MAX_ENTRIES)
 4. Database refresh triggered manually, by configurable interval, or disabled
 5. No network drive support on Linux (only local filesystems)
 6. Requires external `../shared/` library for building
@@ -757,14 +810,20 @@ Exit codes:
 | `test/test_service_parity.c` | Service vs standalone parity tests |
 | `test/test_service_lifecycle.c` | Service start/stop/restart lifecycle tests |
 | `test/test_service_integration.c` | NCD client service status integration tests |
+| `test/test_service_database.c` | Service database loading and query tests |
+| `test/test_service_ipc.c` | Service IPC communication protocol tests |
 
 ## Version History
 
 - Current binary version: 2 (added CRC64 checksum)
-- Current metadata version: 1
+- Current metadata format version: 1 (container format)
 - Current heuristics version: 1
 - Current config version: 3 (added rescan_interval_hours)
-- Current build version: 1.2
+- Current build version: 1.3
+
+Note: The metadata file (ncd.metadata) has its own format version (1), while the
+config section inside it uses config version 3. These are independent version
+numbers for different layers of the data structure.
 
 When changing database format:
 1. Increment `NCD_BIN_VERSION` in `ncd.h`
