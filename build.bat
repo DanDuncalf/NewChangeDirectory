@@ -205,7 +205,7 @@ cl %CFLAGS% /Fo%ARCH_OBJDIR%\matcher.obj %SRCDIR%\matcher.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\ui.obj %SRCDIR%\ui.c
 if errorlevel 1 exit /b 1
-cl %CFLAGS% /Fo%ARCH_OBJDIR%\platform.obj %SRCDIR%\platform.c
+cl %CFLAGS% /Fo%ARCH_OBJDIR%\platform_ncd.obj %SRCDIR%\platform_ncd.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\cli.obj %SRCDIR%\cli.c
 if errorlevel 1 exit /b 1
@@ -216,6 +216,8 @@ if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\state_backend_service.obj %SRCDIR%\state_backend_service.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\shared_state.obj %SRCDIR%\shared_state.c
+if errorlevel 1 exit /b 1
+cl %CFLAGS% /Fo%ARCH_OBJDIR%\shm_types.obj %SRCDIR%\shm_types.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\shm_platform_win.obj %SRCDIR%\shm_platform_win.c
 if errorlevel 1 exit /b 1
@@ -243,7 +245,7 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET_EXE% ^
     %ARCH_OBJDIR%\scanner.obj ^
     %ARCH_OBJDIR%\matcher.obj ^
     %ARCH_OBJDIR%\ui.obj ^
-    %ARCH_OBJDIR%\platform.obj ^
+    %ARCH_OBJDIR%\platform_ncd.obj ^
     %ARCH_OBJDIR%\cli.obj ^
     %ARCH_OBJDIR%\result.obj ^
     %ARCH_OBJDIR%\sh_platform.obj ^
@@ -252,6 +254,7 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET_EXE% ^
     %ARCH_OBJDIR%\state_backend_local.obj ^
     %ARCH_OBJDIR%\state_backend_service.obj ^
     %ARCH_OBJDIR%\shared_state.obj ^
+    %ARCH_OBJDIR%\shm_types.obj ^
     %ARCH_OBJDIR%\shm_platform_win.obj ^
     %ARCH_OBJDIR%\control_ipc_win.obj ^
     kernel32.lib user32.lib advapi32.lib shlwapi.lib
@@ -271,10 +274,11 @@ link /nologo /SUBSYSTEM:CONSOLE /OUT:%SERVICE_EXE% ^
     %ARCH_OBJDIR%\database.obj ^
     %ARCH_OBJDIR%\scanner.obj ^
     %ARCH_OBJDIR%\matcher.obj ^
-    %ARCH_OBJDIR%\platform.obj ^
+    %ARCH_OBJDIR%\platform_ncd.obj ^
     %ARCH_OBJDIR%\cli.obj ^
     %ARCH_OBJDIR%\result.obj ^
     %ARCH_OBJDIR%\shared_state.obj ^
+    %ARCH_OBJDIR%\shm_types.obj ^
     %ARCH_OBJDIR%\shm_platform_win.obj ^
     %ARCH_OBJDIR%\control_ipc_win.obj ^
     %ARCH_OBJDIR%\sh_platform.obj ^

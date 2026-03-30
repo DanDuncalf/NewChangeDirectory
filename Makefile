@@ -44,7 +44,7 @@ COMMON_SOURCES := \
     $(SRCDIR)/database.c  \
     $(SRCDIR)/scanner.c   \
     $(SRCDIR)/matcher.c   \
-    $(SRCDIR)/platform.c  \
+    $(SRCDIR)/platform_ncd.c  \
     $(SRCDIR)/cli.c       \
     $(SRCDIR)/result.c    \
     $(SRCDIR)/state_backend_local.c \

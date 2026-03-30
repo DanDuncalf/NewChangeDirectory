@@ -74,7 +74,7 @@ COMMON_SOURCES=(
     "${SRC_DIR}/database.c"
     "${SRC_DIR}/scanner.c"
     "${SRC_DIR}/matcher.c"
-    "${SRC_DIR}/platform.c"
+    "${SRC_DIR}/platform_ncd.c"
     "${SRC_DIR}/cli.c"
     "${SRC_DIR}/result.c"
     "${SRC_DIR}/state_backend_local.c"

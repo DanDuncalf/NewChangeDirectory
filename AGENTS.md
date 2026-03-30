@@ -45,8 +45,7 @@ NewChangeDirectory/
 │   ├── matcher.c/.h          # Search matching algorithm (chain + fuzzy)
 │   ├── ui.c/.h               # Interactive terminal UI (selector + navigator + history)
 │   ├── platform.c/.h         # NCD-specific platform wrappers (includes ../shared/)
-│   ├── strbuilder.c/.h       # Dynamic string builder for JSON output
-│   ├── common.c              # Memory allocation wrappers
+│   ├── strbuilder.h          # Compatibility shim to ../shared/strbuilder.h
 │   ├── state_backend.h       # State access abstraction (local or service)
 │   ├── state_backend_local.c # Local disk state implementation
 │   ├── state_backend_service.c # Service-backed state implementation
@@ -119,8 +118,8 @@ The project requires a shared platform abstraction library located at `../shared
 | SHM Platform | Cross-platform shared memory wrapper | `shm_platform.h`, `shm_platform_win.c`, `shm_platform_posix.c` |
 | Control IPC | Inter-process communication for service/client | `control_ipc.h`, `control_ipc_win.c`, `control_ipc_posix.c` |
 | Service | Resident state service implementation | `service_main.c`, `service_state.c/.h`, `service_publish.c/.h` |
-| String Builder | Dynamic string construction, JSON escaping | `strbuilder.c/.h` |
-| Common | Memory allocation wrappers that exit on OOM | `common.c` |
+| String Builder | Dynamic string construction, JSON escaping | `../shared/strbuilder.c` + `src/strbuilder.h` |
+| Common | Memory allocation wrappers that exit on OOM | `../shared/common.c` |
 
 ## Build Commands
 
@@ -163,6 +162,65 @@ CC=clang ./build.sh    # Build with Clang
 Open `src/ncd.sln` in Visual Studio 2019/2022 and build from IDE.
 
 ## Testing
+
+### Test Isolation (CRITICAL)
+
+All tests must be **completely isolated** from the user's real data:
+
+| Resource | User Data | Test Data |
+|----------|-----------|-----------|
+| **Drives/Mounts** | `C:`, `D:`, etc. | VHD (Windows) or ramdisk (WSL) |
+| **Metadata** | `%LOCALAPPDATA%\NCD\ncd.metadata` | Temp directory via `-conf` or env override |
+| **Databases** | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `/d <path>` |
+
+**Rules for writing tests:**
+1. **Never use bare `/r`** - Always use `/r.` (subdirectory) or `/rDRIVE` (specific drive)
+2. **Never scan user drives** - Only scan the test VHD/ramdisk/temp directory
+3. **Never modify user metadata** - Use `-conf <temp_path>` for custom metadata location
+4. **Clean up after tests** - Remove all test files and databases
+5. **Use `NCD_TEST_MODE=1`** - Set this environment variable to disable background rescans during testing
+
+### Comprehensive Test Runner (All 4 Environments)
+
+The comprehensive test runner executes all NCD tests across **all four testing environments**:
+
+| Environment | Platform | Service State | Description |
+|-------------|----------|---------------|-------------|
+| 1 | Windows | Standalone | Tests without resident service (disk-based state) |
+| 2 | Windows | With Service | Tests with resident service (shared memory state) |
+| 3 | WSL | Standalone | Tests without resident service (disk-based state) |
+| 4 | WSL | With Service | Tests with resident service (shared memory state) |
+
+**PowerShell (Windows or WSL):**
+```powershell
+cd test
+powershell -ExecutionPolicy Bypass -File run_all_tests.ps1
+```
+
+**Bash (WSL):**
+```bash
+cd test
+./run_all_tests.sh
+```
+
+**Makefile (WSL):**
+```bash
+cd test
+make all-environments          # All 4 environments
+make all-environments-standalone # Standalone only (no service)
+```
+
+**Options:**
+```bash
+--windows-only       # Run only Windows tests
+--wsl-only           # Run only WSL tests
+--no-service         # Skip tests with service running
+--skip-unit-tests    # Skip unit tests
+--skip-feature-tests # Skip feature tests
+--verbose            # Show detailed test output
+```
+
+This ensures all functionality works correctly regardless of platform or whether the optional resident service is running.
 
 ### Running Unit Tests
 
@@ -220,22 +278,69 @@ cd test && make service-parity
 
 ### Test Coverage
 
-**Database Tests:**
-- `create_and_free` - Database creation and cleanup
-- `add_drive` - Adding drives to database
-- `add_directory` - Adding directories with parent relationships
-- `full_path_reconstruction` - Reconstructing full paths from parent chain
-- `binary_save_load_roundtrip` - Binary format serialization/deserialization
-- `binary_load_corrupted_rejected` - Rejection of corrupted binary files
-- `binary_load_truncated_rejected` - Rejection of truncated binary files
+The NCD test suite contains **325+ unit tests** across multiple test files. See `test/README.md` for comprehensive documentation.
 
-**Matcher Tests:**
-- `match_single_component` - Single-component search matching
-- `match_two_components` - Multi-component path matching
-- `match_case_insensitive` - Case-insensitive matching
-- `match_with_hidden_filter` - Hidden directory filtering
-- `match_no_results` - Empty result handling
-- `match_empty_search` - Empty search handling
+**Coverage by Category:**
+
+| Category | Tests | Coverage % | Notes |
+|----------|-------|------------|-------|
+| Database operations | 52 | 90% | Excellent |
+| Search/matching | 23 | 85% | Very good |
+| CLI parsing | 62 | 90% | Good (extended tests added) |
+| Agent mode args | 47 | 75% | Good (parsing + integration) |
+| Platform abstraction | 46 | 70% | Good (extended tests added) |
+| Shared library | 61 | 80% | Good (string builder + memory) |
+| Service lifecycle | 46 | 80% | Good |
+| Integration/feature | 119+ | 85% | Good (exit codes + behavior) |
+| **Overall** | **325+** | **~85%** | **Very good for C project** |
+
+**Database Tests (test_database.c - 34 tests):**
+- **Basic:** `create_and_free`, `add_drive`, `add_directory`, `full_path_reconstruction`
+- **Save/Load:** `binary_save_load_roundtrip`, `json_save_load_roundtrip`, `load_auto_detects_*`
+- **Corruption:** `binary_load_corrupted_rejected`, `binary_load_truncated_rejected`
+- **Version:** `check_file_version_*`, `check_all_versions_with_no_databases`
+- **Config:** `config_init_defaults_*`, `config_save_load_roundtrip`, `config_encoding_*`
+- **Exclusions:** `exclusion_add_*`, `exclusion_remove_*`, `exclusion_check_*`
+- **Heuristics:** `heur_calculate_score_*`, `heur_find_*`, `heur_find_best_*`
+- **Drive:** `drive_backup_*`, `find_drive_*`
+- **Text Encoding:** `text_encoding_*`, `binary_save_load_utf8_*`, `binary_save_load_utf16_*`
+- **Version Consistency:** `saved_database_version_matches_current`, `saved_database_version_is_correct_binary_version`
+- **Exclusion Filtering:** `filter_excluded_*`
+
+**Matcher Tests (test_matcher.c - 23 tests):**
+- **Basic:** `match_single_component`, `match_two_components`, `match_case_insensitive`, `match_with_hidden_filter`, `match_no_results`, `match_empty_search`
+- **Prefix:** `match_prefix_single_component`, `match_prefix_multi_component`
+- **Glob:** `match_glob_star_*`, `match_glob_question_*`, `match_glob_in_path`, `match_glob_no_match`
+- **Fuzzy:** `fuzzy_match_with_typo`, `fuzzy_match_with_transposition`, `fuzzy_match_no_results_on_total_mismatch`, `fuzzy_match_case_difference`
+- **Name Index:** `name_index_build_*`, `name_index_find_by_hash_*`, `name_index_free_*`
+
+**Scanner Tests (test_scanner.c - 9 tests):**
+- `scan_mount_populates_database`, `scan_mount_respects_hidden_flag`, `scan_mount_applies_exclusions`
+- `scan_mount_excludes_directories_from_database`, `scan_subdirectory_merges_into_existing_db`
+- `find_is_directory_*`, `find_is_hidden_*`, `find_is_reparse_*`, `scan_mounts_handles_empty_mount_list`
+
+**Metadata Tests (test_metadata.c - 11 tests):**
+- `metadata_create_*`, `metadata_save_load_roundtrip`, `metadata_exists_*`
+- `metadata_preserves_config_section`, `metadata_preserves_groups_section`
+- `metadata_preserves_exclusions_section`, `metadata_preserves_heuristics_section`, `metadata_preserves_history_section`
+- `metadata_cleanup_legacy_*`, `metadata_free_*`, `metadata_group_remove_path`
+
+**Platform Tests (test_platform.c - 12 tests):**
+- `strcasestr_*` (3 tests), `is_drive_specifier_*` (2 tests)
+- `parse_drive_from_search_*` (2 tests), `build_mount_path_*`
+- `filter_available_drives_*`, `is_pseudo_fs_*`, `get_app_title_*`, `db_default_path_*`
+
+**Additional Test Files:**
+- **test_strbuilder.c** (15 tests) - String builder and JSON escaping
+- **test_strbuilder_extended.c** (39 tests) - Extended string builder tests
+- **test_common.c** (7 tests) - Memory allocation and overflow checking
+- **test_common_extended.c** (37 tests) - Extended memory allocation tests
+- **test_history.c** (14 tests) - Directory history operations
+- **test_db_corruption.c** (16+ tests) - Database corruption handling
+- **test_bugs.c** (20 tests) - Known bug detection
+- **test_cli_parse_extended.c** (31 tests) - Extended CLI parsing tests
+- **test_platform_extended.c** (34 tests) - Extended platform abstraction tests
+- **test_integration_extended.c** (19 tests) - Extended integration tests
 
 **Shared State Tests:**
 - `header_validation` - Snapshot header validation
@@ -247,30 +352,16 @@ cd test && make service-parity
 
 The service test suite validates the NCD State Service functionality across Windows and Linux:
 
-**Service Lifecycle Tests (`test_service_lifecycle.c`):**
-- `service_status_when_stopped` - Verify service reports stopped when not running
-- `service_start_when_stopped` - Start service successfully
-- `service_double_start_fails` - Prevent starting an already-running service
-- `service_stop_when_running` - Stop a running service
-- `service_stop_when_already_stopped` - Handle stop when service not running
-- `service_restart` - Stop and restart service
-- `service_ipc_ping` - Verify IPC connectivity when service is running
-- `service_ipc_ping_when_stopped` - Verify IPC fails when service stopped
-- `service_ipc_get_version` - Query service version via IPC
-- `service_ipc_get_state_info` - Query service state information
-- `service_ipc_shutdown_request` - Request graceful shutdown via IPC
-- `service_state_progression` - Verify STARTING → LOADING → READY progression
+**Service Lifecycle Tests (`test_service_lifecycle.c` - 13 tests):**
+- **Lifecycle:** `service_status_when_stopped`, `service_start_when_stopped`, `service_double_start_fails`, `service_stop_when_running`, `service_stop_when_already_stopped`, `service_restart`
+- **IPC:** `service_ipc_ping`, `service_ipc_ping_when_stopped`, `service_ipc_get_version`, `service_ipc_get_state_info`, `service_ipc_shutdown_request`
+- **State:** `service_state_progression` - Verify STARTING → LOADING → READY progression
+- **Termination:** `service_termination_graceful_then_force`
 
-**Service Integration Tests (`test_service_integration.c`):**
-- `help_shows_standalone_when_service_stopped` - Verify `ncd /?` shows "Standalone" when service stopped
-- `help_shows_service_running_when_service_active` - Verify `ncd /?` shows service status when running
-- `agent_service_status_not_running` - `ncd /agent check --service-status` when stopped
-- `agent_service_status_json_not_running` - JSON output format when service stopped
-- `agent_service_status_running` - Plain text status when service running
-- `agent_service_status_json_running` - JSON status when service running
-- `agent_service_status_after_stop` - Verify status reflects after stopping service
-- `ncd_search_works_without_service` - Verify NCD works in standalone mode
-- `ncd_search_works_with_service` - Verify NCD works with service backing
+**Service Integration Tests (`test_service_integration.c` - 12 tests):**
+- **Help Output:** `help_shows_standalone_when_service_stopped`, `help_shows_service_running_when_service_active`, `help_includes_exclusion_and_agent_options`
+- **Agent Status:** `agent_service_status_not_running`, `agent_service_status_json_not_running`, `agent_service_status_running`, `agent_service_status_json_running`, `agent_service_status_after_stop`
+- **Operation:** `ncd_search_works_without_service`, `ncd_search_works_with_service`, `a_flag_is_not_agent_alias`
 
 **Running Service Tests:**
 
@@ -294,6 +385,13 @@ build-and-run-tests.bat
 - Linux: `ncd_service`
 
 Tests will skip gracefully if the service executable is not available.
+
+**Test Infrastructure Note (Windows):**
+NCD automatically detects when stdout is redirected (e.g., in tests or when piping output) and switches from direct console writes (`CONOUT$`) to standard stdout output. This allows:
+- Help text output (`ncd /?`) to be captured via pipe redirection for testing
+- Proper operation in both interactive (console) and batch (redirected) modes
+
+The detection uses `GetConsoleMode()` on Windows and `isatty()` on Linux. When redirected, output goes through `fputs(stdout)`; when in a console, output uses `WriteConsoleA()` for better TUI performance.
 
 ## Code Style Guidelines
 
@@ -450,6 +548,10 @@ ncd_service start         # Start resident service (faster startup)
 ncd_service stop          # Stop resident service
 ncd /agent check --service-status  # Check if service is running
 
+# Configuration Override
+ncd -conf <path>          # Use custom metadata file path
+ncd_service start -conf <path>  # Service with custom metadata path
+
 # Help
 ncd /?                    # or /h
 ncd /v                    # Version info
@@ -559,6 +661,34 @@ All database writes use temp-file-then-rename pattern:
 3. Move `.tmp` to final name
 4. On failure: restore from `.old`
 
+### Configuration Override (`-conf` option)
+
+The `-conf <path>` option allows specifying a custom metadata file location instead of using the default platform-specific paths. This is useful for:
+
+- **Testing:** Use isolated configuration during test runs
+- **Multiple profiles:** Maintain separate configurations for different workflows
+- **Portable installations:** Keep configuration alongside the executable
+- **Shared environments:** Use a common configuration across user accounts
+
+**Usage:**
+```bash
+# Use custom metadata file
+ncd -conf C:\MyConfig\ncd.metadata downloads
+
+# Service with custom configuration
+ncd_service start -conf /opt/ncd/config/ncd.metadata
+```
+
+**Behavior:**
+- When `-conf` is specified, all metadata operations (config, groups, exclusions, heuristics, history) use the specified file
+- Per-drive database files are still loaded from their default locations or the location specified by `/d <path>`
+- The override applies to both NCD client and NCD Service when specified
+- If the file doesn't exist, it will be created with default settings
+
+**Platform Notes:**
+- Windows: Use full paths with drive letters (e.g., `C:\path\to\ncd.metadata`)
+- Linux: Use absolute paths (e.g., `/home/user/.config/ncd/ncd.metadata`)
+
 ## Architecture Decisions
 
 ### Why a wrapper script?
@@ -592,6 +722,8 @@ The auto-rescan interval is now configurable. Use `ncd /c` to edit the configura
 
 The default is 24 hours. When the database is older than the configured interval, NCD will automatically spawn a background rescan after a successful navigation.
 
+**⚠️ WARNING:** The background rescan uses `ncd /r` which scans **ALL drives/mounts**. If you don't want this behavior, set `rescan_interval_hours=-1` or be aware that using `ncd` manually (outside of test mode) may trigger full system scans.
+
 ### Why two UI modes?
 
 1. **Selector:** List of search results with live filtering (arrow keys to select, type to filter)
@@ -605,6 +737,153 @@ This mirrors Norton Commander's behavior for both search-driven and browse-drive
 - Eliminates disk I/O on client startup when service is running
 - Client falls back to standalone mode if service unavailable
 - Service handles persistence and snapshot publication
+
+## Shared Memory Architecture
+
+NCD uses a platform-native shared memory (SHM) architecture for zero-copy state sharing between the resident service and clients.
+
+### Design Principles
+
+1. **No hardcoded offsets** - All offsets calculated using `sizeof()` and `offsetof()`
+2. **Variable mount points** - Not limited to 26 drive letters; supports any mount path
+3. **Platform-native text encoding**:
+   - **Windows**: UTF-16 (`wchar_t`) - No conversion, full international character support
+   - **Linux**: UTF-8 (`char`) - Native format
+4. **Zero-copy client access** - Clients map SHM directly, no data copying
+
+### Platform Abstraction Types
+
+```c
+/* src/shm_types.h */
+
+#ifdef NCD_PLATFORM_WINDOWS
+/* Windows: UTF-16 (WCHAR) for all paths */
+typedef wchar_t NcdShmChar;
+#define NCD_SHM_PATH_MAX NCD_MAX_PATH
+#define NCD_SHM_TEXT_ENCODING NCD_TEXT_UTF16LE
+#define shm_strlen wcslen
+#define shm_strcpy wcscpy
+#define shm_snprintf snwprintf
+#define SHM_PATH_FMT "%ls"
+#else
+/* Linux: UTF-8 (char) for all paths */
+typedef char NcdShmChar;
+#define NCD_SHM_PATH_MAX NCD_MAX_PATH
+#define NCD_SHM_TEXT_ENCODING NCD_TEXT_UTF8
+#define shm_strlen strlen
+#define shm_strcpy strcpy
+#define shm_snprintf snprintf
+#define SHM_PATH_FMT "%s"
+#endif
+```
+
+### SHM Database Format
+
+```
+ShmDatabaseHeader (32 bytes)
+  magic = SHM_DATABASE_MAGIC
+  version = 1
+  mount_count = N
+  header_size = sizeof(ShmDatabaseHeader) + N*sizeof(ShmMountEntry)
+  text_encoding = NCD_TEXT_UTF16LE or NCD_TEXT_UTF8
+  
+ShmMountEntry[N] (variable size)
+  mount_point[NCD_SHM_PATH_MAX]  - Full mount path in platform encoding
+  volume_label[64]               - Human-readable label
+  dir_count                      - Number of directories
+  dirs_offset                    - Byte offset to DirEntry array
+  pool_offset                    - Byte offset to name pool
+  pool_size                      - Size of name pool
+
+DirEntry arrays                  - Directory entries
+Name pools                       - String data in platform encoding
+```
+
+### Key Structures
+
+```c
+/* Platform-specific mount entry */
+typedef struct {
+    NcdShmChar mount_point[NCD_SHM_PATH_MAX];   /* Full mount path */
+    NcdShmChar volume_label[64];                /* Human-readable name */
+    uint32_t   dir_count;
+    uint32_t   dirs_offset;      /* Offset from ShmDatabase start */
+    uint32_t   pool_offset;      /* Offset from ShmDatabase start */
+    uint32_t   pool_size;
+} ShmMountEntry;
+
+/* Database header */
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t generation;
+    uint64_t checksum;
+    uint32_t total_size;
+    uint32_t header_size;
+    uint32_t mount_count;
+    uint32_t text_encoding;      /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE */
+} ShmDatabaseHeader;
+```
+
+### Size Calculation (No Hardcoded Offsets)
+
+```c
+size_t shm_database_compute_size(const NcdDatabase *db) {
+    size_t size = sizeof(ShmDatabaseHeader);
+    
+    /* Mount entry array */
+    size += db->drive_count * sizeof(ShmMountEntry);
+    
+    /* Align before first mount's data */
+    size = (size + 7) & ~7;
+    
+    /* Data for each mount */
+    for (int i = 0; i < db->drive_count; i++) {
+        DriveData *drv = &db->drives[i];
+        
+        /* DirEntry array */
+        size += drv->dir_count * sizeof(DirEntry);
+        
+        /* Align before pool */
+        size = (size + 7) & ~7;
+        
+        /* Name pool - size depends on encoding! */
+        size += drv->name_pool_len;
+    }
+    
+    return size;
+}
+```
+
+### Client Access Pattern
+
+```c
+/* Map and validate */
+int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
+    /* ... map database SHM ... */
+    ShmDatabase *db = shm_map(db_shm);
+    
+    /* Validate encoding matches platform */
+    if (db->hdr.text_encoding != NCD_SHM_TEXT_ENCODING) {
+        return -1;  /* Encoding mismatch - service/client version skew */
+    }
+    
+    /* Store pointer - NO COPYING! */
+    view->data.service.db = db;
+    *out = view;
+    return 0;
+}
+```
+
+### Benefits
+
+| Metric | Before | After |
+|--------|--------|-------|
+| NcdStateView size | 45,456 bytes | ~48-64 bytes |
+| International paths | Corrupted on Windows | Preserved (UTF-16) |
+| Path encoding | ANSI code page | UTF-16 (Win) / UTF-8 (Linux) |
+| Max path length | 64 chars (label) | 4096 chars (NCD_MAX_PATH) |
+| Drive/mount limit | 64 fixed | Variable (FAM) |
 
 ## Agent Mode
 
@@ -771,6 +1050,22 @@ Exit codes:
 6. **Symlink handling:** On Linux, symlinks are followed; no cycle detection currently
 7. **Shared memory:** User-scoped naming prevents cross-user collisions
 
+## Environment Variables
+
+### `NCD_TEST_MODE`
+When set to any non-empty value (e.g., `NCD_TEST_MODE=1`), disables automatic background rescans. This is used by the test suite to prevent tests from scanning user drives when the database is stale.
+
+**Usage:**
+```bash
+# Disable background rescans during testing
+export NCD_TEST_MODE=1
+ncd some_search
+```
+
+**Note:** When running NCD manually (not through tests), the auto-rescan feature may trigger a full system scan (`ncd /r`) if the database is older than the configured interval (default: 24 hours). To prevent this, either:
+- Set `NCD_TEST_MODE=1` before running NCD
+- Use `ncd /c rescan_interval_hours=-1` to disable auto-rescan permanently
+
 ## Known Limitations
 
 1. No symlink cycle detection on Linux
@@ -791,8 +1086,9 @@ Exit codes:
 | `src/matcher.c` | Chain matching, name index, fuzzy matching with Damerau-Levenshtein |
 | `src/ui.c` | TUI implementation (selector with live filter, navigator, history browser, dialogs) |
 | `src/platform.c` | NCD-specific platform wrappers (delegates to ../shared/) |
-| `src/strbuilder.c` | Dynamic string builder with JSON escaping |
-| `src/common.c` | Memory allocation wrappers with OOM handling |
+| `src/strbuilder.h` | Compatibility shim to shared StringBuilder API |
+| `../shared/strbuilder.c` | Dynamic string builder with JSON escaping |
+| `../shared/common.c` | Memory allocation wrappers with OOM handling |
 | `src/state_backend.h` | State access abstraction interface |
 | `src/state_backend_local.c` | Local disk state implementation |
 | `src/state_backend_service.c` | Service-backed state via shared memory |
