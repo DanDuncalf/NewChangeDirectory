@@ -25,6 +25,18 @@ extern "C" {
 #include <stdint.h>
 #include <time.h>
 
+/* --------------------------------------------------------- text encoding    */
+
+/* Text encoding modes for Windows */
+#define NCD_TEXT_UTF8      1
+#define NCD_TEXT_UTF16LE   2
+
+/* BOM constants */
+#define NCD_UTF8_BOM       "\xEF\xBB\xBF"
+#define NCD_UTF16LE_BOM    "\xFF\xFE"
+#define NCD_UTF8_BOM_LEN   3
+#define NCD_UTF16LE_BOM_LEN 2
+
 /*
  * Platform / architecture detection - from shared library
  */
@@ -47,6 +59,20 @@ typedef long          LONG;
 #define _strnicmp strncasecmp
 #endif
 
+/* --------------------------------------------------------- debug logging    */
+
+/*
+ * Debug logging macro - only outputs when DEBUG is defined.
+ * Use for development/debugging output that should not appear in release builds.
+ * Example: NCD_DEBUG_LOG("MAIN: Starting NCD, argc=%d\n", argc);
+ */
+#if DEBUG
+#include <stdio.h>
+#define NCD_DEBUG_LOG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#else
+#define NCD_DEBUG_LOG(fmt, ...) ((void)0)
+#endif
+
 /* --------------------------------------------------------- binary format   */
 
 /*
@@ -54,7 +80,7 @@ typedef long          LONG;
  * Spells 'NCDB' in little-endian memory order.
  */
 #define NCD_BIN_MAGIC    0x4244434EU   /* 'N'=0x4E,'C'=0x43,'D'=0x44,'B'=0x42 */
-#define NCD_BIN_VERSION  2   /* Incremented: added CRC64 checksum field */
+#define NCD_BIN_VERSION  3   /* Incremented: added encoding field and UTF-16 support */
 
 /* --------------------------------------------------------- metadata format  */
 
@@ -110,10 +136,11 @@ typedef struct {
     uint8_t  show_system;         /* 1 or 0                                     */
     int64_t  last_scan;           /* Unix timestamp (8-byte aligned @ offset 8) */
     uint32_t drive_count;
-    uint8_t  skipped_rescan; /* 1 if user declined rescan after format change */
-    uint8_t  pad[3];              /* reserved, always 0                         */
+    uint8_t  skipped_rescan;      /* 1 if user declined rescan after format change */
+    uint8_t  encoding;            /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE         */
+    uint8_t  pad[2];              /* reserved, always 0                         */
     uint64_t checksum;            /* CRC64 of all data after this header        */
-} BinFileHdr;                     /* 32 bytes */
+} BinFileHdr;                     /* 32 bytes (unchanged size)                 */
 
 /*
  * BinDriveHdr  --  per-drive header; drive_count of these follow BinFileHdr
@@ -214,19 +241,52 @@ typedef struct {
 } DirEntry;                    /* sizeof == 12 bytes (was 268)               */
 
 /*
- * DriveData  --  all scanned directories for one drive
+ * Platform-specific character type for shared memory paths
+ * Windows uses UTF-16 (wchar_t), Linux uses UTF-8 (char)
+ */
+#if NCD_PLATFORM_WINDOWS
+typedef wchar_t NcdShmChar;
+#define NCD_SHM_TEXT_ENCODING NCD_TEXT_UTF16LE
+#define shm_strlen wcslen
+#define shm_strcpy wcscpy
+#define shm_strncpy wcsncpy
+#define shm_snprintf _snwprintf
+#define SHM_PATH_FMT "%ls"
+#define SHM_PATH_SEP L"\\"
+#else
+typedef char NcdShmChar;
+#define NCD_SHM_TEXT_ENCODING NCD_TEXT_UTF8
+#define shm_strlen strlen
+#define shm_strcpy strcpy
+#define shm_strncpy strncpy
+#define shm_snprintf snprintf
+#define SHM_PATH_FMT "%s"
+#define SHM_PATH_SEP "/"
+#endif
+
+/*
+ * DriveData  --  all scanned directories for one drive/mount
+ * 
+ * NOTE: mount_point uses NcdShmChar for platform-native encoding:
+ *   - Windows: UTF-16 wide characters (e.g., L"C:\" or L"C:\Mount\Point")
+ *   - Linux: UTF-8 characters (e.g., "/mnt/c" or "/home")
+ * 
+ * The letter field is deprecated; use mount_point[0] on Windows or
+ * parse mount_point on Linux to extract drive information.
  */
 typedef struct {
-    char      letter;          /* 'A'..'Z'                                   */
-    char      label[64];       /* volume label                               */
-    UINT      type;            /* DRIVE_FIXED / DRIVE_REMOVABLE / etc.       */
+    char      letter;                       /* DEPRECATED: 'A'..'Z' - kept for compatibility */
+    char      label[64];                    /* DEPRECATED: volume label - use volume_label instead */
+    NcdShmChar mount_point[NCD_MAX_PATH];   /* Full mount path (platform-native encoding) */
+    NcdShmChar volume_label[64];            /* Human-readable volume label (platform-native) */
+    UINT      type;                         /* DRIVE_FIXED / DRIVE_REMOVABLE / etc. */
     DirEntry *dirs;
     int       dir_count;
-    int       dir_capacity;    /* allocated slots in dirs[]                  */
+    int       dir_capacity;                 /* allocated slots in dirs[]                  */
     /* String pool: all directory names packed as NUL-terminated strings.   */
     char     *name_pool;
-    size_t    name_pool_len;   /* bytes used                                 */
-    size_t    name_pool_cap;   /* bytes allocated                            */
+    size_t    name_pool_len;                /* bytes used                                 */
+    size_t    name_pool_cap;                /* bytes allocated                            */
 } DriveData;
 
 /*
@@ -284,11 +344,12 @@ typedef struct {
     bool     has_defaults;        /* true if any defaults have been set      */
     uint8_t  service_retry_count; /* Max retries for service busy (0=default)*/
     int16_t  rescan_interval_hours; /* Auto-rescan interval (1-168, or -1=never) */
-    uint8_t  pad[4];              /* Padding for alignment                   */
+    uint8_t  text_encoding;       /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE       */
+    uint8_t  pad[3];              /* Padding for alignment                   */
 } NcdConfig;
 
 #define NCD_CFG_MAGIC    0x43434647U  /* 'G' 'F' 'C' 'C' (NCD Config) in LE    */
-#define NCD_CFG_VERSION  3            /* Incremented: added rescan_interval_hours*/
+#define NCD_CFG_VERSION  4            /* Incremented: added text_encoding field */
 
 /* Default value for service retry count (10 * 100ms = 1 second max wait) */
 #define NCD_DEFAULT_SERVICE_RETRY_COUNT  10
@@ -453,6 +514,7 @@ typedef struct {
     bool config_edit;             /* /c        -- edit configuration         */
     char group_name[NCD_MAX_GROUP_NAME]; /* Group name for /g or /g-        */
     char db_override[NCD_MAX_PATH]; /* /d <path>                             */
+    char conf_override[NCD_MAX_PATH]; /* -conf <path> -- metadata override     */
     char search[NCD_MAX_PATH];    /* the directory pattern argument          */
     bool has_search;
     int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
@@ -466,9 +528,9 @@ typedef struct {
     bool agent_mode;              /* /agent -- agent API mode                */
     int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir, 8=mkdirs */
     bool agent_json;              /* --json output                           */
-    int  agent_limit;             /* --limit N (default 20, 0=unlimited)     */
+    int  agent_limit;             /* --limit N (default: query=unlimited, complete=20) */
     bool agent_depth_sort;        /* --depth (sort shallowest first)         */
-    int  agent_depth;             /* --depth N (for ls/tree)                 */
+    int  agent_depth;             /* --depth N (defaults: ls=1, tree=3)      */
     bool agent_dirs_only;         /* --dirs-only (for ls)                    */
     bool agent_files_only;        /* --files-only (for ls)                   */
     char agent_pattern[64];       /* --pattern <glob> (for ls)               */
@@ -498,6 +560,10 @@ typedef struct {
     
     /* Agentic debug mode */
     bool agentic_debug;           /* /agdb -- agentic debugging mode         */
+    
+    /* Text encoding mode (Windows only) */
+    bool     encoding_switch;     /* /u8 or /u16 was specified               */
+    uint8_t  text_encoding;       /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE       */
 } NcdOptions;
 
 /*

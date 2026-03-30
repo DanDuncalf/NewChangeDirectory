@@ -17,15 +17,8 @@
 
 static char g_last_error[256] = {0};
 
-/* Internal state view structure for local backend */
-struct NcdStateView {
-    NcdStateSourceInfo info;
-    NcdMetadata *metadata;     /* Owned by this view (heap allocated) */
-    NcdDatabase *database;     /* Owned by this view (heap allocated) */
-    bool metadata_loaded;
-    bool database_loaded;
-    bool metadata_dirty;       /* Track if metadata needs save */
-};
+/* Convenience macros for accessing local mode fields */
+#define LOCAL(view) ((view)->data.local)
 
 /* --------------------------------------------------------- error handling   */
 
@@ -106,16 +99,16 @@ static NcdDatabase *load_all_drive_databases(void) {
  * Save metadata to disk if dirty
  */
 static bool save_metadata_if_dirty(NcdStateView *view) {
-    if (!view->metadata_dirty || !view->metadata) {
+    if (!LOCAL(view).metadata_dirty || !LOCAL(view).metadata) {
         return true;
     }
 
-    if (!db_metadata_save(view->metadata)) {
+    if (!db_metadata_save(LOCAL(view).metadata)) {
         set_error("Failed to save metadata");
         return false;
     }
 
-    view->metadata_dirty = false;
+    LOCAL(view).metadata_dirty = false;
     return true;
 }
 
@@ -143,25 +136,25 @@ int state_backend_open_local(NcdStateView **out, NcdStateSourceInfo *info) {
     view->info.db_generation = 0;
 
     /* Load metadata */
-    view->metadata = db_metadata_load();
-    if (!view->metadata) {
+    LOCAL(view).metadata = db_metadata_load();
+    if (!LOCAL(view).metadata) {
         /* Create empty metadata on failure */
-        view->metadata = db_metadata_create();
-        if (!view->metadata) {
+        LOCAL(view).metadata = db_metadata_create();
+        if (!LOCAL(view).metadata) {
             set_error("Failed to create metadata");
             free(view);
             return -1;
         }
     }
-    view->metadata_loaded = true;
+    LOCAL(view).metadata_loaded = true;
 
     /* Load database (all drives) */
-    view->database = load_all_drive_databases();
-    if (!view->database) {
+    LOCAL(view).database = load_all_drive_databases();
+    if (!LOCAL(view).database) {
         /* Non-fatal: database might not exist yet */
-        view->database = db_create();
+        LOCAL(view).database = db_create();
     }
-    view->database_loaded = (view->database != NULL);
+    LOCAL(view).database_loaded = (LOCAL(view).database != NULL);
 
     /* Fill output info */
     if (info) {
@@ -178,18 +171,18 @@ void state_backend_close(NcdStateView *view) {
     }
 
     /* Save metadata if dirty */
-    if (view->metadata_dirty && view->metadata) {
+    if (LOCAL(view).metadata_dirty && LOCAL(view).metadata) {
         save_metadata_if_dirty(view);
     }
 
     /* Free metadata */
-    if (view->metadata) {
-        db_metadata_free(view->metadata);
+    if (LOCAL(view).metadata) {
+        db_metadata_free(LOCAL(view).metadata);
     }
 
     /* Free database */
-    if (view->database) {
-        db_free(view->database);
+    if (LOCAL(view).database) {
+        db_free(LOCAL(view).database);
     }
 
     /* Free view structure */
@@ -199,17 +192,17 @@ void state_backend_close(NcdStateView *view) {
 /* --------------------------------------------------------- state access     */
 
 const NcdMetadata *state_view_metadata(const NcdStateView *view) {
-    if (!view || !view->metadata_loaded) {
+    if (!view || view->info.from_service || !LOCAL(view).metadata_loaded) {
         return NULL;
     }
-    return view->metadata;
+    return LOCAL(view).metadata;
 }
 
 const NcdDatabase *state_view_database(const NcdStateView *view) {
-    if (!view || !view->database_loaded) {
+    if (!view || view->info.from_service || !LOCAL(view).database_loaded) {
         return NULL;
     }
-    return view->database;
+    return LOCAL(view).database;
 }
 
 /* --------------------------------------------------------- mutations        */
@@ -217,14 +210,14 @@ const NcdDatabase *state_view_database(const NcdStateView *view) {
 int state_backend_submit_heuristic_update(NcdStateView *view,
                                           const char *search,
                                           const char *target) {
-    if (!view || !view->metadata) {
+    if (!view || view->info.from_service || !LOCAL(view).metadata) {
         set_error("No metadata available");
         return -1;
     }
 
     /* Local mode: update directly and mark dirty */
-    db_heur_note_choice((NcdMetadata *)view->metadata, search, target);
-    view->metadata_dirty = true;
+    db_heur_note_choice((NcdMetadata *)LOCAL(view).metadata, search, target);
+    LOCAL(view).metadata_dirty = true;
 
     /* Auto-save in local mode */
     if (!save_metadata_if_dirty(view)) {
@@ -238,12 +231,12 @@ int state_backend_submit_metadata_update(NcdStateView *view,
                                          int update_type,
                                          const void *data,
                                          size_t data_size) {
-    if (!view || !view->metadata) {
+    if (!view || view->info.from_service || !LOCAL(view).metadata) {
         set_error("No metadata available");
         return -1;
     }
 
-    NcdMetadata *meta = (NcdMetadata *)view->metadata;
+    NcdMetadata *meta = (NcdMetadata *)LOCAL(view).metadata;
     bool changed = false;
 
     switch (update_type) {
@@ -328,7 +321,7 @@ int state_backend_submit_metadata_update(NcdStateView *view,
     }
 
     if (changed) {
-        view->metadata_dirty = true;
+        LOCAL(view).metadata_dirty = true;
         if (!save_metadata_if_dirty(view)) {
             return -1;
         }
@@ -350,7 +343,7 @@ int state_backend_request_rescan(NcdStateView *view,
 
 int state_backend_request_flush(NcdStateView *view) {
     /* In local mode, flush just saves metadata if dirty */
-    if (view && view->metadata_dirty) {
+    if (view && !view->info.from_service && LOCAL(view).metadata_dirty) {
         if (!save_metadata_if_dirty(view)) {
             return -1;
         }

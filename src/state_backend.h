@@ -21,15 +21,6 @@ extern "C" {
 /* --------------------------------------------------------- types            */
 
 /*
- * NcdStateView  --  An opaque handle to a state view
- *
- * This represents a coherent snapshot of metadata and/or database state
- * that the client can read from. The actual implementation details are
- * private to the backend.
- */
-typedef struct NcdStateView NcdStateView;
-
-/*
  * NcdStateSourceInfo  --  Information about where state came from
  */
 typedef struct {
@@ -37,6 +28,66 @@ typedef struct {
     uint64_t generation;      /* snapshot generation (0 if not applicable) */
     uint64_t db_generation;   /* database generation (0 if not applicable) */
 } NcdStateSourceInfo;
+
+/*
+ * NcdStateView  --  A unified state view structure for both local and service modes
+ *
+ * This structure can represent state from either local disk (standalone mode)
+ * or from a shared memory service. The from_service flag determines which
+ * fields are valid.
+ *
+ * NOTE: This is the ZERO-COPY refactor version. Service mode uses direct pointers
+ * into mapped shared memory instead of embedded copies.
+ */
+typedef struct NcdStateView {
+    /* Common header - always valid */
+    NcdStateSourceInfo info;
+    
+    /* Mode-specific data - accessed via accessor functions only */
+    union {
+        /* Local mode data (info.from_service == false) */
+        struct {
+            NcdMetadata *metadata;     /* Owned by this view (heap allocated) */
+            NcdDatabase *database;     /* Owned by this view (heap allocated) */
+            bool metadata_loaded;
+            bool database_loaded;
+            bool metadata_dirty;       /* Track if metadata needs save */
+        } local;
+        
+        /* Service mode data (info.from_service == true) - ZERO COPY */
+        struct {
+            void *ipc_client;          /* NcdIpcClient* (opaque) */
+            void *meta_shm;            /* ShmHandle* */
+            void *db_shm;              /* ShmHandle* */
+            void *meta_addr;           /* Mapped shared memory base */
+            void *db_addr;             /* Mapped shared memory base */
+            size_t meta_size;
+            size_t db_size;
+            
+            /* 
+             * ZERO-COPY: Pointers directly into shared memory.
+             * 
+             * metadata_ptr points to ShmMetadataHeader + sections.
+             * Use SHM_PTR macros to access actual sections.
+             * 
+             * database_ptr points to ShmDatabaseHeader + mount entries.
+             * Use SHM_MOUNT_* macros to access mount data.
+             */
+            void *metadata_ptr;        /* Direct pointer to metadata snapshot */
+            void *database_ptr;        /* Direct pointer to database snapshot */
+            
+            /* 
+             * Minimal view structures pointing to shared memory.
+             * These are initialized to reference SHM data via pointers.
+             */
+            NcdMetadata *metadata_view;  /* Points to parsed metadata (may reference SHM) */
+            NcdDatabase *database_view;  /* Points to parsed database (references SHM) */
+            
+            bool has_metadata;
+            bool has_database;
+        } service;
+    } data;
+} NcdStateView;
 
 /* --------------------------------------------------------- lifecycle        */
 

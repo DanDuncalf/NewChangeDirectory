@@ -22,6 +22,7 @@
 #include <string.h>
 #include <signal.h>
 #include <time.h>
+#include <stdarg.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
@@ -37,6 +38,7 @@ static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
 static volatile int g_shutdown_requested = 0;
 static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
+static int g_file_log = 0;    /* Set to 1 for file logging */
 
 #if NCD_PLATFORM_WINDOWS
 /* Named objects for service instance detection and control */
@@ -51,6 +53,47 @@ static HANDLE g_hStopEvent = NULL;
 
 /* Debug logging macro */
 #define DBG_LOG(...) do { if (g_debug_mode) printf(__VA_ARGS__); } while(0)
+
+/* File logging for debugging startup issues */
+static FILE *g_log_file = NULL;
+static void log_init(void) {
+    const char *home = getenv("HOME");
+    const char *tmp = getenv("TMPDIR");
+    char log_path[MAX_PATH];
+    if (home) {
+        snprintf(log_path, sizeof(log_path), "%s/ncd_service.log", home);
+    } else if (tmp) {
+        snprintf(log_path, sizeof(log_path), "%s/ncd_service.log", tmp);
+    } else {
+        snprintf(log_path, sizeof(log_path), "/tmp/ncd_service.log");
+    }
+    g_log_file = fopen(log_path, "a");
+    if (g_log_file) {
+        time_t now = time(NULL);
+        fprintf(g_log_file, "\n=== NCD Service Starting at %s", ctime(&now));
+        fflush(g_log_file);
+    }
+}
+static void log_msg(const char *fmt, ...) {
+    if (!g_log_file) return;
+    va_list args;
+    va_start(args, fmt);
+    time_t now = time(NULL);
+    char timebuf[32];
+    strftime(timebuf, sizeof(timebuf), "%H:%M:%S", localtime(&now));
+    fprintf(g_log_file, "[%s] ", timebuf);
+    vfprintf(g_log_file, fmt, args);
+    fprintf(g_log_file, "\n");
+    fflush(g_log_file);
+    va_end(args);
+}
+static void log_close(void) {
+    if (g_log_file) {
+        log_msg("Service shutting down");
+        fclose(g_log_file);
+        g_log_file = NULL;
+    }
+}
 
 /* Forward declaration for background loader */
 static void start_background_loader(ServiceState *state, SnapshotPublisher *pub);
@@ -87,6 +130,8 @@ static void setup_signal_handlers(void) {
 #else
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    /* Ignore SIGHUP so daemon doesn't die when parent exits */
+    signal(SIGHUP, SIG_IGN);
 #endif
 }
 
@@ -106,7 +151,6 @@ static void handle_get_version(NcdIpcConnection *conn, uint32_t sequence) {
 static void handle_request_shutdown(NcdIpcConnection *conn, uint32_t sequence) {
     g_shutdown_requested = 1;
     ipc_server_send_response(conn, sequence, NULL, 0);
-    printf("NCD Service: Shutdown requested by client\n");
 }
 
 static void handle_get_state_info(NcdIpcConnection *conn, 
@@ -116,10 +160,18 @@ static void handle_get_state_info(NcdIpcConnection *conn,
     SnapshotInfo info;
     snapshot_publisher_get_info(pub, &info);
     
+    /* Get metadata to read text encoding */
+    const NcdMetadata *meta = service_state_get_metadata(state);
+    uint8_t text_encoding = NCD_TEXT_UTF8;
+    if (meta && meta->cfg.text_encoding) {
+        text_encoding = meta->cfg.text_encoding;
+    }
+    
     /* Build response payload with service state */
     NcdStateInfoPayload payload;
     memset(&payload, 0, sizeof(payload));
     payload.protocol_version = NCD_IPC_VERSION;
+    payload.text_encoding = text_encoding;
     payload.meta_generation = info.meta_generation;
     payload.db_generation = info.db_generation;
     payload.meta_size = (uint32_t)info.meta_size;
@@ -388,7 +440,6 @@ static void process_all_pending(ServiceState *state, SnapshotPublisher *pub) {
         }
     }
     
-    printf("NCD Service: Pending requests processed\n");
 }
 
 /*
@@ -631,7 +682,7 @@ static void *loader_thread_func(void *param) {
 #endif
     LoaderContext *ctx = (LoaderContext *)param;
     if (!ctx) {
-        fprintf(stderr, "NCD Service: ERROR - Loader thread received NULL context\n");
+        log_msg("ERROR - Loader thread received NULL context");
         return 0;
     }
     
@@ -639,30 +690,29 @@ static void *loader_thread_func(void *param) {
     SnapshotPublisher *pub = ctx->pub;
     
     if (!state || !pub) {
-        fprintf(stderr, "NCD Service: ERROR - Loader thread received NULL state or pub\n");
+        log_msg("ERROR - Loader thread received NULL state or pub");
         return 0;
     }
     
-    printf("NCD Service: Background loader started\n");
+    log_msg("Background loader started");
     
     /* Load databases */
+    log_msg("About to load databases...");
     extern bool service_state_load_databases(ServiceState *state);
     if (!service_state_load_databases(state)) {
-        fprintf(stderr, "NCD Service: Warning - database loading had issues\n");
+        log_msg("Warning - database loading had issues");
+    } else {
+        log_msg("Database loading completed");
     }
     
     /* Publish database snapshot */
-    printf("NCD Service: Publishing database snapshot...\n");
     if (!snapshot_publisher_publish_db(pub, state)) {
-        fprintf(stderr, "NCD Service: Failed to publish database snapshot\n");
-    } else {
-        printf("NCD Service: Database snapshot published\n");
+        log_msg("Failed to publish database snapshot");
     }
     
     /* Transition to READY state */
     service_state_set_runtime_state(state, SERVICE_STATE_READY);
     service_state_set_status_message(state, "Ready");
-    printf("NCD Service: Ready\n");
     
     /* Process any pending requests that were queued during loading */
     process_all_pending(state, pub);
@@ -679,6 +729,7 @@ static void *loader_thread_func(void *param) {
 static LoaderContext *g_loader_ctx = NULL;
 
 static void start_background_loader(ServiceState *state, SnapshotPublisher *pub) {
+    log_msg("Starting background loader...");
     g_loader_ctx = (LoaderContext *)malloc(sizeof(LoaderContext));
     if (!g_loader_ctx) {
         fprintf(stderr, "NCD Service: Failed to allocate loader context\n");
@@ -747,15 +798,12 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     service_state_set_runtime_state(state, SERVICE_STATE_SCANNING);
     service_state_set_status_message(state, "Scanning filesystem...");
     
-    printf("NCD Service: Starting rescan...\n");
-    
     /* Scan all drives */
     char drives[26];
     int drive_count = platform_get_available_drives(drives, 26);
     
     NcdDatabase *new_db = db_create();
     if (!new_db) {
-        fprintf(stderr, "NCD Service: Failed to create database for rescan\n");
         service_state_set_runtime_state(state, prev_state);
         return;
     }
@@ -766,8 +814,6 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
         if (!platform_build_mount_path(drives[i], mount_path, sizeof(mount_path))) {
             continue;
         }
-        
-        printf("NCD Service: Scanning drive %c:...\n", drives[i]);
         
         DriveData *drv = db_add_drive(new_db, drives[i]);
         if (!drv) continue;
@@ -783,7 +829,6 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
         service_state_update_database(state, new_db, false);
         service_state_bump_db_generation(state);
         snapshot_publisher_publish_db(pub, state);
-        printf("NCD Service: Rescan complete\n");
     } else {
         db_free(new_db);
     }
@@ -795,22 +840,17 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
 static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
     NcdIpcServer *server = ipc_server_init();
     if (!server) {
-        fprintf(stderr, "NCD Service: Failed to initialize IPC server\n");
+        log_msg("service_loop: ipc_server_init returned NULL, exiting");
         return;
     }
+    log_msg("service_loop: ipc_server_init succeeded");
     
-    printf("NCD Service: Running (PID: %d)\n", 
-#if NCD_PLATFORM_WINDOWS
-           GetCurrentProcessId()
-#else
-           (int)getpid()
-#endif
-    );
+    log_msg("service_loop: entering main loop");
     
     time_t last_flush_check = time(NULL);
-    const int FLUSH_INTERVAL_SEC = 30;  /* Flush every 30 seconds if dirty */
+    const int FLUSH_INTERVAL_SEC = 15;  /* Flush every 15 seconds if dirty */
+    const int DEFERRED_FLUSH_SEC = 10;  /* Deferred flush after 10 seconds of no activity */
     
-    int loop_count = 0;
     while (g_running) {
         /* Accept client connections (non-blocking with timeout) */
         NcdIpcConnection *conn = ipc_server_accept(server, 100);  /* 100ms timeout */
@@ -845,32 +885,39 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub) {
         
         /* Check for shutdown request */
         if (g_shutdown_requested) {
-            printf("NCD Service: Processing shutdown request...\n");
             g_running = 0;
             break;
         }
         
         /* Check for flush:
-         * 1. Explicit flush request from client
-         * 2. Full rescan completed (immediate flush)
-         * 3. Periodic flush for partial rescans and metadata (30s interval)
+         * 1. Explicit flush request from client (immediate only)
+         * 2. Deferred flush: ALL database changes (DIRTY_DATABASE and DIRTY_DATABASE_PARTIAL)
+         *    are flushed 10 seconds after the last mutation (timer resets on new mutations)
+         * 3. Periodic flush for metadata-only changes (15s interval)
          */
         time_t now = time(NULL);
-        bool needs_immediate = g_flush_requested || service_state_needs_immediate_flush(state);
+        
+        /* Only explicit flush requests are immediate - all database changes use deferred flush */
+        bool needs_immediate = g_flush_requested;
+        
+        /* Deferred flush: ALL database changes use deferred flush with reset timer.
+         * Both full rescans (DIRTY_DATABASE) and partial updates (DIRTY_DATABASE_PARTIAL)
+         * wait 10 seconds after the last mutation before flushing. */
+        time_t mutation_age = service_state_get_db_mutation_age(state);
+        uint32_t dirty_flags = service_state_get_dirty_flags(state);
+        bool needs_deferred = service_state_needs_flush(state) && 
+                              (dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
+                              mutation_age >= DEFERRED_FLUSH_SEC;
+        
+        /* Periodic flush for metadata-only changes (not database changes) */
         bool needs_periodic = service_state_needs_flush(state) && 
+                              !(dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
                               (now - last_flush_check) > FLUSH_INTERVAL_SEC;
         
-        if (needs_immediate || needs_periodic) {
+        if (needs_immediate || needs_deferred || needs_periodic) {
             g_flush_requested = 0;
             last_flush_check = now;
-            
-            if (service_state_flush(state)) {
-                if (needs_immediate && !needs_periodic) {
-                    printf("NCD Service: Flushed to disk (immediate)\n");
-                } else {
-                    printf("NCD Service: Flushed to disk\n");
-                }
-            }
+            service_state_flush(state);
         }
         
         /* Small sleep to prevent busy-waiting */
@@ -956,8 +1003,6 @@ static int run_service(void) {
     
     (void)g_hStopEvent; /* Unused - IPC used for shutdown */
     
-    printf("NCD State Service starting...\n");
-    
     setup_signal_handlers();
     
     /* Initialize service state */
@@ -985,7 +1030,7 @@ static int run_service(void) {
         CloseHandle(hMutex);
         return 1;
     }
-    printf("NCD Service: Metadata snapshot published\n");
+    log_msg("Metadata snapshot published");
     
     /* Start background loader */
     start_background_loader(state, pub);
@@ -995,7 +1040,6 @@ static int run_service(void) {
     if (!server) {
         fprintf(stderr, "NCD Service: Failed to initialize IPC server\n");
     } else {
-        printf("NCD Service: Running (PID: %lu)\n", GetCurrentProcessId());
         
         time_t last_flush_check = time(NULL);
         const int FLUSH_INTERVAL_SEC = 30;
@@ -1031,16 +1075,11 @@ static int run_service(void) {
             
             /* Check for shutdown request */
             if (g_shutdown_requested) {
-                printf("NCD Service: Processing shutdown request...\n");
                 g_running = 0;
                 break;
             }
             
-            /* Check for flush:
-             * 1. Explicit flush request from client
-             * 2. Full rescan completed (immediate flush)
-             * 3. Periodic flush for partial rescans and metadata (30s interval)
-             */
+            /* Check for flush */
             time_t now = time(NULL);
             bool needs_immediate = g_flush_requested || service_state_needs_immediate_flush(state);
             bool needs_periodic = service_state_needs_flush(state) && 
@@ -1049,13 +1088,7 @@ static int run_service(void) {
             if (needs_immediate || needs_periodic) {
                 g_flush_requested = 0;
                 last_flush_check = now;
-                if (service_state_flush(state)) {
-                    if (needs_immediate && !needs_periodic) {
-                        printf("NCD Service: Flushed to disk (immediate)\n");
-                    } else {
-                        printf("NCD Service: Flushed to disk\n");
-                    }
-                }
+                service_state_flush(state);
             }
             
             Sleep(10);
@@ -1065,7 +1098,6 @@ static int run_service(void) {
     }
     
     /* Cleanup */
-    printf("NCD Service: Shutting down...\n");
     g_running = 0;
     signal_loader_stop();
     wait_for_loader();
@@ -1079,7 +1111,6 @@ static int run_service(void) {
     
     CloseHandle(hMutex);
     
-    printf("NCD Service: Shutdown complete\n");
     return 0;
 }
 
@@ -1109,6 +1140,25 @@ int main(int argc, char *argv[]) {
             }
         }
         
+        /* Check for config override */
+        if (strcmp(argv[1], "-conf") == 0) {
+            if (argc > 2) {
+                db_metadata_set_override(argv[2]);
+                printf("NCD Service: Using config override: %s\n", argv[2]);
+                /* Shift arguments and continue parsing */
+                if (argc > 3) {
+                    argv[1] = argv[3];
+                    argc -= 2;
+                } else {
+                    /* Only -conf was passed, run service */
+                    return run_service();
+                }
+            } else {
+                fprintf(stderr, "NCD Service: -conf requires a path argument\n");
+                return 1;
+            }
+        }
+        
         if (strcmp(argv[1], "start") == 0) {
             if (is_service_running()) {
                 printf("NCD Service: Already running\n");
@@ -1123,7 +1173,17 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             if (signal_stop_service()) {
-                printf("NCD Service: Stop signal sent\n");
+                /* Wait for service to actually stop */
+                int wait_count = 0;
+                while (is_service_running() && wait_count < 50) {
+                    Sleep(100);
+                    wait_count++;
+                }
+                if (is_service_running()) {
+                    fprintf(stderr, "NCD Service: Stop signal sent but service did not stop\n");
+                    return 1;
+                }
+                printf("NCD Service: Stopped\n");
                 return 0;
             }
             fprintf(stderr, "NCD Service: Failed to send stop signal\n");
@@ -1141,7 +1201,7 @@ int main(int argc, char *argv[]) {
         
         /* Unknown command - fall through to print usage */
         fprintf(stderr, "Unknown command: %s\n", argv[1]);
-        fprintf(stderr, "Usage: %s [/agdb] [start|stop|status]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [/agdb] [-conf <path>] [start|stop|status]\n", argv[0]);
         return 1;
     }
     
@@ -1150,15 +1210,152 @@ int main(int argc, char *argv[]) {
     
 #else /* Linux/POSIX */
     
+    /* Initialize file logging early */
+    log_init();
+    log_msg("=== Service starting ===");
+    
     /* Parse command line arguments */
     if (argc > 1) {
+        /* Check for debug flag first */
+        int arg_offset = 0;
         if (strcmp(argv[1], "/agdb") == 0 || strcmp(argv[1], "-agdb") == 0) {
             g_debug_mode = 1;
+            g_file_log = 1;
             printf("NCD Service: Debug mode enabled\n");
+            log_msg("Debug mode enabled via /agdb");
+            arg_offset = 1;
+        }
+        
+        /* Check for config override */
+        if (argc > 1 + arg_offset && strcmp(argv[1 + arg_offset], "-conf") == 0) {
+            if (argc > 2 + arg_offset) {
+                db_metadata_set_override(argv[2 + arg_offset]);
+                printf("NCD Service: Using config override: %s\n", argv[2 + arg_offset]);
+                log_msg("Config override: %s", argv[2 + arg_offset]);
+                arg_offset += 2;
+            } else {
+                fprintf(stderr, "NCD Service: -conf requires a path argument\n");
+                log_msg("Error: -conf without path argument");
+                log_close();
+                return 1;
+            }
+        }
+        
+        /* Handle commands */
+        if (argc > 1 + arg_offset) {
+            const char *cmd = argv[1 + arg_offset];
+            
+            if (strcmp(cmd, "start") == 0) {
+                /* Check if already running */
+                if (ipc_service_exists()) {
+                    printf("NCD Service: Already running\n");
+                    log_msg("Start requested but already running");
+                    log_close();
+                    return 0;
+                }
+                
+                /* Daemonize: fork and exit parent */
+                log_msg("Daemonizing...");
+                pid_t pid = fork();
+                if (pid < 0) {
+                    fprintf(stderr, "NCD Service: Failed to fork\n");
+                    log_msg("Fork failed");
+                    log_close();
+                    return 1;
+                }
+                if (pid > 0) {
+                    /* Parent - wait a moment for child to start */
+                    usleep(500000); /* 500ms */
+                    if (ipc_service_exists()) {
+                        printf("NCD Service started\n");
+                        log_msg("Parent: Service started successfully");
+                    } else {
+                        fprintf(stderr, "NCD Service: Failed to start\n");
+                        log_msg("Parent: Service failed to start");
+                    }
+                    log_close();
+                    return 0;
+                }
+                /* Child continues to run service below */
+                /* Close stdio to daemonize properly */
+                freopen("/dev/null", "r", stdin);
+                freopen("/dev/null", "w", stdout);
+                freopen("/dev/null", "w", stderr);
+                /* Reopen log file in child to avoid sharing with parent */
+                if (g_log_file) {
+                    fclose(g_log_file);
+                    g_log_file = NULL;
+                }
+                log_init();
+                log_msg("Child process continuing after daemonization...");
+            }
+            else if (strcmp(cmd, "stop") == 0) {
+                if (!ipc_service_exists()) {
+                    printf("NCD Service: Not running\n");
+                    log_close();
+                    return 1;
+                }
+                
+                /* Send shutdown request via IPC */
+                if (ipc_client_init() != 0) {
+                    fprintf(stderr, "NCD Service: Failed to init IPC\n");
+                    log_close();
+                    return 1;
+                }
+                
+                NcdIpcClient *client = ipc_client_connect();
+                if (!client) {
+                    fprintf(stderr, "NCD Service: Failed to connect\n");
+                    ipc_client_cleanup();
+                    log_close();
+                    return 1;
+                }
+                
+                NcdIpcResult result = ipc_client_request_shutdown(client);
+                ipc_client_disconnect(client);
+                ipc_client_cleanup();
+                
+                if (result == NCD_IPC_OK) {
+                    /* Wait for service to actually stop */
+                    int wait_count = 0;
+                    while (ipc_service_exists() && wait_count < 50) {
+                        usleep(100000);
+                        wait_count++;
+                    }
+                    if (ipc_service_exists()) {
+                        fprintf(stderr, "NCD Service: Stop signal sent but service did not stop\n");
+                        log_close();
+                        return 1;
+                    }
+                    printf("NCD Service: Stopped\n");
+                } else {
+                    fprintf(stderr, "NCD Service: Failed to send stop signal\n");
+                    log_close();
+                    return 1;
+                }
+                log_close();
+                return 0;
+            }
+            else if (strcmp(cmd, "status") == 0) {
+                bool running = ipc_service_exists();
+                printf(running ? "running\n" : "stopped\n");
+                log_msg("Status check: %s", running ? "running" : "stopped");
+                log_close();
+                return 0;
+            }
+            else if (strcmp(cmd, "--daemon") == 0) {
+                /* Run directly (already daemonized) */
+                log_msg("Running in daemon mode");
+            }
+            else {
+                fprintf(stderr, "Unknown command: %s\n", cmd);
+                fprintf(stderr, "Usage: %s [/agdb] [-conf <path>] [start|stop|status]\n", argv[0]);
+                log_msg("Unknown command: %s", cmd);
+                log_close();
+                return 1;
+            }
         }
     }
-    
-    printf("NCD State Service starting...\n");
     
     setup_signal_handlers();
     
@@ -1166,10 +1363,9 @@ int main(int argc, char *argv[]) {
     ServiceState *state = service_state_init();
     if (!state) {
         fprintf(stderr, "NCD Service: Failed to initialize state\n");
+        log_close();
         return 1;
     }
-    
-    printf("NCD Service: State initialized (metadata loaded)\n");
     
     /* Initialize snapshot publisher */
     SnapshotPublisher *pub = snapshot_publisher_init();
@@ -1179,8 +1375,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    printf("NCD Service: Publisher initialized\n");
-    
     /* Publish initial metadata snapshot */
     if (!snapshot_publisher_publish_meta(pub, state)) {
         fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
@@ -1188,7 +1382,6 @@ int main(int argc, char *argv[]) {
         service_state_cleanup(state);
         return 1;
     }
-    printf("NCD Service: Metadata snapshot published\n");
     
     /* Start background loader */
     start_background_loader(state, pub);
@@ -1197,7 +1390,6 @@ int main(int argc, char *argv[]) {
     service_loop(state, pub);
     
     /* Cleanup */
-    printf("NCD Service: Shutting down...\n");
     g_running = 0;
     signal_loader_stop();
     wait_for_loader();
@@ -1209,7 +1401,7 @@ int main(int argc, char *argv[]) {
     snapshot_publisher_cleanup(pub);
     service_state_cleanup(state);
     
-    printf("NCD Service: Shutdown complete\n");
+    log_close();
     
     return 0;
     

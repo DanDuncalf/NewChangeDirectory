@@ -117,6 +117,10 @@ echo Compiling scanner.c...
 cl %CFLAGS% %SRCDIR%\scanner.c
 if errorlevel 1 goto :error
 
+echo Compiling cli.c...
+cl %CFLAGS% %SRCDIR%\cli.c
+if errorlevel 1 goto :error
+
 echo Compiling platform.c (NCD-specific)...
 cl %CFLAGS% /Fo%OBJDIR%\ncd_platform.obj %SRCDIR%\platform.c
 if errorlevel 1 goto :error
@@ -223,6 +227,13 @@ echo Building test_scanner.exe...
 cl %CFLAGS% test_scanner.c
 if errorlevel 1 goto :error
 link %LINK_FLAGS% /OUT:test_scanner.exe %OBJDIR%\test_scanner.obj %OBJDIR%\test_framework.obj %OBJDIR%\matcher.obj %COMMON_OBJS% %WIN_LIBS%
+if errorlevel 1 goto :error
+
+:: Tier 3: test_cli_parse.exe
+echo Building test_cli_parse.exe...
+cl %CFLAGS% test_cli_parse.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:test_cli_parse.exe %OBJDIR%\test_cli_parse.obj %OBJDIR%\test_framework.obj %OBJDIR%\cli.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj %WIN_LIBS%
 if errorlevel 1 goto :error
 
 :: Compile service dependencies for service tests
@@ -332,6 +343,16 @@ if errorlevel 1 (
 )
 echo.
 
+echo --- Running test_cli_parse.exe ---
+test_cli_parse.exe
+if errorlevel 1 (
+    echo FAILED: test_cli_parse.exe
+    set TEST_FAILED=1
+) else (
+    echo PASSED: test_cli_parse.exe
+)
+echo.
+
 echo --- Running test_service_lazy_load.exe ---
 test_service_lazy_load.exe
 if errorlevel 1 (
@@ -345,7 +366,8 @@ echo.
 echo --- Running test_service_lifecycle.exe ---
 test_service_lifecycle.exe
 if errorlevel 1 (
-    echo WARNING: test_service_lifecycle.exe had issues (non-fatal - may need service executable)
+    echo FAILED: test_service_lifecycle.exe
+    set TEST_FAILED=1
 ) else (
     echo PASSED: test_service_lifecycle.exe
 )
@@ -354,7 +376,8 @@ echo.
 echo --- Running test_service_integration.exe ---
 test_service_integration.exe
 if errorlevel 1 (
-    echo WARNING: test_service_integration.exe had issues (non-fatal - may need service executable)
+    echo FAILED: test_service_integration.exe
+    set TEST_FAILED=1
 ) else (
     echo PASSED: test_service_integration.exe
 )

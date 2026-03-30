@@ -53,10 +53,12 @@ if %errorlevel% == 0 (
     set "ALL_PASSED=0"
 )
 
-:: Test 3: Database scan
+:: Test 3: Database scan (subdirectory only to avoid scanning all drives)
 echo.
 echo Test 3: Database scan...
-%NCD_EXE% /r >nul 2>&1
+pushd "%TEST_DIR%"
+%NCD_EXE% /r. >nul 2>&1
+popd
 if exist "%LOCALAPPDATA%\NCD\*.database" (
     echo   PASS: Database created
 ) else (

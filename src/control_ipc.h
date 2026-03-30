@@ -27,7 +27,7 @@ extern "C" {
 #define NCD_IPC_MAGIC       0x434E4950U  /* 'N' 'C' 'I' 'P' = NCD IPC */
 
 /* Protocol version */
-#define NCD_IPC_VERSION     2
+#define NCD_IPC_VERSION     3   /* Added encoding mode support */
 
 /* Application version - must match between client and service */
 #define NCD_APP_VERSION     "1.3"
@@ -112,6 +112,7 @@ typedef struct {
 #define NCD_META_UPDATE_DIR_HISTORY_ADD 7
 #define NCD_META_UPDATE_DIR_HISTORY_REMOVE 8  /* Remove by index */
 #define NCD_META_UPDATE_DIR_HISTORY_SWAP   9  /* Swap first two entries (ping-pong) */
+#define NCD_META_UPDATE_ENCODING_SWITCH 10 /* Encoding mode switch */
 
 /*
  * NcdSubmitMetadataPayload  --  SUBMIT_METADATA request
@@ -144,7 +145,7 @@ typedef struct {
  */
 typedef struct {
     uint16_t protocol_version;      /* Service protocol version */
-    uint16_t reserved;
+    uint16_t text_encoding;         /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE */
     uint64_t meta_generation;       /* Metadata snapshot generation */
     uint64_t db_generation;         /* Database snapshot generation */
     uint32_t meta_size;             /* Metadata snapshot size */
@@ -229,6 +230,7 @@ NcdIpcResult ipc_client_ping(NcdIpcClient *client);
  */
 typedef struct {
     uint16_t protocol_version;
+    uint16_t text_encoding;
     uint64_t meta_generation;
     uint64_t db_generation;
     uint32_t meta_size;

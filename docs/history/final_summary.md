@@ -268,7 +268,6 @@ test_service_parity.exe: Tests standalone/service parity
 1. **Windows:** No Unicode support in service names (ANSI only)
 2. **Linux:** Requires XDG_RUNTIME_DIR or falls back to /tmp
 3. **Both:** Service doesn't auto-start (manual launch required)
-4. **Database View:** Full database reconstruction from snapshot not fully implemented (minimal view only)
 
 ---
 

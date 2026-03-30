@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+#include <limits.h>
 
 /* --------------------------------------------------------- internal state     */
 
@@ -31,6 +32,7 @@ struct ServiceState {
     
     time_t last_flush;
     time_t last_rescan;
+    time_t last_db_mutation;  /* Timestamp of last database modification (for deferred flush) */
     
     uint64_t request_count;
     uint64_t mutation_count;
@@ -103,16 +105,29 @@ bool service_state_load_databases(ServiceState *state) {
     service_state_set_runtime_state(state, SERVICE_STATE_LOADING);
     service_state_set_status_message(state, "Loading databases...");
     
+    fprintf(stderr, "DEBUG: service_state_load_databases starting\n");
+    fflush(stderr);
+    
     /* Load per-drive databases */
     char drives[26];
+    fprintf(stderr, "DEBUG: About to call platform_get_available_drives\n");
+    fflush(stderr);
     int drive_count = platform_get_available_drives(drives, 26);
+    fprintf(stderr, "DEBUG: platform_get_available_drives returned %d drives\n", drive_count);
+    fflush(stderr);
     int loaded_count = 0;
     
     for (int i = 0; i < drive_count; i++) {
         char path[MAX_PATH];
+        fprintf(stderr, "DEBUG: Processing drive %c: (%d/%d)\n", drives[i], i+1, drive_count);
+        fflush(stderr);
         if (!ncd_platform_db_drive_path(drives[i], path, sizeof(path))) {
+            fprintf(stderr, "DEBUG: ncd_platform_db_drive_path failed for drive %c:\n", drives[i]);
+            fflush(stderr);
             continue;
         }
+        fprintf(stderr, "DEBUG: Database path for drive %c: %s\n", drives[i], path);
+        fflush(stderr);
         
         /* Update status with progress */
         char status[256];
@@ -153,6 +168,15 @@ bool service_state_load_databases(ServiceState *state) {
         
         db_free(drive_db);
         loaded_count++;
+    }
+    
+    /* Filter excluded directories from the loaded database */
+    if (state->metadata && state->metadata->exclusions.count > 0) {
+        int removed = db_filter_excluded(state->database, state->metadata);
+        if (removed > 0) {
+            fprintf(stderr, "DEBUG: Filtered %d excluded directories from service database\n", removed);
+            fflush(stderr);
+        }
     }
     
     state->last_rescan = state->database->last_scan;
@@ -385,7 +409,9 @@ bool service_state_update_database(ServiceState *state, NcdDatabase *db, bool is
     } else {
         state->dirty_flags |= DIRTY_DATABASE;
     }
-    state->mutation_count++;
+    
+    /* Note the mutation to reset the deferred flush timer */
+    service_state_note_db_mutation(state);
     
     return true;
 }
@@ -462,6 +488,21 @@ bool service_state_needs_immediate_flush(const ServiceState *state) {
      * Metadata changes can also use delayed flush.
      */
     return (state->dirty_flags & DIRTY_DATABASE) != 0;
+}
+
+void service_state_note_db_mutation(ServiceState *state) {
+    if (!state) {
+        return;
+    }
+    state->last_db_mutation = time(NULL);
+    state->mutation_count++;
+}
+
+time_t service_state_get_db_mutation_age(const ServiceState *state) {
+    if (!state || state->last_db_mutation == 0) {
+        return (time_t)INT_MAX;  /* No mutation has ever occurred */
+    }
+    return time(NULL) - state->last_db_mutation;
 }
 
 /* --------------------------------------------------------- snapshot generation */

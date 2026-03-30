@@ -189,6 +189,9 @@ typedef struct ScanCtx ScanCtx;
 /* Check if a directory matches an exclusion pattern */
 static bool match_exclusion_pattern(const char *pattern, const char *dir_path, bool match_from_root)
 {
+    if (!pattern || !dir_path) {
+        return false;
+    }
     /* Simple wildcard matching (* and ?) */
     const char *p = pattern;
     const char *d = dir_path;
@@ -202,7 +205,9 @@ static bool match_exclusion_pattern(const char *pattern, const char *dir_path, b
         if (*p == '*') {
             /* Try to match the rest of the pattern against the rest of the path */
             p++;
-            if (!*p) return true;  /* Pattern ends with *, matches everything */
+            if (!*p) {
+                return true;  /* Pattern ends with *, matches everything */
+            }
             
             while (*d) {
                 if (match_exclusion_pattern(p, d, match_from_root)) {
@@ -225,7 +230,8 @@ static bool match_exclusion_pattern(const char *pattern, const char *dir_path, b
     /* Skip trailing wildcards */
     while (*p == '*') p++;
     
-    return *p == '\0' && (*d == '\0' || *d == '\\' || *d == '/');
+    bool result = *p == '\0' && (*d == '\0' || *d == '\\' || *d == '/');
+    return result;
 }
 
 /* Check if a directory should be excluded based on the exclusion list in context */
@@ -273,7 +279,11 @@ static bool scan_ctx_is_excluded(struct ScanCtx *ctx, char drive_letter, const c
             /* For patterns with parent\child syntax, check each path component */
             if (entry->has_parent_match) {
                 const char *sep = dir_path;
-                while ((sep = strchr(sep, '\\')) != NULL || (sep = strchr(sep, '/')) != NULL) {
+                while (1) {
+                    const char *bs = strchr(sep, '\\');
+                    const char *fs = strchr(sep, '/');
+                    sep = bs ? (fs && fs < bs ? fs : bs) : fs;
+                    if (!sep) break;
                     sep++;
                     if (match_exclusion_pattern(pattern, sep, false)) {
                         return true;
@@ -697,7 +707,7 @@ typedef struct ScanFrame {
 #endif
 } ScanFrame;
 
-#define SCAN_STACK_INITIAL 1024
+#define SCAN_STACK_INITIAL 64
 #define SCAN_STACK_MAX     65536  /* Prevent runaway allocation */
 
 /* ============================================================ platform-specific scan implementations */
@@ -769,12 +779,16 @@ int scan_subdirectory(NcdDatabase   *db,
     ctx.dir_count = 0;
     ctx.status = &local_status;
 #if NCD_PLATFORM_LINUX
-    ctx.visited = NULL;
+    ctx.visited = diridset_create();
 #endif
     ctx.exclusions = exclusions;
 
     /* Scan */
-    return platform_scan_directory(&ctx, norm_path, subdir_id);
+    int result = platform_scan_directory(&ctx, norm_path, subdir_id);
+#if NCD_PLATFORM_LINUX
+    diridset_free(ctx.visited);
+#endif
+    return result;
 }
 
 #if NCD_PLATFORM_WINDOWS
@@ -973,8 +987,9 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         /* Skip special entries */
         if (ent->d_name[0] == '.' && 
             (ent->d_name[1] == '\0' ||
-             (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
+             (ent->d_name[1] == '.' && ent->d_name[2] == '\0'))) {
             continue;
+        }
         
         /* Build child path */
         char child[MAX_PATH];
@@ -986,10 +1001,14 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         
         /* Get file info */
         struct stat st;
-        if (lstat(child, &st) != 0)
+        memset(&st, 0, sizeof(st));
+        int lstat_result = lstat(child, &st);
+        if (lstat_result != 0) {
             continue;
-        if (!S_ISDIR(st.st_mode))
+        }
+        if (!S_ISDIR(st.st_mode)) {
             continue;
+        }
         
         /* Check for bind mount cycles using device+inode */
         if (ctx->visited) {
@@ -1004,11 +1023,13 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         bool is_hidden = (ent->d_name[0] == '.');
         bool is_system = false;
         
-        if (is_hidden && !ctx->include_hidden)
+        if (is_hidden && !ctx->include_hidden) {
             continue;
+        }
         
         /* Check exclusion list */
-        if (scan_ctx_is_excluded(ctx, ctx->drv->letter, child)) {
+        bool is_excl = scan_ctx_is_excluded(ctx, ctx->drv->letter, child);
+        if (is_excl) {
             /* Skip this directory and all its children */
             continue;
         }

@@ -53,7 +53,7 @@ bool g_test_slow_mode = false;
 
 #include "database.h"
 #include "platform.h"
-#include "strbuilder.h"
+#include "../shared/strbuilder.h"
 #include "matcher.h"
 
 #include <stdio.h>
@@ -157,20 +157,35 @@ char *db_drive_path(char letter, char *buf, size_t buf_size)
     return NULL;
 }
 
+/* Forward declaration - defined later in file */
+extern uint8_t g_db_text_encoding;
+
 bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
                             const char *path)
 {
     if (drive_idx < 0 || drive_idx >= db->drive_count) return false;
     const DriveData *drv = &db->drives[drive_idx];
 
-    /* ---- compute total output size (same layout as db_save_binary) ---- */
+    /* ---- compute data section size (for padding calculation) ---- */
+    uint8_t text_encoding = db_get_text_encoding();
+    size_t bom_size = (text_encoding == NCD_TEXT_UTF16LE) ? NCD_UTF16LE_BOM_LEN : 0;
     size_t dirs_bytes = (size_t)drv->dir_count * sizeof(DirEntry);
     size_t used       = dirs_bytes + drv->name_pool_len;
     size_t data_padded = (used + 3) & ~(size_t)3;
-    size_t total = sizeof(BinFileHdr) + sizeof(BinDriveHdr) + data_padded;
+    
+    /* ---- compute total output size (including optional BOM) ---- */
+    /* Header + DriveHeader + DataSection */
+    size_t header_size = bom_size + sizeof(BinFileHdr) + sizeof(BinDriveHdr);
+    size_t total = header_size + data_padded;
 
     char *buf = ncd_malloc(total);
     size_t pos = 0;
+
+    /* ---- UTF16LE BOM (if UTF16 mode) ---- */
+    if (text_encoding == NCD_TEXT_UTF16LE) {
+        memcpy(buf + pos, NCD_UTF16LE_BOM, NCD_UTF16LE_BOM_LEN);
+        pos += NCD_UTF16LE_BOM_LEN;
+    }
 
     /* ---- BinFileHdr (drive_count == 1) ---- */
     BinFileHdr hdr;
@@ -181,16 +196,31 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     hdr.show_system = db->default_show_system ? 1 : 0;
     hdr.last_scan   = (int64_t)db->last_scan;
     hdr.drive_count = 1;
+    hdr.encoding    = text_encoding;
     
     /* Preserve skipped_rescan flag from existing file if present */
     FILE *existing = fopen(path, "rb");
     if (existing) {
         uint32_t magic = 0;
-        if (fread(&magic, sizeof(magic), 1, existing) == 1 &&
-            magic == NCD_BIN_MAGIC) {
+        /* Check for BOM when reading existing file */
+        uint8_t bom_check[2];
+        size_t bom_read = fread(bom_check, 1, 2, existing);
+        bool has_bom = (bom_read == 2 && bom_check[0] == 0xFF && bom_check[1] == 0xFE);
+        
+        /* Read magic after potential BOM */
+        if (has_bom) {
+            fread(&magic, sizeof(magic), 1, existing);
+        } else {
+            rewind(existing);
+            fread(&magic, sizeof(magic), 1, existing);
+        }
+        
+        if (magic == NCD_BIN_MAGIC) {
             /* Valid binary file - preserve skip flag from old file */
             uint8_t skip_flag = 0;
-            if (fseek(existing, offsetof(BinFileHdr, skipped_rescan), SEEK_SET) == 0) {
+            size_t skip_offset = has_bom ? NCD_UTF16LE_BOM_LEN + offsetof(BinFileHdr, skipped_rescan) 
+                                          : offsetof(BinFileHdr, skipped_rescan);
+            if (fseek(existing, skip_offset, SEEK_SET) == 0) {
                 if (fread(&skip_flag, 1, 1, existing) == 1) {
                     hdr.skipped_rescan = skip_flag;
                 }
@@ -198,7 +228,6 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
         }
         fclose(existing);
     }
-    (void)hdr; /* Silence unused warning if hdr is not used later */
     
     memcpy(buf + pos, &hdr, sizeof(hdr));
     pos += sizeof(hdr);
@@ -220,12 +249,13 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     pos += dirs_bytes;
     memcpy(buf + pos, drv->name_pool, drv->name_pool_len);
     pos += drv->name_pool_len;
-    size_t padded = (pos + 3) & ~(size_t)3;
-    while (pos < padded) buf[pos++] = 0;
+    /* Pad data section to 4-byte boundary (match data_padded calculation) */
+    size_t data_end = bom_size + sizeof(BinFileHdr) + sizeof(BinDriveHdr) + data_padded;
+    while (pos < data_end) buf[pos++] = 0;
 
     /* ---- compute CRC64 checksum over all data after the header ---- */
-    uint64_t checksum = platform_crc64(buf + sizeof(hdr), pos - sizeof(hdr));
-    memcpy(buf + offsetof(BinFileHdr, checksum), &checksum, sizeof(checksum));
+    uint64_t checksum = platform_crc64(buf + bom_size + sizeof(hdr), pos - bom_size - sizeof(hdr));
+    memcpy(buf + bom_size + offsetof(BinFileHdr, checksum), &checksum, sizeof(checksum));
 
     /* ---- atomic write (.tmp -> rename) ---- */
     char tmp_path[MAX_PATH];
@@ -253,30 +283,10 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     fclose(f);
     free(buf);
 
-    /*
-     * Atomic file replacement - same safe pattern as db_metadata_save()
-     * Never delete the current file directly.
-     */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    
-    bool have_old_backup = false;
-    if (platform_file_exists(path)) {
-        if (platform_move_file(path, old_path)) {
-            have_old_backup = true;
-        }
-    }
-    
-    if (!platform_move_file(tmp_path, path)) {
-        if (have_old_backup) {
-            platform_move_file(old_path, path);
-        }
+    /* Atomic file replacement (replaces destination if it exists) */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
-    }
-    
-    if (have_old_backup) {
-        platform_delete_file(old_path);
     }
     return true;
 }
@@ -329,6 +339,7 @@ void db_config_init_defaults(NcdConfig *cfg)
     cfg->has_defaults = true;
     cfg->service_retry_count = 0;  /* 0 means use default (NCD_DEFAULT_SERVICE_RETRY_COUNT) */
     cfg->rescan_interval_hours = NCD_RESCAN_HOURS_DEFAULT;  /* 24 hours default */
+    cfg->text_encoding = NCD_TEXT_UTF8;  /* Default to UTF-8 encoding */
 }
 
 /*
@@ -364,12 +375,26 @@ bool db_config_load(NcdConfig *cfg)
     
     if (rd != sizeof(temp)) return false;
     
-    /* Validate magic and version */
+    /* Validate magic */
     if (temp.magic != NCD_CFG_MAGIC) return false;
-    if (temp.version != NCD_CFG_VERSION) return false;
     
-    *cfg = temp;
-    return true;
+    /* Handle version migration */
+    if (temp.version == NCD_CFG_VERSION) {
+        /* Current version - use as-is */
+        *cfg = temp;
+        return true;
+    }
+    
+    /* Migrate from version 3 (no text_encoding field) */
+    if (temp.version == 3) {
+        temp.text_encoding = NCD_TEXT_UTF8;  /* Default to UTF8 for migrated configs */
+        temp.version = NCD_CFG_VERSION;
+        *cfg = temp;
+        return true;
+    }
+    
+    /* Unsupported version */
+    return false;
 }
 
 /*
@@ -415,20 +440,11 @@ bool db_config_save(const NcdConfig *cfg)
         return false;
     }
     
-    /* Atomic replace */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            platform_delete_file(path);
-        }
-    }
-    if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
     }
-    
     return true;
 }
 
@@ -599,30 +615,10 @@ bool db_group_save(const NcdGroupDb *gdb)
     
     fclose(f);
     
-    /*
-     * Atomic file replacement - same safe pattern as db_metadata_save()
-     * Never delete the current file directly.
-     */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    
-    bool have_old_backup = false;
-    if (platform_file_exists(path)) {
-        if (platform_move_file(path, old_path)) {
-            have_old_backup = true;
-        }
-    }
-    
-    if (!platform_move_file(tmp_path, path)) {
-        if (have_old_backup) {
-            platform_move_file(old_path, path);
-        }
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
-    }
-    
-    if (have_old_backup) {
-        platform_delete_file(old_path);
     }
     return true;
 }
@@ -1173,6 +1169,160 @@ char *db_full_path(const DriveData *drv, int dir_index,
     return buf;
 }
 
+/* ==================================================== exclusion filtering */
+
+int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
+{
+    if (!db || !meta || meta->exclusions.count == 0) return 0;
+    
+    int total_removed = 0;
+    
+    /* Process each drive in the database */
+    for (int d = 0; d < db->drive_count; d++) {
+        DriveData *drv = &db->drives[d];
+        if (drv->dir_count == 0) continue;
+        
+        /* 
+         * Build a mapping table: old_index -> new_index (or -1 if excluded).
+         * Also mark which directories are excluded.
+         */
+        int *index_map = ncd_malloc_array((size_t)drv->dir_count, sizeof(int));
+        bool *is_excluded = ncd_calloc((size_t)drv->dir_count, sizeof(bool));
+        
+        /* First pass: identify excluded directories */
+        for (int i = 0; i < drv->dir_count; i++) {
+            char full_path[MAX_PATH];
+            db_full_path(drv, i, full_path, sizeof(full_path));
+            
+            /* 
+             * db_exclusion_check expects path relative to drive root.
+             * db_full_path returns "C:\Windows\System32" on Windows.
+             * Skip past the "C:\" to get "Windows\System32".
+             */
+            const char *rel_path = full_path;
+#if NCD_PLATFORM_WINDOWS
+            if (rel_path[1] == ':') {
+                rel_path += 2;  /* Skip "C:" */
+                if (rel_path[0] == '\\' || rel_path[0] == '/') {
+                    rel_path++;  /* Skip leading backslash */
+                }
+            }
+#else
+            /* Linux: full_path is the absolute path starting with / */
+            if (rel_path[0] == '/') {
+                rel_path++;  /* Skip leading slash */
+            }
+#endif
+            
+            /* Check if this directory matches any exclusion pattern */
+            if (db_exclusion_check(meta, drv->letter, rel_path)) {
+                is_excluded[i] = true;
+                total_removed++;
+            }
+        }
+        
+        /* Second pass: mark children of excluded directories as excluded */
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (int i = 0; i < drv->dir_count; i++) {
+                if (is_excluded[i]) continue;
+                
+                /* Check if parent is excluded */
+                int parent = drv->dirs[i].parent;
+                if (parent >= 0 && parent < drv->dir_count && is_excluded[parent]) {
+                    is_excluded[i] = true;
+                    total_removed++;
+                    changed = true;
+                }
+            }
+        }
+        
+        /* Build index mapping: calculate new index for each kept directory */
+        int new_count = 0;
+        for (int i = 0; i < drv->dir_count; i++) {
+            if (is_excluded[i]) {
+                index_map[i] = -1;  /* Mark as removed */
+            } else {
+                index_map[i] = new_count++;
+            }
+        }
+        
+        /* If nothing excluded, skip to next drive */
+        if (new_count == drv->dir_count) {
+            free(index_map);
+            free(is_excluded);
+            continue;
+        }
+        
+        /* 
+         * Second pass: rebuild the directory array.
+         * We need to preserve the order and update parent indices.
+         */
+        DirEntry *new_dirs = ncd_malloc_array((size_t)new_count, sizeof(DirEntry));
+        
+        /* Build new name pool */
+        size_t new_pool_size = 0;
+        for (int i = 0; i < drv->dir_count; i++) {
+            if (!is_excluded[i]) {
+                const char *name = drv->name_pool + drv->dirs[i].name_off;
+                new_pool_size += strlen(name) + 1;
+            }
+        }
+        char *new_pool = ncd_malloc(new_pool_size);
+        
+        /* Copy directories to new arrays */
+        int new_idx = 0;
+        size_t pool_pos = 0;
+        for (int i = 0; i < drv->dir_count; i++) {
+            if (is_excluded[i]) continue;
+            
+            /* Copy directory entry */
+            new_dirs[new_idx] = drv->dirs[i];
+            
+            /* Copy name to new pool */
+            const char *name = drv->name_pool + drv->dirs[i].name_off;
+            size_t name_len = strlen(name) + 1;
+            memcpy(new_pool + pool_pos, name, name_len);
+            new_dirs[new_idx].name_off = (uint32_t)pool_pos;
+            pool_pos += name_len;
+            
+            /* Update parent index */
+            if (drv->dirs[i].parent >= 0) {
+                int old_parent = drv->dirs[i].parent;
+                /* Parent might have been excluded - if so, mark as root (-1) */
+                if (old_parent < drv->dir_count && is_excluded[old_parent]) {
+                    new_dirs[new_idx].parent = -1;
+                } else {
+                    new_dirs[new_idx].parent = index_map[old_parent];
+                }
+            }
+            
+            new_idx++;
+        }
+        
+        /* Replace old arrays with new ones */
+        free(drv->dirs);
+        free(drv->name_pool);
+        
+        drv->dirs = new_dirs;
+        drv->dir_count = new_count;
+        drv->dir_capacity = new_count;
+        
+        drv->name_pool = new_pool;
+        drv->name_pool_len = pool_pos;
+        drv->name_pool_cap = pool_pos;
+        
+        /* Invalidate cached name index since database structure changed */
+        db->name_index_generation++;
+        
+        free(index_map);
+        free(is_excluded);
+    }
+    
+    return total_removed;
+}
+
 /* ================================================================== load  */
 
 static char *read_file(const char *path)
@@ -1579,26 +1729,10 @@ bool db_save(const NcdDatabase *db, const char *path)
      * Atomic file replacement - same safe pattern as db_metadata_save()
      * Never delete the current file directly.
      */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    
-    bool have_old_backup = false;
-    if (platform_file_exists(path)) {
-        if (platform_move_file(path, old_path)) {
-            have_old_backup = true;
-        }
-    }
-    
-    if (!platform_move_file(tmp_path, path)) {
-        if (have_old_backup) {
-            platform_move_file(old_path, path);
-        }
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
-    }
-    
-    if (have_old_backup) {
-        platform_delete_file(old_path);
     }
     return true;
 }
@@ -1608,7 +1742,8 @@ bool db_save(const NcdDatabase *db, const char *path)
 /*
  * File layout written by db_save_binary():
  *
- *   [BinFileHdr : 24 bytes]
+ *   [UTF16LE BOM : 2 bytes] (only for UTF16 mode)
+ *   [BinFileHdr : 32 bytes]
  *   [BinDriveHdr × drive_count : 80 bytes each]
  *   For each drive (same order):
  *     [DirEntry × dir_count : 12 bytes each]  -- 4-byte aligned
@@ -1623,10 +1758,28 @@ STATIC_ASSERT(sizeof(BinFileHdr)  == 32, "BinFileHdr size changed");
 STATIC_ASSERT(sizeof(BinDriveHdr) == 80, "BinDriveHdr size changed");
 STATIC_ASSERT(sizeof(DirEntry)    == 12, "DirEntry size changed");
 
+/* Global text encoding mode for database I/O (NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE) */
+uint8_t g_db_text_encoding = NCD_TEXT_UTF8;
+
+/* Set the text encoding mode for database I/O */
+void db_set_text_encoding(uint8_t encoding)
+{
+    if (encoding == NCD_TEXT_UTF8 || encoding == NCD_TEXT_UTF16LE) {
+        g_db_text_encoding = encoding;
+    }
+}
+
+/* Get the current text encoding mode for database I/O */
+uint8_t db_get_text_encoding(void)
+{
+    return g_db_text_encoding;
+}
+
 bool db_save_binary(const NcdDatabase *db, const char *path)
 {
-    /* ---- compute total output size ---- */
-    size_t total = sizeof(BinFileHdr)
+    /* ---- compute total output size (including optional BOM) ---- */
+    size_t bom_size = (g_db_text_encoding == NCD_TEXT_UTF16LE) ? NCD_UTF16LE_BOM_LEN : 0;
+    size_t total = bom_size + sizeof(BinFileHdr)
                  + (size_t)db->drive_count * sizeof(BinDriveHdr);
 
     for (int i = 0; i < db->drive_count; i++) {
@@ -1639,6 +1792,12 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     char *buf = ncd_malloc(total);
     size_t pos = 0;
 
+    /* ---- UTF16LE BOM (if UTF16 mode) ---- */
+    if (g_db_text_encoding == NCD_TEXT_UTF16LE) {
+        memcpy(buf + pos, NCD_UTF16LE_BOM, NCD_UTF16LE_BOM_LEN);
+        pos += NCD_UTF16LE_BOM_LEN;
+    }
+
     /* ---- BinFileHdr ---- */
     BinFileHdr hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -1648,6 +1807,7 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     hdr.show_system = db->default_show_system ? 1 : 0;
     hdr.last_scan   = (int64_t)db->last_scan;
     hdr.drive_count = (uint32_t)db->drive_count;
+    hdr.encoding    = g_db_text_encoding;
     hdr.checksum    = 0;  /* Will be computed after data is written */
     memcpy(buf + pos, &hdr, sizeof(hdr));
     pos += sizeof(hdr);
@@ -1712,17 +1872,9 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     fclose(f);
     free(buf);
 
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            /* If we can't backup the old file, try to delete it */
-            platform_delete_file(path);
-        }
-    }
-    if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
     }
     return true;
@@ -1842,7 +1994,7 @@ NcdDatabase *db_load_binary(const char *path)
     
     rewind(f);
     
-    char *blob = malloc(sz);
+    char *blob = ncd_malloc(sz);
     if (!blob) {
         fclose(f);
         return NULL;
@@ -1856,22 +2008,56 @@ NcdDatabase *db_load_binary(const char *path)
         return NULL;
     }
     
-    /* ---- validate header ---- */
-    BinFileHdr hdr;
-    memcpy(&hdr, blob, sizeof(hdr));
+    /* ---- check for UTF16LE BOM ---- */
+    size_t bom_offset = 0;
+    bool has_utf16_bom = false;
+    if (sz >= NCD_UTF16LE_BOM_LEN) {
+        const unsigned char *bom = (const unsigned char *)blob;
+        if (bom[0] == 0xFF && bom[1] == 0xFE) {
+            has_utf16_bom = true;
+            bom_offset = NCD_UTF16LE_BOM_LEN;
+        }
+    }
     
-    if (!validate_file_header(&hdr, sz)) {
+    /* ---- validate header ---- */
+    if (sz < bom_offset + sizeof(BinFileHdr)) {
+        fprintf(stderr, "NCD: Database file too small (after BOM check)\n");
         free(blob);
         return NULL;
     }
     
+    BinFileHdr hdr;
+    memcpy(&hdr, blob + bom_offset, sizeof(hdr));
+    
+    if (!validate_file_header(&hdr, sz - bom_offset)) {
+        free(blob);
+        return NULL;
+    }
+    
+    /* ---- validate encoding matches BOM ---- */
+    if (has_utf16_bom && hdr.encoding != NCD_TEXT_UTF16LE) {
+        fprintf(stderr, "NCD: Database has UTF16 BOM but header encoding is not UTF16\n");
+        free(blob);
+        return NULL;
+    }
+    if (!has_utf16_bom && hdr.encoding == NCD_TEXT_UTF16LE) {
+        fprintf(stderr, "NCD: Database header claims UTF16 but no BOM found\n");
+        free(blob);
+        return NULL;
+    }
+    
+    /* Set global encoding to match loaded file */
+    g_db_text_encoding = hdr.encoding ? hdr.encoding : NCD_TEXT_UTF8;
+    
     /* ---- verify CRC64 checksum over all data after the header ---- */
+    /* Checksum covers data after header, starting from bom_offset + sizeof(hdr) */
 #if DEBUG
     if (hdr.checksum != 0 && !g_test_no_checksum) {
 #else
     if (hdr.checksum != 0) {
 #endif
-        uint64_t computed_checksum = platform_crc64(blob + sizeof(hdr), sz - sizeof(hdr));
+        uint64_t computed_checksum = platform_crc64(blob + bom_offset + sizeof(hdr), 
+                                                      sz - bom_offset - sizeof(hdr));
         if (computed_checksum != hdr.checksum) {
             fprintf(stderr, "NCD: Database checksum mismatch (file may be corrupted)\n");
             free(blob);
@@ -1882,8 +2068,8 @@ NcdDatabase *db_load_binary(const char *path)
      * We accept it for backward compatibility, but warn. */
     
     /* ---- pre-validate all drive headers before allocating ---- */
-    const char *p = blob + sizeof(BinFileHdr);
-    const char *dp = blob + sizeof(BinFileHdr)
+    const char *p = blob + bom_offset + sizeof(BinFileHdr);
+    const char *dp = blob + bom_offset + sizeof(BinFileHdr)
                           + (size_t)hdr.drive_count * sizeof(BinDriveHdr);
     size_t remaining = sz - (dp - blob);
     uint64_t total_dirs = 0;
@@ -1932,8 +2118,8 @@ NcdDatabase *db_load_binary(const char *path)
      * aligned memory and all our offsets within the blob are multiples of 4,
      * satisfying DirEntry's 4-byte alignment requirement.
      */
-    p  = blob + sizeof(BinFileHdr);
-    dp = blob + sizeof(BinFileHdr)
+    p  = blob + bom_offset + sizeof(BinFileHdr);
+    dp = blob + bom_offset + sizeof(BinFileHdr)
               + (size_t)hdr.drive_count * sizeof(BinDriveHdr);
     
     for (uint32_t i = 0; i < hdr.drive_count; i++) {
@@ -2279,16 +2465,9 @@ bool db_set_skipped_rescan_flag(const char *path)
         return false;
     }
     
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            platform_delete_file(path);
-        }
-    }
-    if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
     }
     return true;
@@ -2370,30 +2549,38 @@ static bool db_file_write_atomic(const char *path, const void *data, size_t len)
         return false;
     }
     
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);
-    
-    if (platform_file_exists(path)) {
-        if (!platform_move_file(path, old_path)) {
-            platform_delete_file(path);
-        }
-    }
-    
-    if (!platform_move_file(tmp_path, path)) {
-        platform_move_file(old_path, path);
+    /* Atomic file replacement */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         return false;
     }
-    
     return true;
 }
 
 /* ============================================================= metadata  */
 
+/* Global override path for metadata file (set by -conf option) */
+static char g_metadata_override[NCD_MAX_PATH] = {0};
+
+void db_metadata_set_override(const char *path)
+{
+    if (path && path[0]) {
+        platform_strncpy_s(g_metadata_override, sizeof(g_metadata_override), path);
+    } else {
+        g_metadata_override[0] = '\0';
+    }
+}
+
 char *db_metadata_path(char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0) return NULL;
     buf[0] = '\0';
+    
+    /* Check for override first */
+    if (g_metadata_override[0]) {
+        platform_strncpy_s(buf, buf_size, g_metadata_override);
+        return buf;
+    }
     
 #if NCD_PLATFORM_WINDOWS
     char local[MAX_PATH] = {0};
@@ -2905,43 +3092,11 @@ bool db_metadata_save(NcdMetadata *meta)
         return false;
     }
     
-    /*
-     * Atomic file replacement:
-     * 1. Write new data to .tmp file (done above)
-     * 2. Delete any stale .old backup (ignore failure)
-     * 3. Try to move current file to .old (ignore failure - current file stays put)
-     * 4. Move .tmp to current file (this is the critical operation)
-     * 5. Only delete .old on success (keep as backup if something went wrong)
-     * 
-     * CRITICAL: Never delete the current file directly. If move to .old fails,
-     * the temp file move will atomically replace the current file on most OSes.
-     */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    platform_delete_file(old_path);  /* Delete stale backup, ignore failure */
-    
-    /* Try to backup current file, but don't fail if we can't */
-    bool have_old_backup = false;
-    if (platform_file_exists(path)) {
-        if (platform_move_file(path, old_path)) {
-            have_old_backup = true;
-        }
-        /* If move fails, current file stays in place - temp move will replace it */
-    }
-    
-    /* Move temp file to final location (atomic on most OSes when replacing) */
-    if (!platform_move_file(tmp_path, path)) {
-        /* Failed to install new file - try to restore from backup if we have one */
-        if (have_old_backup) {
-            platform_move_file(old_path, path);
-        }
+    /* Atomic file replacement (replaces destination if it exists) */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        platform_delete_file(tmp_path);
         db_set_error("Failed to install metadata file: %s", strerror(errno));
         return false;
-    }
-    
-    /* Success - can safely delete the old backup now */
-    if (have_old_backup) {
-        platform_delete_file(old_path);
     }
     
     meta->config_dirty = false;

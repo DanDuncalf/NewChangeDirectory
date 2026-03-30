@@ -1,6 +1,6 @@
 /* test_strbuilder.c -- Tests for StringBuilder module */
 #include "test_framework.h"
-#include "../src/strbuilder.h"
+#include "../../shared/strbuilder.h"
 #include <string.h>
 
 TEST(init_sets_valid_state) {

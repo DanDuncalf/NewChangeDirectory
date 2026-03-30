@@ -142,6 +142,21 @@ int db_check_all_versions(DbVersionInfo *out, int max_entries);
  */
 bool db_set_skipped_rescan_flag(const char *path);
 
+/* --------------------------------------------------------- text encoding    */
+
+/*
+ * Set the text encoding mode for database I/O.
+ * Valid values: NCD_TEXT_UTF8 (1) or NCD_TEXT_UTF16LE (2)
+ * Default is UTF8.
+ */
+void db_set_text_encoding(uint8_t encoding);
+
+/*
+ * Get the current text encoding mode for database I/O.
+ * Returns NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE.
+ */
+uint8_t db_get_text_encoding(void);
+
 /* --------------------------------------------------------- drive helpers  */
 
 /* Add a blank DriveData for drive_letter; return pointer to it. */
@@ -171,6 +186,15 @@ char *db_full_path(const DriveData *drv,
                    int              dir_index,
                    char            *buf,
                    size_t           buf_size);
+
+/*
+ * Filter a loaded database to remove directories that match exclusion patterns.
+ * This should be called after loading a database to ensure excluded directories
+ * from previous scans are not shown in search results.
+ * 
+ * Returns the number of directories removed.
+ */
+int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta);
 
 /* --------------------------------------------------------- group database */
 
@@ -297,8 +321,16 @@ bool db_config_exists(void);
 /*
  * Get the path to the consolidated metadata file.
  * Returns path in buf, or NULL on failure.
+ * If db_metadata_set_override() was called, returns that path instead.
  */
 char *db_metadata_path(char *buf, size_t buf_size);
+
+/*
+ * Set a global override path for the metadata file.
+ * This affects all subsequent db_metadata_path() calls.
+ * Pass NULL to clear the override.
+ */
+void db_metadata_set_override(const char *path);
 
 /*
  * Check if consolidated metadata file exists.

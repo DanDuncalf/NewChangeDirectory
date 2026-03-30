@@ -199,6 +199,22 @@ bool service_state_needs_flush(const ServiceState *state);
  */
 bool service_state_needs_immediate_flush(const ServiceState *state);
 
+/*
+ * service_state_note_db_mutation  --  Record that a database mutation occurred
+ *
+ * Updates the last_db_mutation timestamp to the current time.
+ * This resets the deferred flush timer.
+ */
+void service_state_note_db_mutation(ServiceState *state);
+
+/*
+ * service_state_get_db_mutation_age  --  Get seconds since last database mutation
+ *
+ * Returns the number of seconds since the last database mutation.
+ * If no mutation has occurred, returns a large value.
+ */
+time_t service_state_get_db_mutation_age(const ServiceState *state);
+
 /* --------------------------------------------------------- snapshot generation */
 
 /*

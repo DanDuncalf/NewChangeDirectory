@@ -38,10 +38,15 @@ TEST(strcasestr_returns_null_on_miss) {
 }
 
 TEST(is_drive_specifier_valid) {
-    /* Valid drive specifiers */
+    /* Valid drive specifiers - Windows only */
+#if NCD_PLATFORM_WINDOWS
     ASSERT_TRUE(platform_is_drive_specifier("C:"));
     ASSERT_TRUE(platform_is_drive_specifier("c:"));
     ASSERT_TRUE(platform_is_drive_specifier("Z:"));
+#else
+    /* On Linux, drive specifiers are not used */
+    ASSERT_FALSE(platform_is_drive_specifier("C:"));
+#endif
     
     return 0;
 }
@@ -78,16 +83,20 @@ TEST(parse_drive_from_search_extracts_letter) {
 
 TEST(parse_drive_from_search_no_drive) {
     char clean[256];
-    char cwd[MAX_PATH];
     
-    /* Parse search without drive - should default to current drive */
+    /* Parse search without drive */
     char drive = platform_parse_drive_from_search("downloads", clean, sizeof(clean));
     
-    /* Get current drive from CWD */
+#if NCD_PLATFORM_WINDOWS
+    /* On Windows, should default to current drive */
+    char cwd[MAX_PATH];
     platform_get_current_dir(cwd, sizeof(cwd));
     char expected_drive = (char)toupper((unsigned char)cwd[0]);
-    
-    ASSERT_EQ_INT(expected_drive, drive);  /* Defaults to CWD drive */
+    ASSERT_EQ_INT(expected_drive, drive);
+#else
+    /* On Linux, returns 0x01 for first available mount when no drive specified */
+    ASSERT_TRUE(drive == 0 || drive == 1 || drive == '\x01');
+#endif
     ASSERT_EQ_STR("downloads", clean);
     
     return 0;

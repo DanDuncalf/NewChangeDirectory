@@ -3,6 +3,7 @@
 #include "../src/matcher.h"
 #include "../src/database.h"
 #include <string.h>
+#include <ctype.h>
 
 /* Helper to create test database with known structure */
 static NcdDatabase *create_test_db(void) {

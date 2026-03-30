@@ -117,6 +117,22 @@ static void ensure_service_stopped(void) {
     stop_service();
 }
 
+static bool metadata_has_group_path(const NcdMetadata *meta,
+                                    const char *group_name,
+                                    const char *group_path) {
+    if (!meta || !group_name || !group_path) {
+        return false;
+    }
+    for (int i = 0; i < meta->groups.count; i++) {
+        const NcdGroupEntry *entry = &meta->groups.groups[i];
+        if (strcmp(entry->name, group_name) == 0 &&
+            strcmp(entry->path, group_path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* --------------------------------------------------------- Tier 5 Tests       */
 
 /* Test 1: Service starts and responds to ping */
@@ -456,16 +472,77 @@ TEST(state_backend_connects_to_service_when_available) {
     NcdStateSourceInfo info;
     
     int result = state_backend_open_best_effort(&view, &info);
+    ASSERT_EQ_INT(0, result);
+    ASSERT_NOT_NULL(view);
+    ASSERT_TRUE(info.from_service);
+    ASSERT_TRUE(info.generation > 0);
     
-    /* May succeed via service or fallback to local */
-    if (result == 0 && view != NULL) {
-        /* If we got a view, check if it came from service */
-        if (info.from_service) {
-            ASSERT_TRUE(info.generation > 0);
-        }
-        state_backend_close(view);
+    const NcdMetadata *meta = state_view_metadata(view);
+    const NcdDatabase *db = state_view_database(view);
+    ASSERT_NOT_NULL(meta);
+    ASSERT_NOT_NULL(db);
+    
+    state_backend_close(view);
+    
+    ensure_service_stopped();
+    return 0;
+}
+
+/* Test 13: Metadata updates through state_backend in service mode persist */
+TEST(state_backend_group_update_roundtrip_when_service_running) {
+    if (!service_executable_exists()) {
+        printf("SKIP: Service executable not found\n");
+        return 0;
     }
     
+    ensure_service_stopped();
+    ASSERT_TRUE(start_service());
+    
+#if NCD_PLATFORM_WINDOWS
+    Sleep(1000);
+#else
+    usleep(1000000);
+#endif
+    
+    NcdStateView *view = NULL;
+    NcdStateSourceInfo info;
+    int result = state_backend_open_best_effort(&view, &info);
+    ASSERT_EQ_INT(0, result);
+    ASSERT_NOT_NULL(view);
+    ASSERT_TRUE(info.from_service);
+    
+    const char *group_name = "svc_roundtrip_group";
+#if NCD_PLATFORM_WINDOWS
+    const char *group_path = "C:\\NCD_Service_Roundtrip_Path";
+#else
+    const char *group_path = "/tmp/ncd_service_roundtrip_path";
+#endif
+    
+    const char *args[2] = { group_name, group_path };
+    result = state_backend_submit_metadata_update(view,
+                                                  NCD_META_UPDATE_GROUP_ADD,
+                                                  args,
+                                                  sizeof(args));
+    ASSERT_EQ_INT(0, result);
+    state_backend_close(view);
+    
+    view = NULL;
+    result = state_backend_open_best_effort(&view, &info);
+    ASSERT_EQ_INT(0, result);
+    ASSERT_NOT_NULL(view);
+    ASSERT_TRUE(info.from_service);
+    
+    const NcdMetadata *meta = state_view_metadata(view);
+    ASSERT_NOT_NULL(meta);
+    ASSERT_TRUE(metadata_has_group_path(meta, group_name, group_path));
+    
+    result = state_backend_submit_metadata_update(view,
+                                                  NCD_META_UPDATE_GROUP_REMOVE,
+                                                  group_name,
+                                                  strlen(group_name) + 1);
+    ASSERT_EQ_INT(0, result);
+    
+    state_backend_close(view);
     ensure_service_stopped();
     return 0;
 }
@@ -487,6 +564,7 @@ void suite_service_ipc(void) {
     RUN_TEST(snapshot_publisher_produces_valid_snapshots);
     RUN_TEST(ipc_error_strings_meaningful);
     RUN_TEST(state_backend_connects_to_service_when_available);
+    RUN_TEST(state_backend_group_update_roundtrip_when_service_running);
 }
 
 TEST_MAIN(

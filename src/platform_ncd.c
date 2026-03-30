@@ -16,6 +16,7 @@
 #elif NCD_PLATFORM_LINUX
 #include <errno.h>
 #include <strings.h>  /* For strcasestr on Linux */
+#include <unistd.h>   /* For isatty() */
 #endif
 
 /* NCD-specific pseudo filesystems list */
@@ -201,7 +202,8 @@ char platform_parse_drive_from_search(const char *search, char *out_search, size
         platform_strncpy_s(out_search, out_size, search + 2);
         return drive;
     } else {
-        /* Default to first available mount */
+        /* Copy search as-is and default to first available mount */
+        platform_strncpy_s(out_search, out_size, search);
         return '\x01';
     }
 #endif
@@ -325,11 +327,34 @@ int platform_strncasecmp(const char *s1, const char *s2, size_t n)
 
 static PlatformHandle g_ncd_con = NULL;
 static bool g_ncd_con_initialized = false;
+static bool g_stdout_redirected = false;
+
+/*
+ * Detect if stdout is redirected to a pipe or file (not a console).
+ * This is used to automatically switch output mode for testability.
+ * When redirected, we use stdout (printf) instead of CONOUT$ (WriteConsoleA).
+ */
+static void ncd_detect_redirect(void)
+{
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode;
+    /* If GetConsoleMode fails, stdout is redirected to a pipe/file */
+    g_stdout_redirected = !GetConsoleMode(hOut, &mode);
+#else
+    /* On Linux, use isatty to detect if stdout is a terminal */
+    g_stdout_redirected = !isatty(STDOUT_FILENO);
+#endif
+}
 
 static void ncd_con_init(void)
 {
     if (!g_ncd_con_initialized) {
-        g_ncd_con = platform_console_open_out(false);
+        ncd_detect_redirect();
+        /* Only open console handle if not redirected */
+        if (!g_stdout_redirected) {
+            g_ncd_con = platform_console_open_out(false);
+        }
         g_ncd_con_initialized = true;
     }
 }
@@ -337,11 +362,16 @@ static void ncd_con_init(void)
 void ncd_print(const char *s)
 {
     if (!g_ncd_con_initialized) ncd_con_init();
-    if (g_ncd_con) {
-        platform_console_write(g_ncd_con, s);
-    } else {
+    /*
+     * When stdout is redirected (e.g., in tests), use printf instead of
+     * direct console writes. This allows output capture via pipe redirection.
+     * Otherwise, use the console handle for direct console output (TUI mode).
+     */
+    if (g_stdout_redirected || !g_ncd_con) {
         fputs(s, stdout);
         fflush(stdout);
+    } else {
+        platform_console_write(g_ncd_con, s);
     }
 }
 
@@ -353,10 +383,38 @@ void ncd_println(const char *s)
 
 void ncd_printf(const char *fmt, ...)
 {
-    char buf[1024];
+    char stack_buf[1024];
+    char *heap_buf = NULL;
+    char *out = stack_buf;
+    size_t out_cap = sizeof(stack_buf);
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+
+    va_list ap_len;
+    va_copy(ap_len, ap);
+    int needed = vsnprintf(NULL, 0, fmt, ap_len);
+    va_end(ap_len);
+
+    if (needed < 0) {
+        va_end(ap);
+        return;
+    }
+
+    if ((size_t)needed + 1 > out_cap) {
+        out_cap = (size_t)needed + 1;
+        heap_buf = (char *)malloc(out_cap);
+        if (!heap_buf) {
+            va_end(ap);
+            return;
+        }
+        out = heap_buf;
+    }
+
+    vsnprintf(out, out_cap, fmt, ap);
     va_end(ap);
-    ncd_print(buf);
+    ncd_print(out);
+
+    if (heap_buf) {
+        free(heap_buf);
+    }
 }

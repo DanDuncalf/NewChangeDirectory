@@ -37,6 +37,9 @@
 
 set -o pipefail
 
+# Disable NCD background rescans to prevent scanning user drives during tests
+export NCD_TEST_MODE=1
+
 # ==========================================================================
 # Configuration
 # ==========================================================================
@@ -384,12 +387,12 @@ test_file_nonempty "B2" "Database file created"            "$DB_FILE"
 rescan_testroot
 test_ncd_finds "B3" "Rescan creates searchable DB" "Downloads" Downloads
 
-# B4: Rescan with timeout (use hard timeout to avoid hanging on full scan)
-test_exit_ok_timed "B4" "Rescan with /t 10" 15 /r /t 10
+# B4: Rescan with timeout on test root only (avoid scanning all mounts)
+test_exit_ok_timed "B4" "Rescan with /t 10" 15 /r. /t 10
 
 # B5: Rescan with /d override (use hard timeout)
 CUSTOM_DB="/tmp/ncd_custom_test_$$.db"
-test_exit_ok_timed "B5" "Rescan with /d override" 15 /r /d "$CUSTOM_DB"
+test_exit_ok_timed "B5" "Rescan with /d override" 15 /r. /d "$CUSTOM_DB"
 rm -f "$CUSTOM_DB"
 
 # B6: Rescan after adding dirs
@@ -418,10 +421,10 @@ test_custom "C3" "Subdirectory rescan /r ."
 (cd "$TESTROOT/Users" && "$NCD" /r . >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then pass "C3" "Subdirectory rescan /r ."; else fail "C3" "Subdirectory rescan /r ."; fi
 
-# C4-C6: Test /r flag variations (hard timeout to avoid hanging on full scan)
-test_exit_ok_timed "C4" "Rescan exclude /r-a"          15 /r-a
-test_exit_ok_timed "C5" "Rescan drive list /r a,b"     15 /r "a,b"
-test_exit_ok_timed "C6" "Rescan /t5 /r"                15 /t5 /r
+# C4-C6: Test /r flag variations on test root only (avoid full scans)
+test_exit_ok_timed "C4" "Rescan exclude /r-a"          15 /r. -a
+test_exit_ok_timed "C5" "Rescan with timeout /t 5"     15 /r. /t 5
+test_exit_ok_timed "C6" "Rescan /t5 shorthand"         15 /t5 /r.
 
 # ==========================================================================
 # CATEGORY D: Basic Search (9 tests)
@@ -661,7 +664,7 @@ CUSTOM_DB2="/tmp/ncd_custom_L_$$.db"
 
 # L1: Custom DB path
 test_custom "L1" "Custom DB path"
-"$NCD" /r /d "$CUSTOM_DB2" >/dev/null 2>&1
+"$NCD" /r. /d "$CUSTOM_DB2" >/dev/null 2>&1
 if [[ -f "$CUSTOM_DB2" ]]; then
     pass "L1" "Custom DB path"
 else
@@ -682,9 +685,9 @@ rm -f "$CUSTOM_DB2"
 
 category "M: Timeout /t"
 
-test_exit_ok_timed "M1" "Short timeout rescan"       15 /r /t 5
+test_exit_ok_timed "M1" "Short timeout rescan"       15 /r. /t 5
 test_exit_ok       "M2" "/t with search"                 /t 60 Downloads
-test_exit_ok_timed "M3" "/t<N> no space shorthand"  15 /t5 /r
+test_exit_ok_timed "M3" "/t<N> no space shorthand"  15 /t5 /r.
 
 # ==========================================================================
 # CATEGORY N: Navigator Mode (3 tests)

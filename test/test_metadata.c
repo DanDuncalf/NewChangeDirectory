@@ -8,6 +8,9 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#else
+#include <unistd.h>
+#define GetCurrentProcessId getpid
 #endif
 
 TEST(metadata_create_returns_valid_struct) {

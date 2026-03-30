@@ -25,7 +25,7 @@
 #include "../src/database.h"
 #include "../src/matcher.h"
 #include "../src/ncd.h"
-#include "../src/strbuilder.h"
+#include "../../shared/strbuilder.h"
 #include "platform.h"
 #include <string.h>
 #include <stdio.h>

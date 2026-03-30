@@ -36,6 +36,9 @@
 
 setlocal enabledelayedexpansion
 
+:: Disable NCD background rescans to prevent scanning user drives during tests
+set "NCD_TEST_MODE=1"
+
 :: ==========================================================================
 :: Configuration
 :: ==========================================================================
@@ -149,7 +152,12 @@ goto :create_tree
 :use_tempdir
 set "TESTROOT=%TEMP%\ncd_test_tree_%RANDOM%"
 mkdir "%TESTROOT%" 2>nul
-echo   Using temp directory at %TESTROOT%
+
+:: When using temp directory, set TESTDRIVE to current drive for /rDRIVE syntax
+for %%D in ("%TESTROOT%") do set "TESTDRIVE=%%~dD"
+set "TESTDRIVE=%TESTDRIVE:~0,1%"
+
+echo   Using temp directory at %TESTROOT% (drive %TESTDRIVE%:)
 
 :create_tree
 
@@ -192,13 +200,22 @@ attrib +s "%TESTROOT%\WinSys\System32"             2>nul
 
 echo   Created test directory tree
 
-:: Create a valid minimal metadata file to skip first-run configuration wizard.
-:: NCD checks if this file exists; if not, it shows an interactive config TUI
-:: that blocks waiting for keyboard input. This 20-byte file has:
-::   magic(4) + version(2) + section_count=0(1) + reserved(1) + reserved(4) + crc=0(8)
+:: Copy user's real metadata to test location so we don't disturb their config
 mkdir "%TEST_DATA%\NCD" 2>nul
-powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%TEST_DATA%\NCD\ncd.metadata', [byte[]]@(0x4E,0x43,0x4D,0x44,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00))"
-echo   Created default metadata
+if exist "%REAL_LOCALAPPDATA%\NCD\ncd.metadata" (
+    copy "%REAL_LOCALAPPDATA%\NCD\ncd.metadata" "%TEST_DATA%\NCD\ncd.metadata" >nul 2>&1
+    echo   Copied user metadata to test location
+) else (
+    :: Create minimal metadata if user doesn't have one
+    powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%TEST_DATA%\NCD\ncd.metadata', [byte[]]@(0x4E,0x43,0x4D,0x44,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00))"
+    echo   Created default metadata
+)
+
+:: Set CONF_OVERRIDE to use -conf for all NCD invocations
+set "CONF_OVERRIDE=-conf "%TEST_DATA%\NCD\ncd.metadata""
+
+:: CRITICAL: Disable auto-rescan to prevent background scans of user drives
+"%NCD%" %CONF_OVERRIDE% /c rescan_interval_hours=-1 2>nul
 echo.
 
 :: --- Initial scan ---
@@ -206,7 +223,7 @@ echo.
 :: not the entire system. This keeps tests fast (~1 second vs minutes).
 echo Performing initial scan of test tree...
 pushd "%TESTROOT%"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Host 'WARN: Initial scan timed out' }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /r.'; if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Host 'WARN: Initial scan timed out' }" >nul 2>&1
 popd
 echo   Scan complete.
 echo.
@@ -227,7 +244,7 @@ echo --- Category A: Help and Version ---
 call :test_exit_ok    A1 "Help with /h"      /h
 :: A2: /? cannot be passed through batch 'call' (cmd.exe intercepts it).
 :: Use PowerShell to pass /? directly to NCD.
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/?'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /?'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass A2 "Help with /?") else (call :fail A2 "Help with /?")
 call :test_exit_ok    A3 "Version /v"        /v
 
@@ -252,16 +269,12 @@ if "%B2_FOUND%"=="1" (call :pass B2 "Database file created") else (call :fail B2
 call :rescan_testroot
 call :test_ncd_finds B3 "Rescan creates searchable DB" "Downloads" scott\Downloads
 
-:: B4: Rescan with /t flag (use timed wrapper to avoid hanging)
-call :test_exit_ok_timed B4 "Rescan with /t 10" 15 /r /t 10
-:: CLEANUP: /r scanned all real drives into the DB. Delete them and rescan
-:: only the test tree so later search tests don't hit system dirs.
-del "%DB_DIR%\ncd_*.database" 2>nul
-call :rescan_testroot
+:: B4: Rescan with /t flag on test drive only (avoid scanning all drives)
+call :test_exit_ok_timed B4 "Rescan with /t 10" 15 /r%TESTDRIVE% /t 10
 
-:: B5: Rescan with /d override (use timed wrapper)
+:: B5: Rescan with /d override (use test drive only)
 set "CUSTOM_DB=%TEMP%\ncd_custom_test.db"
-call :test_exit_ok_timed B5 "Rescan with /d override" 15 /r /d "%CUSTOM_DB%"
+call :test_exit_ok_timed B5 "Rescan with /d override" 15 /r%TESTDRIVE% /d "%CUSTOM_DB%"
 del "%CUSTOM_DB%" 2>nul
 
 :: B6: Rescan after adding dirs
@@ -282,21 +295,21 @@ call :pass C1 "Rescan runs successfully"
 
 :: C2: Subdirectory rescan /r.
 pushd "%TESTROOT%\Projects"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(15000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /r.'; if (-not $p.WaitForExit(15000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass C2 "Subdirectory rescan /r.") else (call :fail C2 "Subdirectory rescan /r.")
 popd
 
 :: C3: Subdirectory rescan /r . (with space)
 pushd "%TESTROOT%\Users"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r .'; if (-not $p.WaitForExit(15000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /r .'; if (-not $p.WaitForExit(15000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass C3 "Subdirectory rescan /r .") else (call :fail C3 "Subdirectory rescan /r .")
 popd
 
-:: C4-C6: Test that /r flag variations are accepted (timed to avoid hanging)
-call :test_exit_ok_timed C4 "Rescan exclude /r-a"          15 /r-a
-call :test_exit_ok_timed C5 "Rescan drive list /r a,b"     15 /r "a,b"
-call :test_exit_ok_timed C6 "Rescan /t5 /r shorthand"      15 /t5 /r
-:: CLEANUP: /r variants scanned real drives. Reset DB to test tree only.
+:: C4-C6: Test /r flag variations on TEST DRIVE ONLY (avoid scanning all drives)
+call :test_exit_ok_timed C4 "Rescan test drive /r%TESTDRIVE%-a"  15 /r%TESTDRIVE%-a
+call :test_exit_ok_timed C5 "Rescan test drive /r %TESTDRIVE%"   15 /r "%TESTDRIVE%"
+call :test_exit_ok_timed C6 "Rescan /t5 shorthand"               15 /t5 /r%TESTDRIVE%
+:: Reset DB to clean state for subsequent tests
 del "%DB_DIR%\ncd_*.database" 2>nul
 call :rescan_testroot
 
@@ -347,7 +360,7 @@ call :test_ncd_finds    F4 "Fuzzy combined with /i"   "hidden"      /z /i .hidde
 call :test_ncd_no_match F5 "Fuzzy no match at all"                  /z zzzzqqqq
 
 :: F6: Fuzzy performance (timed to avoid hang if multiple matches)
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/z src4release'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /z src4release'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 call :pass F6 "Fuzzy digit-heavy performance"
 
 :: ==========================================================================
@@ -371,13 +384,13 @@ echo --- Category H: Groups/Bookmarks ---
 
 :: H1: Create group @proj
 pushd "%TESTROOT%\Projects"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/g @proj'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /g @proj'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass H1 "Create group @proj") else (call :fail H1 "Create group @proj")
 popd
 
 :: H2: Create group @users
 pushd "%TESTROOT%\Users"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/g @users'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /g @users'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass H2 "Create group @users") else (call :fail H2 "Create group @users")
 popd
 
@@ -388,7 +401,7 @@ call :test_ncd_finds  H5 "Navigate to @users"  "Users"    @users
 
 :: H6: Update existing group
 pushd "%TESTROOT%\Media"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/g @proj'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /g @proj'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 popd
 call :test_ncd_finds H6 "Updated group points to Media" "Media" @proj
 
@@ -424,7 +437,7 @@ call :test_exit_ok I9 "Remove nonexistent exclusion" -x- "nonexistent_pattern_xy
 
 :: I10: Agent tree should not show excluded directories
 :: Add exclusion for Deep, then rescan
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% -x ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 call :rescan_testroot
 :: I10a: Verify regular search doesn't find it
 call :test_ncd_no_match I10a "Search excludes Deep" L10
@@ -438,8 +451,8 @@ if errorlevel 1 (
 )
 
 :: Clean up exclusions
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x- ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '-x- ""*/EmptyDrive""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% -x- ""*/Deep""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% -x- ""*/EmptyDrive""'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 
 :: ==========================================================================
 :: CATEGORY J: History/Heuristics (6 tests)
@@ -448,15 +461,15 @@ powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-P
 echo --- Category J: History/Heuristics ---
 
 :: Use unique search terms to avoid multi-match TUI hang
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 call :test_exit_ok    J1 "Search creates history entry"       /f
 call :test_exit_ok    J2 "History shows search term" /f
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'Music'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% Music'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 call :test_exit_ok J3 "History after multiple searches" /f
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'Reports'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% Reports'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 call :test_exit_ok    J4 "Multiple searches in history" /f
 
 call :test_exit_ok J5 "Clear history /fc" /fc
@@ -471,7 +484,7 @@ call :test_exit_ok J6 "History empty after clear" /f
 echo --- Category K: Configuration /c ---
 
 :: K1: Config editor -- use timeout since TUI blocks on ReadConsoleInput
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/c'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /c'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass K1 "Config edit runs without crash") else (call :fail K1 "Config edit runs without crash")
 
 call :skip K2 "Config persists defaults" "requires TUI interaction"
@@ -487,7 +500,7 @@ set "CUSTOM_DB2=%TEMP%\ncd_custom_L.db"
 
 :: L1: Custom DB path (timed: /r. from testroot instead of /r to avoid scanning all drives)
 pushd "%TESTROOT%"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r. /d %CUSTOM_DB2%'; if (-not $p.WaitForExit(15000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /r. /d %CUSTOM_DB2%'; if (-not $p.WaitForExit(15000)) { $p.Kill() }" >nul 2>&1
 popd
 if exist "%CUSTOM_DB2%" (call :pass L1 "Custom DB path") else (call :fail L1 "Custom DB path" "file not created")
 
@@ -507,15 +520,9 @@ del "%CUSTOM_DB2%" 2>nul
 
 echo --- Category M: Timeout /t ---
 
-call :test_exit_ok_timed M1 "Short timeout rescan"     15 /r /t 5
-:: CLEANUP: /r scanned real drives
-del "%DB_DIR%\ncd_*.database" 2>nul
-call :rescan_testroot
+call :test_exit_ok_timed M1 "Short timeout rescan"     15 /r%TESTDRIVE% /t 5
 call :test_exit_ok       M2 "/t with search"               /t 60 Reports
-call :test_exit_ok_timed M3 "/t no-space shorthand"    15 /t5 /r
-:: CLEANUP: /r scanned real drives
-del "%DB_DIR%\ncd_*.database" 2>nul
-call :rescan_testroot
+call :test_exit_ok_timed M3 "/t no-space shorthand"    15 /t5 /r%TESTDRIVE%
 
 :: ==========================================================================
 :: CATEGORY N: Navigator Mode (3 tests)
@@ -524,13 +531,13 @@ call :rescan_testroot
 echo --- Category N: Navigator Mode ---
 
 :: Navigator is TUI -- use timeout to kill it since it blocks on ReadConsoleInput.
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '.'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% .'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass N1 "Navigate current dir") else (call :fail N1 "Navigate current dir")
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '""%TESTROOT%\Projects""'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% ""%TESTROOT%\Projects""'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass N2 "Navigate specific path") else (call :fail N2 "Navigate specific path")
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '""%TESTROOT%\""'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% ""%TESTROOT%\""'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass N3 "Navigate drive root") else (call :fail N3 "Navigate drive root")
 
 :: ==========================================================================
@@ -560,7 +567,7 @@ if defined Q1_DB (
     copy "%Q1_DB%" "%Q1_DB%.bak" >nul 2>&1
     :: Write garbage version bytes at offset 4
     powershell -Command "[byte[]]$b=[IO.File]::ReadAllBytes('%Q1_DB%');$b[4]=0xFF;$b[5]=0xFF;[IO.File]::WriteAllBytes('%Q1_DB%',$b)" >nul 2>&1
-    powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+    powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
     copy "%Q1_DB%.bak" "%Q1_DB%" >nul 2>&1
     del "%Q1_DB%.bak" 2>nul
     call :pass Q1 "Corrupt version handled without crash"
@@ -611,7 +618,7 @@ call :test_ncd_finds S4 "Forward slash search" "Downloads" Users/scott/Downloads
 call :test_ncd_finds S5 "Backslash search"     "Downloads" Users\scott\Downloads
 
 :: S6: Result file sets vars (use unique search to avoid multi-match TUI)
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 if exist "%RESULT_FILE%" (
     call "%RESULT_FILE%"
     if defined NCD_STATUS (call :pass S6 "Result file sets vars") else (call :fail S6 "Result file sets vars" "NCD_STATUS not set")
@@ -667,69 +674,69 @@ echo --- Category U: Circular Directory History ---
 
 :: Build some history (use unique search terms to avoid multi-match TUI hang)
 pushd "%TESTROOT%\Projects\alpha"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 popd
 pushd "%TESTROOT%\Projects\beta"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList 'scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% scott\Downloads'; if (-not $p.WaitForExit(10000)) { $p.Kill() }" >nul 2>&1
 popd
 
 :: All history commands use timeouts to prevent hanging if they open TUI
 :: U1: Bare NCD (ping-pong)
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U1 "Bare NCD ping-pong") else (call :fail U1 "Bare NCD ping-pong")
 
 :: U2: Bare NCD again
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U2 "Bare NCD second swap") else (call :fail U2 "Bare NCD second swap")
 
 :: U3: /0
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/0'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /0'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U3 "/0 same as bare NCD") else (call :fail U3 "/0 same as bare NCD")
 
 :: U4: /1
 pushd "%TESTROOT%\Users\scott"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/1'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /1'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U4 "/1 pushes current dir") else (call :fail U4 "/1 pushes current dir")
 popd
 
 :: U5: /1 again
 pushd "%TESTROOT%\Media"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/1'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /1'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U5 "/1 shifts list down") else (call :fail U5 "/1 shifts list down")
 popd
 
 :: U6-U7: /2 and /3
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/2'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /2'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U6 "/2 goes back 2 dirs") else (call :fail U6 "/2 goes back 2 dirs")
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/3'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /3'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U7 "/3 goes back 3 dirs") else (call :fail U7 "/3 goes back 3 dirs")
 
 :: U8: Build 10+ history entries
 for /L %%i in (1,1,11) do (
     mkdir "%TESTROOT%\hist_%%i" 2>nul
     pushd "%TESTROOT%\hist_%%i"
-    powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/1'; if (-not $p.WaitForExit(5000)) { $p.Kill() }" >nul 2>&1
+    powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /1'; if (-not $p.WaitForExit(5000)) { $p.Kill() }" >nul 2>&1
     popd
 )
 call :pass U8 "Circular list max 9 entries (no crash)"
 for /L %%i in (1,1,11) do rmdir "%TESTROOT%\hist_%%i" 2>nul
 
 :: U9: /8 max index
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/8'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /8'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U9 "/8 max index") else (call :fail U9 "/8 max index")
 
 :: U10: /9 out of range
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/9'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /9'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U10 "/9 out of range") else (call :fail U10 "/9 out of range")
 
 :: U11: History persists
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/2'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /2'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U11 "History persists across runs") else (call :fail U11 "History persists across runs")
 
 :: U12: Empty history
 del "%TEST_DATA%\NCD\ncd.metadata" 2>nul
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE%'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 2 (call :pass U12 "Empty history bare NCD") else (call :fail U12 "Empty history bare NCD")
 
 :: Restore database
@@ -867,7 +874,7 @@ if %FAIL_COUNT% GTR 0 (
 :: Uses a 15-second hard timeout to prevent hanging.
 :rescan_testroot
 pushd "%TESTROOT%"
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(15000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% /r.'; if (-not $p.WaitForExit(15000)) { $p.Kill() }" >nul 2>&1
 popd
 goto :eof
 
@@ -912,7 +919,7 @@ shift
 goto :teot_loop
 :teot_run
 :: Use PowerShell to enforce a hard timeout on the NCD process
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '!TEOT_ARGS!'; if (-not $p.WaitForExit(%TEOT_TIMEOUT%000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% !TEOT_ARGS!'; if (-not $p.WaitForExit(%TEOT_TIMEOUT%000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
 :: We consider it a PASS if the process started without crash (even if timed out)
 call :pass "%TEOT_ID%" "%TEOT_DESC%"
 goto :eof
@@ -932,7 +939,7 @@ set "TEO_ARGS=!TEO_ARGS! %1"
 shift
 goto :teo_loop
 :teo_run
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '!TEO_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% !TEO_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if not errorlevel 1 (call :pass "%TEO_ID%" "%TEO_DESC%") else (call :fail "%TEO_ID%" "%TEO_DESC%" "exit code nonzero or timed out")
 goto :eof
 
@@ -949,7 +956,7 @@ set "TEF_ARGS=!TEF_ARGS! %1"
 shift
 goto :tef_loop
 :tef_run
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '!TEF_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% !TEF_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if errorlevel 1 (call :pass "%TEF_ID%" "%TEF_DESC%") else (call :fail "%TEF_ID%" "%TEF_DESC%" "expected nonzero exit")
 goto :eof
 
@@ -1007,7 +1014,7 @@ shift
 goto :tnf_loop
 :tnf_run
 del "%RESULT_FILE%" 2>nul
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '!TNF_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 99 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% !TNF_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 99 } else { exit $p.ExitCode }" >nul 2>&1
 set "TNF_EXIT=!ERRORLEVEL!"
 if "!TNF_EXIT!"=="99" (
     call :fail "%TNF_ID%" "%TNF_DESC%" "timed out - TUI blocked on multi-match"
@@ -1043,7 +1050,7 @@ set "TNN_ARGS=!TNN_ARGS! %1"
 shift
 goto :tnn_loop
 :tnn_run
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '!TNN_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% !TNN_ARGS!'; if (-not $p.WaitForExit(10000)) { $p.Kill(); exit 1 } else { exit $p.ExitCode }" >nul 2>&1
 if errorlevel 1 (call :pass "%TNN_ID%" "%TNN_DESC%") else (call :fail "%TNN_ID%" "%TNN_DESC%" "expected no match but got exit 0")
 goto :eof
 

@@ -5,6 +5,7 @@
 #include "service_publish.h"
 #include "shared_state.h"
 #include "shm_platform.h"
+#include "shm_types.h"
 #include "database.h"
 #include <string.h>
 #include <stdlib.h>
@@ -164,6 +165,8 @@ static bool build_metadata_snapshot(uint8_t *buf, size_t buf_size,
     cfg->default_fuzzy_match = meta->cfg.default_fuzzy_match;
     cfg->default_timeout = (int8_t)meta->cfg.default_timeout;
     cfg->has_defaults = meta->cfg.has_defaults;
+    cfg->service_retry_count = meta->cfg.service_retry_count;
+    cfg->text_encoding = meta->cfg.text_encoding ? meta->cfg.text_encoding : NCD_TEXT_UTF8;
     offset += sizeof(ShmConfigSection);
     
     /* String pool area */

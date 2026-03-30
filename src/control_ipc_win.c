@@ -279,6 +279,8 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
     }
     
     NcdIpcHeader *resp_hdr = (NcdIpcHeader *)resp_buf;
+    size_t hdr_size = sizeof(NcdIpcHeader);
+    size_t available_payload = (size_t)read - hdr_size;
     
     IPC_DBG("IPC: Response header: magic=%X version=%d type=%d seq=%u payload=%u\n",
             resp_hdr->magic, resp_hdr->version, resp_hdr->type, resp_hdr->sequence, resp_hdr->payload_len);
@@ -308,6 +310,15 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
     /* Check sequence number matches */
     if (resp_hdr->sequence != hdr->sequence) {
         IPC_DBG("IPC: Sequence mismatch, sent=%u received=%u\n", hdr->sequence, resp_hdr->sequence);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    if (resp_hdr->payload_len > (uint32_t)(NCD_IPC_MAX_MSG_SIZE - hdr_size)) {
+        IPC_DBG("IPC: Payload length too large: %u\n", resp_hdr->payload_len);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    if ((size_t)resp_hdr->payload_len > available_payload) {
+        IPC_DBG("IPC: Payload length exceeds received bytes: payload=%u available=%zu\n",
+                resp_hdr->payload_len, available_payload);
         return NCD_IPC_ERROR_INVALID;
     }
     
@@ -359,6 +370,7 @@ NcdIpcResult ipc_client_get_state_info(NcdIpcClient *client, NcdIpcStateInfo *in
     NcdStateInfoPayload *payload = (NcdStateInfoPayload *)response;
     
     info->protocol_version = payload->protocol_version;
+    info->text_encoding = payload->text_encoding;
     info->meta_generation = payload->meta_generation;
     info->db_generation = payload->db_generation;
     info->meta_size = payload->meta_size;
@@ -370,15 +382,42 @@ NcdIpcResult ipc_client_get_state_info(NcdIpcClient *client, NcdIpcStateInfo *in
     
     info->meta_name[0] = '\0';
     info->db_name[0] = '\0';
+
+    if (payload->meta_name_len > sizeof(info->meta_name) - 1 ||
+        payload->db_name_len > sizeof(info->db_name) - 1) {
+        free(response);
+        return NCD_IPC_ERROR_INVALID;
+    }
+
+    if ((size_t)payload->meta_name_len + (size_t)payload->db_name_len > remaining) {
+        free(response);
+        return NCD_IPC_ERROR_INVALID;
+    }
     
-    if (payload->meta_name_len > 0 && payload->meta_name_len < remaining) {
+    if (payload->meta_name_len > 0) {
+        if (payload->meta_name_len > remaining) {
+            free(response);
+            return NCD_IPC_ERROR_INVALID;
+        }
+        if (data[payload->meta_name_len - 1] != '\0') {
+            free(response);
+            return NCD_IPC_ERROR_INVALID;
+        }
         memcpy(info->meta_name, data, payload->meta_name_len);
         info->meta_name[payload->meta_name_len] = '\0';
         data += payload->meta_name_len;
         remaining -= payload->meta_name_len;
     }
     
-    if (payload->db_name_len > 0 && payload->db_name_len <= remaining) {
+    if (payload->db_name_len > 0) {
+        if (payload->db_name_len > remaining) {
+            free(response);
+            return NCD_IPC_ERROR_INVALID;
+        }
+        if (data[payload->db_name_len - 1] != '\0') {
+            free(response);
+            return NCD_IPC_ERROR_INVALID;
+        }
         memcpy(info->db_name, data, payload->db_name_len);
         info->db_name[payload->db_name_len] = '\0';
     }

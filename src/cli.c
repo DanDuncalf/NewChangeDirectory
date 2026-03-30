@@ -86,12 +86,13 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             if (strcmp(opt, "--json") == 0) {
                 opts->agent_json = true;
                 (*consumed)++;
-            } else if (strcmp(opt, "--depth") == 0) {
-                if (i + 1 < argc) {
-                    opts->agent_depth_sort = true;
-                    (*consumed) += 2;
-                    i++;
-                }
+            } else if (strcmp(opt, "--all") == 0) {
+                opts->show_hidden = true;
+                opts->show_system = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--depth") == 0 || strcmp(opt, "--depth-sort") == 0) {
+                opts->agent_depth_sort = true;
+                (*consumed)++;
             } else if (strncmp(opt, "--limit=", 8) == 0) {
                 opts->agent_limit = atoi(opt + 8);
                 (*consumed)++;
@@ -111,6 +112,7 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             return false;
         }
         opts->agent_subcommand = AGENT_SUB_LS;
+        opts->agent_depth = 1;  /* default ls depth */
         platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
         opts->has_search = true;
         *consumed = 2;
@@ -127,8 +129,20 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             } else if (strcmp(opt, "--files-only") == 0) {
                 opts->agent_files_only = true;
                 (*consumed)++;
+            } else if (strncmp(opt, "--pattern=", 10) == 0) {
+                platform_strncpy_s(opts->agent_pattern, sizeof(opts->agent_pattern), opt + 10);
+                (*consumed)++;
+            } else if (strcmp(opt, "--pattern") == 0 && i + 1 < argc) {
+                platform_strncpy_s(opts->agent_pattern, sizeof(opts->agent_pattern), argv[i + 1]);
+                (*consumed) += 2;
+                i++;
             } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
-                opts->agent_depth = atoi(argv[i + 1]);
+                int depth = atoi(argv[i + 1]);
+                if (depth < 1) {
+                    ncd_println("NCD: /agent ls --depth must be >= 1");
+                    return false;
+                }
+                opts->agent_depth = depth;
                 (*consumed) += 2;
                 i++;
             } else {
@@ -143,6 +157,7 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             return false;
         }
         opts->agent_subcommand = AGENT_SUB_TREE;
+        opts->agent_depth = 3;  /* default tree depth */
         platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
         opts->has_search = true;
         *consumed = 2;
@@ -157,7 +172,12 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
                 opts->agent_flat = true;
                 (*consumed)++;
             } else if (strcmp(opt, "--depth") == 0 && i + 1 < argc) {
-                opts->agent_depth = atoi(argv[i + 1]);
+                int depth = atoi(argv[i + 1]);
+                if (depth < 1) {
+                    ncd_println("NCD: /agent tree --depth must be >= 1");
+                    return false;
+                }
+                opts->agent_depth = depth;
                 (*consumed) += 2;
                 i++;
             } else {
@@ -181,6 +201,9 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
                 (*consumed)++;
             } else if (strcmp(opt, "--service-status") == 0) {
                 opts->agent_check_service_status = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
                 (*consumed)++;
             } else if (opt[0] != '-') {
                 /* Path argument */
@@ -313,6 +336,11 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
     memset(opts, 0, sizeof(NcdOptions));
     opts->timeout_seconds = 300;  /* default 5 minute timeout */
 
+    if (argc <= 1) {
+        opts->show_help = true;
+        return true;
+    }
+
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
 
@@ -398,140 +426,28 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             continue;
         }
 
-        /*
-         * /r <drives> form:
-         *   ncd /r e,p
-         *   ncd /r e-p
-         *   ncd /r /      (Linux: scan only root, not /mnt drives)
-         */
-        if ((_stricmp(arg, "/r") == 0 || _stricmp(arg, "-r") == 0) &&
-            i + 1 < argc &&
-            (argv[i + 1][0] != '-' &&
-             (argv[i + 1][0] != '/' || strcmp(argv[i + 1], "/") == 0))) {
-            const char *next = argv[i + 1];
-#if NCD_PLATFORM_LINUX
-            /* Linux special: /r / scans only root filesystem */
-            if (strcmp(next, "/") == 0) {
-                opts->force_rescan = true;
-                opts->scan_root_only = true;
-                i++;  /* consume the '/' token */
-                continue;
-            }
-#endif
-            bool looks_like_drive_list = false;
-            bool all_alpha = true;
-            for (int k = 0; next[k]; k++) {
-                if (next[k] == ',' || next[k] == '-') {
-                    looks_like_drive_list = true;
-                    break;
-                }
-                if (!isalpha((unsigned char)next[k])) {
-                    all_alpha = false;
-                }
-            }
-            /* Single or multiple drive letters without separators also count */
-            if (all_alpha && strlen(next) > 0 && strlen(next) <= 26) {
-                looks_like_drive_list = true;
-            }
-            if (looks_like_drive_list) {
-                bool parsed = parse_drive_list_token(next,
-                                                     opts->scan_drive_mask,
-                                                     &opts->scan_drive_count);
-                if (parsed) {
-                    opts->force_rescan = true;
-                    i++;  /* consume drive-list token */
-                    continue;
-                }
-            }
-            /* Not a drive list - fall through, next arg is search term */
-        }
-
-        /*
-         * /r<drives> shorthand:
-         *   /r      => all drives
-         *   /rBDE   => B:, D:, E:
-         */
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] == '-') {
-            /* /r-b-d or /r-b,d => skip listed drives */
-            opts->force_rescan = true;
-            int k = 2;
-            while (arg[k]) {
-                if (arg[k] != '-' && arg[k] != ',') {
-                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
-                    return false;
-                }
-                k++;
-                if (!arg[k] || !isalpha((unsigned char)arg[k])) {
-                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
-                    return false;
-                }
-                char c = (char)toupper((unsigned char)arg[k]);
-                int idx = c - 'A';
-                if (!opts->skip_drive_mask[idx]) {
-                    opts->skip_drive_mask[idx] = true;
-                    opts->skip_drive_count++;
-                }
-                k++;
-            }
-            continue;
-        }
-
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] != '\0') {
-            bool drives_form = true;
-            for (int k = 2; arg[k]; k++) {
-                if (!isalpha((unsigned char)arg[k])) {
-                    drives_form = false;
-                    break;
-                }
-            }
-            if (!drives_form) {
-                /* Check for /r. (rescan current subdirectory) */
-                if (arg[2] == '.' && arg[3] == '\0') {
-                    opts->force_rescan = true;
-                    platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
-                    continue;
-                }
-                /* Fall through to normal option parsing (/ri, /rs, etc). */
-            } else {
-                opts->force_rescan = true;
-                for (int k = 2; arg[k]; k++) {
-                    char c = (char)toupper((unsigned char)arg[k]);
-                    int idx = c - 'A';
-                    if (!opts->scan_drive_mask[idx]) {
-                        opts->scan_drive_mask[idx] = true;
-                        opts->scan_drive_count++;
-                    }
-                }
-                continue;
-            }
-        }
-
-        /* /r . form: rescan current subdirectory */
-        if ((arg[0] == '/' || arg[0] == '-') &&
-            (arg[1] == 'r' || arg[1] == 'R') &&
-            arg[2] == '\0' && i + 1 < argc) {
-            const char *next = argv[i + 1];
-            if (strcmp(next, ".") == 0) {
-                opts->force_rescan = true;
-                platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
-                i++;  /* consume the '.' */
-                continue;
-            }
-        }
-
         /* Agentic debug mode: /agdb (check BEFORE combined flags to avoid /a match) */
         if (_stricmp(arg, "/agdb") == 0 || _stricmp(arg, "-agdb") == 0) {
             opts->agentic_debug = true;
             continue;
         }
 
-        /* Agent mode: /agent <subcommand> (check BEFORE combined flags to avoid /a match) */
-        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0 ||
-            _stricmp(arg, "/a") == 0 || _stricmp(arg, "-a") == 0) {
+        /* /a = include hidden + system */
+        if (_stricmp(arg, "/a") == 0 || _stricmp(arg, "-a") == 0) {
+            opts->show_hidden = true;
+            opts->show_system = true;
+            continue;
+        }
+
+        /* /a must be exact (except explicit /agent command) */
+        if ((_strnicmp(arg, "/a", 2) == 0 || _strnicmp(arg, "-a", 2) == 0) &&
+            _stricmp(arg, "/agent") != 0 && _stricmp(arg, "-agent") != 0) {
+            ncd_printf("NCD: unknown option: %s\r\n", arg);
+            return false;
+        }
+
+        /* Agent mode: /agent <subcommand> */
+        if (_stricmp(arg, "/agent") == 0 || _stricmp(arg, "-agent") == 0) {
             opts->agent_mode = true;
             
             if (i + 1 < argc) {
@@ -547,7 +463,7 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
         }
 
-        /* Combined flags: /i, /s, /a, /z, /v */
+        /* Combined flags: /i, /s, /a, /z, /v, /r */
         if (arg[0] == '/' || arg[0] == '-') {
             const char *p = arg + 1;
             bool unknown = false;
@@ -573,8 +489,10 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                         opts->show_version = true;
                         break;
                     case 'R':
-                        /* /r alone - rescan all */
+                        /* Defer exact "/r" to dedicated /r parser below. */
                         if (p[1] == '\0') {
+                            unknown = true;
+                        } else {
                             opts->force_rescan = true;
                         }
                         break;
@@ -585,11 +503,10 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 p++;
             }
             
-            if (!unknown || opts->show_hidden || opts->show_system || 
-                opts->fuzzy_match || opts->show_version || opts->force_rescan) {
+            if (!unknown) {
                 continue;
             }
-            /* Unknown option - fall through to error */
+            /* Unknown letters - fall through so explicit long options can match. */
         }
 
         /* Tag list: /gl or /gL */
@@ -640,6 +557,16 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 continue;
             }
             ncd_println("NCD: /d requires a path argument");
+            return false;
+        }
+        
+        /* Config/Metadata override: -conf <path> */
+        if (_stricmp(arg, "-conf") == 0) {
+            if (i + 1 < argc) {
+                platform_strncpy_s(opts->conf_override, sizeof(opts->conf_override), argv[++i]);
+                continue;
+            }
+            ncd_println("NCD: -conf requires a path argument");
             return false;
         }
 
@@ -696,6 +623,134 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
             ncd_println("NCD: /retry requires a count argument");
             return false;
+        }
+
+        /* Text encoding: /u8 (UTF-8) or /u16 (UTF-16LE) - Windows only */
+        if (_stricmp(arg, "/u8") == 0 || _stricmp(arg, "-u8") == 0) {
+            opts->encoding_switch = true;
+            opts->text_encoding = NCD_TEXT_UTF8;
+            continue;
+        }
+        if (_stricmp(arg, "/u16") == 0 || _stricmp(arg, "-u16") == 0) {
+            opts->encoding_switch = true;
+            opts->text_encoding = NCD_TEXT_UTF16LE;
+            continue;
+        }
+
+        /*
+         * /r forms (checked after exact options):
+         *   /r            => rescan all
+         *   /r e,p        => specific drives
+         *   /r /          => Linux root only
+         *   /r .          => current subdirectory only
+         *   /rBDE         => drive shorthand
+         *   /r-b-d        => exclude drives
+         *   /r.           => current subdirectory only
+         */
+        if (_stricmp(arg, "/r") == 0 || _stricmp(arg, "-r") == 0) {
+            if (i + 1 < argc &&
+                argv[i + 1][0] != '-' &&
+                (argv[i + 1][0] != '/' || strcmp(argv[i + 1], "/") == 0)) {
+                const char *next = argv[i + 1];
+#if NCD_PLATFORM_LINUX
+                if (strcmp(next, "/") == 0) {
+                    opts->force_rescan = true;
+                    opts->scan_root_only = true;
+                    i++;
+                    continue;
+                }
+#endif
+                if (strcmp(next, ".") == 0) {
+                    opts->force_rescan = true;
+                    platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
+                    i++;
+                    continue;
+                }
+
+                bool looks_like_drive_list = false;
+                bool all_alpha = true;
+                for (int k = 0; next[k]; k++) {
+                    if (next[k] == ',' || next[k] == '-') {
+                        looks_like_drive_list = true;
+                        break;
+                    }
+                    if (!isalpha((unsigned char)next[k])) {
+                        all_alpha = false;
+                    }
+                }
+                if (all_alpha && strlen(next) > 0 && strlen(next) <= 26) {
+                    looks_like_drive_list = true;
+                }
+                if (looks_like_drive_list) {
+                    bool parsed = parse_drive_list_token(next,
+                                                         opts->scan_drive_mask,
+                                                         &opts->scan_drive_count);
+                    if (parsed) {
+                        opts->force_rescan = true;
+                        i++;
+                        continue;
+                    }
+                }
+                /* Not a drive list - keep token as search term. */
+            }
+            opts->force_rescan = true;
+            continue;
+        }
+
+        if ((arg[0] == '/' || arg[0] == '-') &&
+            (arg[1] == 'r' || arg[1] == 'R') &&
+            arg[2] == '-') {
+            opts->force_rescan = true;
+            int k = 2;
+            while (arg[k]) {
+                if (arg[k] != '-' && arg[k] != ',') {
+                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
+                    return false;
+                }
+                k++;
+                if (!arg[k] || !isalpha((unsigned char)arg[k])) {
+                    ncd_printf("NCD: invalid /r exclude list: %s\r\n", arg);
+                    return false;
+                }
+                char c = (char)toupper((unsigned char)arg[k]);
+                int idx = c - 'A';
+                if (!opts->skip_drive_mask[idx]) {
+                    opts->skip_drive_mask[idx] = true;
+                    opts->skip_drive_count++;
+                }
+                k++;
+            }
+            continue;
+        }
+
+        if ((arg[0] == '/' || arg[0] == '-') &&
+            (arg[1] == 'r' || arg[1] == 'R') &&
+            arg[2] != '\0') {
+            bool drives_form = true;
+            for (int k = 2; arg[k]; k++) {
+                if (!isalpha((unsigned char)arg[k])) {
+                    drives_form = false;
+                    break;
+                }
+            }
+            if (!drives_form) {
+                if (arg[2] == '.' && arg[3] == '\0') {
+                    opts->force_rescan = true;
+                    platform_get_current_dir(opts->scan_subdirectory, NCD_MAX_PATH);
+                    continue;
+                }
+            } else {
+                opts->force_rescan = true;
+                for (int k = 2; arg[k]; k++) {
+                    char c = (char)toupper((unsigned char)arg[k]);
+                    int idx = c - 'A';
+                    if (!opts->scan_drive_mask[idx]) {
+                        opts->scan_drive_mask[idx] = true;
+                        opts->scan_drive_count++;
+                    }
+                }
+                continue;
+            }
         }
 
         /* Unknown option */

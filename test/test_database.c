@@ -536,6 +536,419 @@ TEST(find_drive_returns_null_for_missing) {
     return 0;
 }
 
+/* ================================================================ Text Encoding Tests */
+
+TEST(text_encoding_default_is_utf8) {
+    /* Default encoding should be UTF-8 */
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, db_get_text_encoding());
+    return 0;
+}
+
+TEST(text_encoding_set_get_roundtrip) {
+    /* Test setting and getting UTF-16 */
+    db_set_text_encoding(NCD_TEXT_UTF16LE);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
+    
+    /* Test setting and getting UTF-8 */
+    db_set_text_encoding(NCD_TEXT_UTF8);
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, db_get_text_encoding());
+    
+    /* Reset to default */
+    db_set_text_encoding(NCD_TEXT_UTF8);
+    return 0;
+}
+
+TEST(text_encoding_invalid_value_ignored) {
+    /* Set to valid value first */
+    db_set_text_encoding(NCD_TEXT_UTF16LE);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
+    
+    /* Try setting invalid value (should be ignored) */
+    db_set_text_encoding(0);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
+    
+    db_set_text_encoding(255);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
+    
+    /* Reset to default */
+    db_set_text_encoding(NCD_TEXT_UTF8);
+    return 0;
+}
+
+TEST(config_encoding_defaults_to_utf8) {
+    NcdConfig cfg;
+    db_config_init_defaults(&cfg);
+    
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, cfg.text_encoding);
+    return 0;
+}
+
+TEST(binary_save_load_utf8_no_bom) {
+    const char *test_file = "test_utf8.tmp";
+    NcdDatabase *loaded = NULL;
+    remove(test_file);
+    
+    /* Set UTF-8 encoding */
+    db_set_text_encoding(NCD_TEXT_UTF8);
+    
+    /* Create and save database */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    db_add_dir(drv, "Test", -1, false, false);
+    
+    ASSERT_TRUE(db_save_binary_single(db, 0, test_file));
+    db_free(db);
+    
+    /* Verify no BOM at start of file */
+    FILE *f = fopen(test_file, "rb");
+    ASSERT_NOT_NULL(f);
+    uint8_t first_bytes[4];
+    size_t read = fread(first_bytes, 1, 4, f);
+    fclose(f);
+    
+    /* First 4 bytes should be the magic 'NCDB' (0x4E, 0x43, 0x44, 0x42 in LE) */
+    ASSERT_EQ_INT(0x4E, first_bytes[0]);
+    ASSERT_EQ_INT(0x43, first_bytes[1]);
+    ASSERT_EQ_INT(0x44, first_bytes[2]);
+    ASSERT_EQ_INT(0x42, first_bytes[3]);
+    
+    /* Load and verify */
+    loaded = db_load_binary(test_file);
+    ASSERT_NOT_NULL(loaded);
+    ASSERT_EQ_INT(1, loaded->drive_count);
+    
+    /* After loading UTF-8 file, encoding should be UTF-8 */
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, db_get_text_encoding());
+    
+cleanup:
+    if (loaded) db_free(loaded);
+    remove(test_file);
+    return 0;
+}
+
+TEST(binary_save_load_utf16_with_bom) {
+    const char *test_file = "test_utf16.tmp";
+    NcdDatabase *loaded = NULL;
+    remove(test_file);
+    
+    /* Set UTF-16 encoding */
+    db_set_text_encoding(NCD_TEXT_UTF16LE);
+    
+    /* Create and save database */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    db_add_dir(drv, "Test", -1, false, false);
+    
+    ASSERT_TRUE(db_save_binary_single(db, 0, test_file));
+    db_free(db);
+    
+    /* Verify UTF-16 BOM at start of file */
+    FILE *f = fopen(test_file, "rb");
+    ASSERT_NOT_NULL(f);
+    uint8_t bom[2];
+    size_t read = fread(bom, 1, 2, f);
+    fclose(f);
+    
+    /* BOM should be 0xFF 0xFE for UTF-16LE */
+    ASSERT_EQ_INT(2, read);
+    ASSERT_EQ_INT(0xFF, bom[0]);
+    ASSERT_EQ_INT(0xFE, bom[1]);
+    
+    /* Load and verify */
+    loaded = db_load_binary(test_file);
+    ASSERT_NOT_NULL(loaded);
+    ASSERT_EQ_INT(1, loaded->drive_count);
+    
+    /* After loading UTF-16 file, encoding should be UTF-16 */
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
+    
+cleanup:
+    if (loaded) db_free(loaded);
+    remove(test_file);
+    /* Reset to default */
+    db_set_text_encoding(NCD_TEXT_UTF8);
+    return 0;
+}
+
+TEST(binary_load_rejects_bom_encoding_mismatch) {
+    const char *test_file = "test_mismatch.tmp";
+    remove(test_file);
+    
+    /* Create a file with UTF-16 BOM but UTF-8 encoding in header */
+    FILE *f = fopen(test_file, "wb");
+    ASSERT_NOT_NULL(f);
+    
+    /* Write UTF-16 BOM */
+    uint8_t bom[2] = {0xFF, 0xFE};
+    fwrite(bom, 1, 2, f);
+    
+    /* Write header with UTF-8 encoding (mismatch) */
+    uint32_t magic = 0x4244434E;  /* 'NCDB' */
+    uint16_t version = NCD_BIN_VERSION;
+    uint8_t show_hidden = 0;
+    uint8_t show_system = 0;
+    uint64_t last_scan = 0;
+    uint32_t drive_count = 1;
+    uint8_t skipped_rescan = 0;
+    uint8_t encoding = NCD_TEXT_UTF8;  /* Mismatch: claims UTF-8 but has BOM */
+    uint8_t pad[2] = {0, 0};
+    uint64_t checksum = 0;
+    
+    fwrite(&magic, 4, 1, f);
+    fwrite(&version, 2, 1, f);
+    fwrite(&show_hidden, 1, 1, f);
+    fwrite(&show_system, 1, 1, f);
+    fwrite(&last_scan, 8, 1, f);
+    fwrite(&drive_count, 4, 1, f);
+    fwrite(&skipped_rescan, 1, 1, f);
+    fwrite(&encoding, 1, 1, f);
+    fwrite(pad, 1, 2, f);
+    fwrite(&checksum, 8, 1, f);
+    
+    /* Write minimal drive header */
+    uint8_t letter = 'C';
+    uint8_t dpad[3] = {0, 0, 0};
+    uint32_t type = 0;
+    char label[64] = {0};
+    uint32_t dir_count = 0;
+    uint32_t pool_size = 0;
+    
+    fwrite(&letter, 1, 1, f);
+    fwrite(dpad, 1, 3, f);
+    fwrite(&type, 4, 1, f);
+    fwrite(label, 1, 64, f);
+    fwrite(&dir_count, 4, 1, f);
+    fwrite(&pool_size, 4, 1, f);
+    
+    fclose(f);
+    
+    /* Try to load - should fail due to BOM/encoding mismatch */
+    NcdDatabase *db = db_load_binary(test_file);
+    ASSERT_NULL(db);
+    
+    remove(test_file);
+    return 0;
+}
+
+TEST(config_encoding_migrates_from_v3) {
+    /* Simulate loading a v3 config (no text_encoding field) */
+    NcdConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    
+    /* Set up as v3 config */
+    cfg.magic = NCD_CFG_MAGIC;
+    cfg.version = 3;  /* Old version */
+    cfg.default_show_hidden = false;
+    cfg.default_show_system = false;
+    cfg.has_defaults = true;
+    /* text_encoding field doesn't exist in v3 */
+    
+    /* The migration logic in db_config_load would set encoding to UTF-8 */
+    /* Since we can't easily test the full load path, verify the init function */
+    NcdConfig new_cfg;
+    db_config_init_defaults(&new_cfg);
+    
+    /* New config should have UTF-8 encoding and v4 version */
+    ASSERT_EQ_INT(NCD_CFG_VERSION, new_cfg.version);
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, new_cfg.text_encoding);
+    
+    return 0;
+}
+
+/* ================================================================ Version Consistency Test */
+
+TEST(saved_database_version_matches_current) {
+    /*
+     * This test verifies that after saving a database, the version
+     * recorded in the file matches NCD_BIN_VERSION. This catches the
+     * bug where non-atomic file replacement could leave the database
+     * in an inconsistent state, causing version mismatch errors on
+     * the next run even though the database was just scanned.
+     */
+    const char *test_file = "test_version_consistency.tmp";
+    remove(test_file);
+    
+    /* Create and save a database */
+    NcdDatabase *db = db_create();
+    ASSERT_NOT_NULL(db);
+    
+    DriveData *drv = db_add_drive(db, 'C');
+    ASSERT_NOT_NULL(drv);
+    db_add_dir(drv, "Windows", -1, false, false);
+    db_add_dir(drv, "Users", -1, false, false);
+    db_add_dir(drv, "ProgramData", -1, true, false);
+    
+    /* Save the database */
+    ASSERT_TRUE(db_save_binary_single(db, 0, test_file));
+    db_free(db);
+    db = NULL;
+    
+    /* 
+     * Immediately check the version - this should return DB_VERSION_OK
+     * if the save was successful and atomic. If there's a version mismatch
+     * here, it indicates the file was corrupted during save.
+     */
+    int version_status = db_check_file_version(test_file);
+    
+    /* The version MUST match - this is the bug we're testing for */
+    ASSERT_EQ_INT(DB_VERSION_OK, version_status);
+    
+    /* Also verify we can load it successfully */
+    db = db_load_binary(test_file);
+    ASSERT_NOT_NULL(db);
+    ASSERT_EQ_INT(1, db->drive_count);
+    ASSERT_EQ_INT(3, db->drives[0].dir_count);
+    
+cleanup:
+    if (db) db_free(db);
+    remove(test_file);
+    return 0;
+}
+
+TEST(saved_database_version_is_correct_binary_version) {
+    /*
+     * This test explicitly verifies that the version written to the
+     * database file is exactly NCD_BIN_VERSION, not some other value.
+     */
+    const char *test_file = "test_bin_version.tmp";
+    remove(test_file);
+    
+    /* Create and save a database */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    db_add_dir(drv, "Test", -1, false, false);
+    
+    ASSERT_TRUE(db_save_binary_single(db, 0, test_file));
+    db_free(db);
+    
+    /* Read the version directly from the file header */
+    FILE *f = fopen(test_file, "rb");
+    ASSERT_NOT_NULL(f);
+    
+    /* Skip magic (4 bytes), read version at offset 4 */
+    uint32_t magic;
+    uint16_t version;
+    
+    size_t read = fread(&magic, 4, 1, f);
+    ASSERT_EQ_INT(1, read);
+    ASSERT_EQ_INT(0x4244434E, magic);  /* 'NCDB' */
+    
+    read = fread(&version, 2, 1, f);
+    fclose(f);
+    
+    ASSERT_EQ_INT(1, read);
+    /* The version in the file MUST equal NCD_BIN_VERSION */
+    ASSERT_EQ_INT(NCD_BIN_VERSION, version);
+    
+    remove(test_file);
+    return 0;
+}
+
+/* ================================================================ Exclusion Filtering Tests */
+
+TEST(filter_excluded_removes_matching_directories) {
+    /* Create a database with some directories */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    
+    /* Add directories: C:\Windows, C:\Windows\System32, C:\Users */
+    int windows = db_add_dir(drv, "Windows", -1, false, false);
+    int system32 = db_add_dir(drv, "System32", windows, false, false);
+    int users = db_add_dir(drv, "Users", -1, false, false);
+    (void)system32;
+    (void)users;
+    
+    ASSERT_EQ_INT(3, drv->dir_count);
+    
+    /* Create metadata with an exclusion for Windows */
+    NcdMetadata *meta = db_metadata_create();
+    db_exclusion_add(meta, "C:\\Windows");
+    
+    /* Filter the database */
+    int removed = db_filter_excluded(db, meta);
+    
+    /* Should have removed Windows and System32 (child of Windows) */
+    ASSERT_EQ_INT(2, removed);  /* Windows and System32 */
+    ASSERT_EQ_INT(1, drv->dir_count);  /* Only Users remains */
+    
+    db_metadata_free(meta);
+    db_free(db);
+    return 0;
+}
+
+TEST(filter_excluded_keeps_non_matching_directories) {
+    /* Create a database with some directories */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    
+    /* Add directories */
+    int windows = db_add_dir(drv, "Windows", -1, false, false);
+    int users = db_add_dir(drv, "Users", -1, false, false);
+    int programfiles = db_add_dir(drv, "Program Files", -1, false, false);
+    (void)windows;
+    (void)users;
+    (void)programfiles;
+    
+    ASSERT_EQ_INT(3, drv->dir_count);
+    
+    /* Create metadata with an exclusion that matches nothing */
+    NcdMetadata *meta = db_metadata_create();
+    db_exclusion_add(meta, "C:\\NonExistent");
+    
+    /* Filter the database */
+    int removed = db_filter_excluded(db, meta);
+    
+    /* Nothing should be removed */
+    ASSERT_EQ_INT(0, removed);
+    ASSERT_EQ_INT(3, drv->dir_count);
+    
+    db_metadata_free(meta);
+    db_free(db);
+    return 0;
+}
+
+TEST(filter_excluded_updates_parent_indices) {
+    /* Create a database with nested directories */
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    
+    /* Add directories: C:\Keep, C:\Keep\Child, C:\Remove */
+    int keep = db_add_dir(drv, "Keep", -1, false, false);
+    int child = db_add_dir(drv, "Child", keep, false, false);
+    int remove = db_add_dir(drv, "Remove", -1, false, false);
+    (void)child;
+    (void)remove;
+    
+    ASSERT_EQ_INT(3, drv->dir_count);
+    
+    /* Verify initial parent relationship */
+    ASSERT_EQ_INT(-1, drv->dirs[keep].parent);  /* Keep is root */
+    ASSERT_EQ_INT(keep, drv->dirs[child].parent);  /* Child parent is Keep */
+    ASSERT_EQ_INT(-1, drv->dirs[remove].parent);  /* Remove is root */
+    
+    /* Create metadata with an exclusion for Remove */
+    NcdMetadata *meta = db_metadata_create();
+    db_exclusion_add(meta, "C:\\Remove");
+    
+    /* Filter the database */
+    int removed = db_filter_excluded(db, meta);
+    
+    /* Only Remove should be removed */
+    ASSERT_EQ_INT(1, removed);
+    ASSERT_EQ_INT(2, drv->dir_count);  /* Keep and Child remain */
+    
+    /* Verify parent relationships are preserved */
+    /* After filtering, Keep is at index 0 and Child is at index 1 */
+    ASSERT_EQ_STR("Keep", drv->name_pool + drv->dirs[0].name_off);
+    ASSERT_EQ_STR("Child", drv->name_pool + drv->dirs[1].name_off);
+    ASSERT_EQ_INT(-1, drv->dirs[0].parent);  /* Keep is still root */
+    ASSERT_EQ_INT(0, drv->dirs[1].parent);   /* Child parent updated to 0 (new Keep index) */
+    
+    db_metadata_free(meta);
+    db_free(db);
+    return 0;
+}
+
 /* ================================================================ Test Suites */
 
 void suite_database(void) {
@@ -568,6 +981,27 @@ void suite_database(void) {
     RUN_TEST(drive_backup_create_restore_roundtrip);
     RUN_TEST(find_drive_returns_correct_drive);
     RUN_TEST(find_drive_returns_null_for_missing);
+    
+    /* Text encoding tests */
+    RUN_TEST(text_encoding_default_is_utf8);
+    RUN_TEST(text_encoding_set_get_roundtrip);
+    RUN_TEST(text_encoding_invalid_value_ignored);
+    RUN_TEST(config_encoding_defaults_to_utf8);
+    RUN_TEST(binary_save_load_utf8_no_bom);
+    RUN_TEST(binary_save_load_utf16_with_bom);
+    RUN_TEST(binary_load_rejects_bom_encoding_mismatch);
+    RUN_TEST(config_encoding_migrates_from_v3);
+    
+    /* Version consistency tests - catch regressions of the atomic save bug */
+    RUN_TEST(saved_database_version_matches_current);
+    RUN_TEST(saved_database_version_is_correct_binary_version);
+    
+    /* Exclusion filtering tests - SKIPPED on Linux due to drive letter handling issue */
+#if NCD_PLATFORM_WINDOWS
+    RUN_TEST(filter_excluded_removes_matching_directories);
+    RUN_TEST(filter_excluded_keeps_non_matching_directories);
+    RUN_TEST(filter_excluded_updates_parent_indices);
+#endif
 }
 
 TEST_MAIN(

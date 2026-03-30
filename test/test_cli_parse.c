@@ -287,6 +287,156 @@ TEST(invalid_option_returns_false) {
     return 0;
 }
 
+TEST(a_with_suffix_is_unknown_option) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("/abc", &opts);
+
+    ASSERT_FALSE(result);
+    return 0;
+}
+
+TEST(u8_flag_sets_encoding_switch_utf8) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    bool result = parse_single("/u8", &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.encoding_switch);
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, opts.text_encoding);
+    
+    return 0;
+}
+
+TEST(u16_flag_sets_encoding_switch_utf16) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    bool result = parse_single("/u16", &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.encoding_switch);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, opts.text_encoding);
+    
+    return 0;
+}
+
+TEST(dash_u8_equivalent_to_slash_u8) {
+    NcdOptions opts1, opts2;
+    init_options(&opts1);
+    init_options(&opts2);
+    
+    bool r1 = parse_single("/u8", &opts1);
+    bool r2 = parse_single("-u8", &opts2);
+    
+    ASSERT_TRUE(r1);
+    ASSERT_TRUE(r2);
+    ASSERT_TRUE(opts1.encoding_switch);
+    ASSERT_TRUE(opts2.encoding_switch);
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, opts1.text_encoding);
+    ASSERT_EQ_INT(NCD_TEXT_UTF8, opts2.text_encoding);
+    
+    return 0;
+}
+
+TEST(dash_u16_equivalent_to_slash_u16) {
+    NcdOptions opts1, opts2;
+    init_options(&opts1);
+    init_options(&opts2);
+    
+    bool r1 = parse_single("/u16", &opts1);
+    bool r2 = parse_single("-u16", &opts2);
+    
+    ASSERT_TRUE(r1);
+    ASSERT_TRUE(r2);
+    ASSERT_TRUE(opts1.encoding_switch);
+    ASSERT_TRUE(opts2.encoding_switch);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, opts1.text_encoding);
+    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, opts2.text_encoding);
+    
+    return 0;
+}
+
+TEST(agent_query_all_depth_and_limit_parse) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"query",
+                    (char *)"downloads", (char *)"--all", (char *)"--depth",
+                    (char *)"--limit", (char *)"7"};
+    bool result = parse_args(8, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.agent_mode);
+    ASSERT_EQ_INT(AGENT_SUB_QUERY, opts.agent_subcommand);
+    ASSERT_TRUE(opts.has_search);
+    ASSERT_EQ_STR("downloads", opts.search);
+    ASSERT_TRUE(opts.show_hidden);
+    ASSERT_TRUE(opts.show_system);
+    ASSERT_TRUE(opts.agent_depth_sort);
+    ASSERT_EQ_INT(7, opts.agent_limit);
+
+    return 0;
+}
+
+TEST(agent_ls_pattern_and_default_depth) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"ls",
+                    (char *)"C:\\temp", (char *)"--pattern", (char *)"*.c"};
+    bool result = parse_args(6, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.agent_mode);
+    ASSERT_EQ_INT(AGENT_SUB_LS, opts.agent_subcommand);
+    ASSERT_EQ_INT(1, opts.agent_depth);  /* default ls depth */
+    ASSERT_EQ_STR("*.c", opts.agent_pattern);
+
+    return 0;
+}
+
+TEST(agent_tree_default_depth_is_three) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"tree", (char *)"C:\\temp"};
+    bool result = parse_args(4, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.agent_mode);
+    ASSERT_EQ_INT(AGENT_SUB_TREE, opts.agent_subcommand);
+    ASSERT_EQ_INT(3, opts.agent_depth);  /* default tree depth */
+
+    return 0;
+}
+
+TEST(agent_ls_depth_zero_rejected) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"ls",
+                    (char *)"C:\\temp", (char *)"--depth", (char *)"0"};
+    bool result = parse_args(6, argv, &opts);
+
+    ASSERT_FALSE(result);
+    return 0;
+}
+
+TEST(agent_tree_depth_zero_rejected) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"tree",
+                    (char *)"C:\\temp", (char *)"--depth", (char *)"0"};
+    bool result = parse_args(6, argv, &opts);
+
+    ASSERT_FALSE(result);
+    return 0;
+}
+
 /* ================================================================ Test Suite */
 
 void suite_cli_parse(void) {
@@ -311,6 +461,16 @@ void suite_cli_parse(void) {
     RUN_TEST(combined_flags_za_sets_fuzzy_and_all);
     RUN_TEST(dash_equivalent_to_slash);
     RUN_TEST(invalid_option_returns_false);
+    RUN_TEST(a_with_suffix_is_unknown_option);
+    RUN_TEST(u8_flag_sets_encoding_switch_utf8);
+    RUN_TEST(u16_flag_sets_encoding_switch_utf16);
+    RUN_TEST(dash_u8_equivalent_to_slash_u8);
+    RUN_TEST(dash_u16_equivalent_to_slash_u16);
+    RUN_TEST(agent_query_all_depth_and_limit_parse);
+    RUN_TEST(agent_ls_pattern_and_default_depth);
+    RUN_TEST(agent_tree_default_depth_is_three);
+    RUN_TEST(agent_ls_depth_zero_rejected);
+    RUN_TEST(agent_tree_depth_zero_rejected);
 }
 
 TEST_MAIN(

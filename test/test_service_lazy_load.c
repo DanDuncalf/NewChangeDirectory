@@ -14,6 +14,7 @@
 #include "../src/control_ipc.h"
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 /* --------------------------------------------------------- test utilities     */
 
@@ -303,7 +304,12 @@ TEST(service_state_add_exclusion_adds_pattern) {
     ServiceState *state = service_state_init();
     ASSERT_NOT_NULL(state);
     
-    bool result = service_state_add_exclusion(state, "*/node_modules");
+    /* Use a unique pattern unlikely to exist in existing metadata.
+     * Tests share the user's metadata directory, so we need to avoid
+     * duplicates from previous runs. Use timestamp-based pattern. */
+    char unique_pattern[64];
+    snprintf(unique_pattern, sizeof(unique_pattern), "*/ncd_test_%lu", (unsigned long)time(NULL));
+    bool result = service_state_add_exclusion(state, unique_pattern);
     ASSERT_TRUE(result);
     
     /* Check dirty flag */
@@ -318,9 +324,9 @@ TEST(service_state_remove_exclusion_removes_pattern) {
     ServiceState *state = service_state_init();
     ASSERT_NOT_NULL(state);
     
-    /* Add then remove */
-    service_state_add_exclusion(state, "*/temp");
-    bool result = service_state_remove_exclusion(state, "*/temp");
+    /* Add then remove using unique pattern */
+    service_state_add_exclusion(state, "*/ncd_test_remove_67890");
+    bool result = service_state_remove_exclusion(state, "*/ncd_test_remove_67890");
     ASSERT_TRUE(result);
     
     service_state_cleanup(state);
