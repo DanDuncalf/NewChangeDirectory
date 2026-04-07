@@ -66,7 +66,7 @@ typedef long          LONG;
  * Use for development/debugging output that should not appear in release builds.
  * Example: NCD_DEBUG_LOG("MAIN: Starting NCD, argc=%d\n", argc);
  */
-#if DEBUG
+#if defined(DEBUG) && !defined(NDEBUG)
 #include <stdio.h>
 #define NCD_DEBUG_LOG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
 #else
@@ -181,7 +181,7 @@ typedef struct {
 #define NCD_VERSION       1
 
 /* Rescan interval configuration */
-#define NCD_RESCAN_HOURS_DEFAULT  24   /* default: trigger background rescan after 24h */
+#define NCD_RESCAN_HOURS_DEFAULT  (-1) /* default: auto-rescan disabled (-1 = never) */
 #define NCD_RESCAN_HOURS_MIN      1    /* minimum: 1 hour */
 #define NCD_RESCAN_HOURS_MAX      168  /* maximum: 1 week (168 hours) */
 #define NCD_RESCAN_NEVER          (-1) /* disable auto-rescan */

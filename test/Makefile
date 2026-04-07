@@ -2,7 +2,7 @@
 # This builds and runs all test suites
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE
+CFLAGS = -Wall -Wextra -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE -DNCD_TEST_BUILD
 LDFLAGS = -lpthread
 
 # Object directory
@@ -21,12 +21,16 @@ HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHA
 TESTS = test_database test_matcher test_history \
         test_strbuilder test_common test_platform test_metadata test_scanner \
         test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration \
-        test_service_database test_service_ipc \
+        test_service_database test_service_ipc test_service_empty_db \
         test_cli_parse test_agent_mode test_result_output \
         test_shared_state test_shared_state_extended test_shm_platform test_ipc \
         test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended \
         test_integration_extended \
-        fuzz_database bench_matcher test_db_corruption test_bugs
+        test_ui_selector test_ui_history test_ui_config test_ui_navigator \
+        fuzz_database bench_matcher test_db_corruption test_bugs \
+        ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
+        ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli \
+        ipc_fuzzer ipc_stress_test
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone
 
@@ -118,6 +122,11 @@ SERVICE_DATABASE_SOURCES = ../src/service_publish.c ../src/shared_state.c ../src
 test_service_database: test_service_database.c test_framework.c $(SERVICE_DATABASE_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Service tests - empty database scenario
+SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_service_empty_db: test_service_empty_db.c test_framework.c $(SERVICE_EMPTY_DB_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Service tests - Tier 5 IPC integration
 SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
@@ -183,11 +192,62 @@ INTEGRATION_EXTENDED_SOURCES = ../src/database.c ../src/matcher.c ../src/platfor
 test_integration_extended: test_integration_extended.c test_framework.c $(INTEGRATION_EXTENDED_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# UI tests - headless TUI testing with in-memory backend
+UI_TEST_SOURCES = ../src/ui.c ../src/database.c ../src/matcher.c ../src/scanner.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
+test_ui_selector: test_ui_selector.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_ui_history: test_ui_history.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_ui_config: test_ui_config.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_ui_navigator: test_ui_navigator.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# IPC Test Programs - Common infrastructure
+IPC_TEST_COMMON_SOURCES = ipc_test_common.c ../src/control_ipc_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+
+# Phase 1: Basic connectivity tests
+ipc_ping_test: ipc_ping_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+ipc_state_test: ipc_state_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+ipc_shutdown_test: ipc_shutdown_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Phase 2: Metadata and operation tests
+ipc_metadata_test: ipc_metadata_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+ipc_heuristic_test: ipc_heuristic_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+ipc_rescan_test: ipc_rescan_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Phase 3: Persistence and interactive
+ipc_flush_test: ipc_flush_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+ipc_cli: ipc_cli.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Phase 4: Fuzzing and stress tests
+ipc_fuzzer: ipc_fuzzer.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
+ipc_stress_test: ipc_stress_test.c $(IPC_TEST_COMMON_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended
+test: test_database test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -251,6 +311,18 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo "Running IPC tests..."
 	@./test_ipc || echo "Note: Some IPC tests may have pre-existing issues"
 	@echo ""
+	@echo "Running UI selector tests..."
+	@./test_ui_selector
+	@echo ""
+	@echo "Running UI history tests..."
+	@./test_ui_history
+	@echo ""
+	@echo "Running UI config tests..."
+	@./test_ui_config
+	@echo ""
+	@echo "Running UI navigator tests..."
+	@./test_ui_navigator
+	@echo ""
 	@echo "All unit tests complete."
 
 service-test: test_service_lifecycle test_service_integration test_service_ipc
@@ -311,8 +383,17 @@ all-environments-standalone:
 	@echo "Running tests across all environments (standalone mode only)..."
 	@bash run_all_tests.sh --no-service
 
+# IPC diagnostic tools build target
+ipc-tests: ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
+           ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli \
+           ipc_fuzzer ipc_stress_test
+	@echo "IPC test programs built successfully."
+
 clean:
 	rm -rf $(OBJDIR) $(TESTS) *.tmp *.database
+	rm -f ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test
+	rm -f ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli
+	rm -f ipc_fuzzer ipc_stress_test
 
 # Windows-specific test builds
 win-test:

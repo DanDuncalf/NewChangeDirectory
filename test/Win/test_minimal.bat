@@ -7,6 +7,9 @@ set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
 set "TEST_DATA=%TEMP%\ncd_min_test_%RANDOM%"
 set "LOCALAPPDATA=%TEST_DATA%"
 
+:: Disable NCD background rescans to prevent scanning user drives during tests
+set "NCD_TEST_MODE=1"
+
 mkdir "%TEST_DATA%\NCD" 2>nul
 echo. > "%TEST_DATA%\NCD\ncd.metadata"
 mkdir "%TEMP%\ncd_min_tree\alpha\beta" 2>nul

@@ -2,6 +2,10 @@
 # This script runs unit tests on Windows
 
 $ErrorActionPreference = "Stop"
+
+# Disable NCD background rescans to prevent scanning user drives during tests
+$env:NCD_TEST_MODE = "1"
+
 $TestDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $TestDir
 

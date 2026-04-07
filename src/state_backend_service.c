@@ -39,6 +39,10 @@ static void set_error(const char *msg) {
     g_last_error[sizeof(g_last_error) - 1] = '\0';
 }
 
+const char *state_backend_service_error_string(void) {
+    return g_last_error;
+}
+
 /* --------------------------------------------------------- snapshot loading   */
 
 /*
@@ -278,15 +282,27 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     }
     SVC_DBG("Connected to service\n");
     
-    /* Wait for service to be ready (not STARTING or LOADING) */
-    SVC_DBG("Waiting for service to be ready...\n");
-    if (!wait_for_service_ready(SERVICE(view).ipc_client, 5000)) {
+    /* Check if service is ready - do NOT wait */
+    SVC_DBG("Checking if service is ready...\n");
+    NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
+        ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
+        ping_result == NCD_IPC_ERROR_NOT_READY) {
         ipc_client_disconnect(SERVICE(view).ipc_client);
         free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
-        /* set_error already called by wait_for_service_ready */
-        SVC_DBG("Service not ready\n");
+        set_error("Service is not yet available (still loading/scanning)");
+        SVC_DBG("Service not ready: %s\n", ipc_error_string(ping_result));
+        return -1;
+    }
+    if (ping_result != NCD_IPC_OK) {
+        ipc_client_disconnect(SERVICE(view).ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error(ipc_error_string(ping_result));
+        SVC_DBG("Service ping failed: %s\n", ipc_error_string(ping_result));
         return -1;
     }
     SVC_DBG("Service is ready\n");
@@ -729,14 +745,22 @@ int state_backend_request_rescan_service(NcdStateView *view,
         return -1;
     }
     
-    int retries = 0;
-    int max_retries = get_max_retries(view);
-    NcdIpcResult result;
+    /* Check service state first - fail fast if loading/scanning */
+    NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
+        ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
+        ping_result == NCD_IPC_ERROR_NOT_READY) {
+        set_error("Service is not yet available (still loading/scanning)");
+        return -1;
+    }
     
-    do {
-        result = ipc_client_request_rescan(SERVICE(view).ipc_client, drive_mask, scan_root_only);
-        result = retry_on_busy(result, &retries, max_retries, "scanning");
-    } while (result == NCD_IPC_ERROR_BUSY);
+    NcdIpcResult result = ipc_client_request_rescan(SERVICE(view).ipc_client, drive_mask, scan_root_only);
+    
+    if (result == NCD_IPC_ERROR_BUSY_LOADING ||
+        result == NCD_IPC_ERROR_BUSY_SCANNING) {
+        set_error("Service is currently scanning - request cannot be processed");
+        return -1;
+    }
     
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));
@@ -752,14 +776,22 @@ int state_backend_request_flush_service(NcdStateView *view) {
         return -1;
     }
     
-    int retries = 0;
-    int max_retries = get_max_retries(view);
-    NcdIpcResult result;
+    /* Check service state first - fail fast if loading/scanning */
+    NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
+        ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
+        ping_result == NCD_IPC_ERROR_NOT_READY) {
+        set_error("Service is not yet available (still loading/scanning)");
+        return -1;
+    }
     
-    do {
-        result = ipc_client_request_flush(SERVICE(view).ipc_client);
-        result = retry_on_busy(result, &retries, max_retries, "loading");
-    } while (result == NCD_IPC_ERROR_BUSY);
+    NcdIpcResult result = ipc_client_request_flush(SERVICE(view).ipc_client);
+    
+    if (result == NCD_IPC_ERROR_BUSY_LOADING ||
+        result == NCD_IPC_ERROR_BUSY_SCANNING) {
+        set_error("Service is currently busy - request cannot be processed");
+        return -1;
+    }
     
     if (result != NCD_IPC_OK) {
         set_error(ipc_error_string(result));

@@ -202,10 +202,23 @@ static bool ensure_state_initialized(void)
     g_state_initialized = true;
     
     int result = state_backend_open_best_effort(&g_state_view, &g_state_info);
+
     if (result != 0 || !g_state_view) {
+        /* Check if service is busy (loading/scanning) */
+        const char *err = state_backend_error_string();
+        if (err && strstr(err, "not yet available")) {
+            /* Service exists but is busy - report error to user */
+            ncd_printf("NCD: %s\r\n", err);
+            g_state_view = NULL;
+            return false;
+        }
+        NCD_DEBUG_LOG("NCD DEBUG: State backend initialization failed, using local mode\n");
         g_state_view = NULL;
         return false;
     }
+
+    NCD_DEBUG_LOG("NCD DEBUG: State backend initialized successfully (service=%d)\n",
+            g_state_info.from_service);
     
     /* Register cleanup handler to close state backend at exit */
     atexit(close_state_backend);
@@ -222,7 +235,14 @@ static const NcdDatabase *get_state_database(void)
     if (!ensure_state_initialized()) {
         return NULL;
     }
-    return state_view_database(g_state_view);
+
+    const NcdDatabase *db = state_view_database(g_state_view);
+
+    if (!db) {
+        NCD_DEBUG_LOG("NCD DEBUG: state_view_database returned NULL\n");
+    }
+    
+    return db;
 }
 
 /*
@@ -4491,6 +4511,8 @@ int main(int argc, char *argv[])
     }
 
     if (!matches || match_count == 0) {
+        NCD_DEBUG_LOG("NCD DEBUG: No matches found. primary_db=%p, using_service_db=%d\n",
+                (void*)primary_db, using_service_db);
         result_error("NCD: No directory found matching \"%s\".", opts.search);
         if (primary_db && !using_service_db) db_free(primary_db);
         con_close();

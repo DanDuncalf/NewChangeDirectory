@@ -28,17 +28,26 @@ void write_result(bool ok, const char *drive, const char *path,
     char tmp_dir[MAX_PATH] = {0};
     if (!platform_get_temp_path(tmp_dir, sizeof(tmp_dir))) {
         ncd_println("NCD: could not resolve temp path.");
+        fprintf(stderr, "NCD ERROR: platform_get_temp_path failed\n");
         return;
     }
 
     char result_path[MAX_PATH];
     snprintf(result_path, sizeof(result_path), "%s%s", tmp_dir, NCD_RESULT_FILE);
 
+    NCD_DEBUG_LOG("NCD DEBUG: Writing result to: %s (ok=%d)\n", result_path, ok);
+
     FILE *f = fopen(result_path, "w");
     if (!f) {
         ncd_printf("NCD: could not write result file: %s\r\n", result_path);
+        fprintf(stderr, "NCD ERROR: fopen failed for %s\n", result_path);
+        /* Try to provide more details about the failure */
+        fprintf(stderr, "NCD ERROR: tmp_dir=%s, NCD_RESULT_FILE=%s\n", 
+                tmp_dir, NCD_RESULT_FILE);
+        fflush(stderr);
         return;
     }
+    NCD_DEBUG_LOG("NCD DEBUG: fopen succeeded\n");
 
     char safe_drive[64];
     char safe_path[NCD_MAX_PATH * 2];
@@ -165,7 +174,14 @@ void write_result(bool ok, const char *drive, const char *path,
     fprintf(f, "NCD_PATH='%s'\n",   safe_path);
     fprintf(f, "NCD_MESSAGE='%s'\n", safe_msg);
 #endif
-    fclose(f);
+    /* Flush to ensure data is written before fclose */
+    fflush(f);
+    
+    if (fclose(f) != 0) {
+        NCD_DEBUG_LOG("NCD ERROR: fclose failed for %s\n", result_path);
+    } else {
+        NCD_DEBUG_LOG("NCD DEBUG: Result file written successfully\n");
+    }
 }
 
 void result_error(const char *fmt, ...)

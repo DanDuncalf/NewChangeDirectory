@@ -34,6 +34,9 @@ set "NCD=%PROJECT_ROOT%\NewChangeDirectory.exe"
 
 :: Isolation: redirect all NCD data to a temp directory
 
+:: Disable NCD background rescans to prevent scanning user drives during tests
+set "NCD_TEST_MODE=1"
+
 set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
 
 set "TEST_DATA=%TEMP%\ncd_agent_test_%RANDOM%"
@@ -79,6 +82,8 @@ echo.
 if not exist "%NCD%" (
 
     echo ERROR: NCD binary not found at %NCD%
+
+    endlocal
 
     exit /b 1
 
@@ -218,7 +223,7 @@ echo Scanning test tree...
 
 pushd "%TESTROOT%"
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(30000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $env:NCD_TEST_MODE='1'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(30000)) { $p.Kill() }" >nul 2>&1
 
 popd
 
@@ -797,11 +802,15 @@ if %FAIL_COUNT% GTR 0 (
 
     echo Some tests FAILED.
 
+    endlocal
+
     exit /b 1
 
 ) else (
 
     echo All tests PASSED!
+
+    endlocal
 
     exit /b 0
 

@@ -16,6 +16,7 @@ setlocal enabledelayedexpansion
 set BUILD_X64=1
 set BUILD_ARM64=1
 set TARGET_ARCH=all
+set BUILD_DEBUG=0
 
 if "%~1"=="x64" (
     set BUILD_X64=1
@@ -31,6 +32,15 @@ if "%~1"=="all" (
     set BUILD_X64=1
     set BUILD_ARM64=1
     set TARGET_ARCH=all
+)
+if "%~1"=="debug" (
+    set BUILD_X64=1
+    set BUILD_ARM64=0
+    set BUILD_DEBUG=1
+    set TARGET_ARCH=x64
+)
+if "%~2"=="debug" (
+    set BUILD_DEBUG=1
 )
 
 :: Check if cl.exe is available
@@ -190,7 +200,11 @@ if "%ARCH%"=="arm64" (
     )
 )
 
-set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c %ARCH_CFLAGS%
+if %BUILD_DEBUG%==1 (
+    set CFLAGS=/nologo /W3 /Od /Zi /DDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c %ARCH_CFLAGS%
+) else (
+    set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I%SRCDIR% /I%SHARED% /c %ARCH_CFLAGS%
+)
 
 echo Building object files for %ARCH%...
 

@@ -268,6 +268,14 @@ ServiceRuntimeState service_state_get_runtime_state(const ServiceState *state);
 bool service_state_wait_for_ready(ServiceState *state, int timeout_ms);
 
 /*
+ * service_state_has_database_data  --  Check if database has any data
+ *
+ * Returns true if the database has at least one drive with directories.
+ * Used to determine if this is an initial scan (no data) vs a rescan.
+ */
+bool service_state_has_database_data(const ServiceState *state);
+
+/*
  * service_state_set_status_message  --  Set human-readable status message
  */
 void service_state_set_status_message(ServiceState *state, const char *message);

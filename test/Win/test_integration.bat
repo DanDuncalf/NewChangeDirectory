@@ -4,6 +4,15 @@
 
 setlocal enabledelayedexpansion
 
+:: Save original LOCALAPPDATA and set up isolation
+set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
+set "TEST_DATA=%TEMP%\ncd_int_test_%RANDOM%"
+mkdir "%TEST_DATA%\NCD" 2>nul
+set "LOCALAPPDATA=%TEST_DATA%"
+
+:: CRITICAL: Disable auto-rescan to prevent background scans of user drives
+set "NCD_TEST_MODE=1"
+
 set "NCD_EXE=NewChangeDirectory.exe"
 set "NCD_BAT=ncd.bat"
 set "TEST_DIR=test_data"
@@ -15,11 +24,13 @@ echo.
 :: Check prerequisites
 if not exist "%NCD_EXE%" (
     echo ERROR: %NCD_EXE% not found. Please build first.
+    call :cleanup
     exit /b 1
 )
 
 if not exist "%NCD_BAT%" (
     echo ERROR: %NCD_BAT% not found.
+    call :cleanup
     exit /b 1
 )
 
@@ -34,7 +45,7 @@ echo   Created test directories
 :: Test 1: Version display
 echo.
 echo Test 1: Version display...
-%NCD_EXE% /v >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" /v >nul 2>&1
 if %errorlevel% == 0 (
     echo   PASS: Version displayed
 ) else (
@@ -45,7 +56,7 @@ if %errorlevel% == 0 (
 :: Test 2: Help display
 echo.
 echo Test 2: Help display...
-%NCD_EXE% /? >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" /? >nul 2>&1
 if %errorlevel% == 0 (
     echo   PASS: Help displayed
 ) else (
@@ -57,9 +68,9 @@ if %errorlevel% == 0 (
 echo.
 echo Test 3: Database scan...
 pushd "%TEST_DIR%"
-%NCD_EXE% /r. >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" /r. >nul 2>&1
 popd
-if exist "%LOCALAPPDATA%\NCD\*.database" (
+if exist "%TEST_DATA%\NCD\*.database" (
     echo   PASS: Database created
 ) else (
     echo   FAIL: Database not created
@@ -69,7 +80,7 @@ if exist "%LOCALAPPDATA%\NCD\*.database" (
 :: Test 4: History display
 echo.
 echo Test 4: History display...
-%NCD_EXE% /f >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" /f >nul 2>&1
 if %errorlevel% == 0 (
     echo   PASS: History displayed
 ) else (
@@ -80,7 +91,7 @@ if %errorlevel% == 0 (
 :: Test 5: Clear history
 echo.
 echo Test 5: Clear history...
-%NCD_EXE% /fc >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" /fc >nul 2>&1
 if %errorlevel% == 0 (
     echo   PASS: History cleared
 ) else (
@@ -91,7 +102,7 @@ if %errorlevel% == 0 (
 :: Test 6: Search for directory
 echo.
 echo Test 6: Directory search...
-%NCD_EXE% subdir >nul 2>&1
+"%NCD_EXE%" -conf "%TEST_DATA%\NCD\ncd.metadata" subdir >nul 2>&1
 :: Note: This may fail if no match found, that's OK for integration test
 :: We just verify it doesn't crash
 echo   PASS: Search executed without crash
@@ -99,7 +110,7 @@ echo   PASS: Search executed without crash
 :: Cleanup
 echo.
 echo Cleaning up...
-if exist "%TEST_DIR%" rmdir /s /q "%TEST_DIR%"
+call :cleanup
 echo   Test environment cleaned
 
 :: Summary
@@ -112,3 +123,10 @@ if "%ALL_PASSED%"=="1" (
     echo Some tests FAILED!
     exit /b 1
 )
+
+:cleanup
+:: Restore original LOCALAPPDATA and clean up test data
+set "LOCALAPPDATA=%REAL_LOCALAPPDATA%"
+if exist "%TEST_DIR%" rmdir /s /q "%TEST_DIR%" 2>nul
+if exist "%TEST_DATA%" rmdir /s /q "%TEST_DATA%" 2>nul
+goto :eof

@@ -16,6 +16,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#if NCD_PLATFORM_WINDOWS
+#define strncasecmp _strnicmp
+#endif
+
 /* Define PLATFORM_VK_DELETE if not available in platform headers */
 #ifndef PLATFORM_VK_DELETE
 #define PLATFORM_VK_DELETE 0x2E
@@ -136,8 +140,16 @@ static HANDLE g_hout = INVALID_HANDLE_VALUE;
 static HANDLE g_hin  = INVALID_HANDLE_VALUE;
 static bool   g_ansi = false;
 
+/* Console attribute handling for Windows - used when ANSI is not available */
+static WORD g_orig_console_attr = 0;
+static bool g_console_attr_saved = false;
+
 static void ui_open_console(void)
 {
+    /* Reset saved attributes when opening a new console session */
+    g_console_attr_saved = false;
+    g_orig_console_attr = 0;
+    
     g_hout = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE,
                           FILE_SHARE_READ | FILE_SHARE_WRITE,
                           NULL, OPEN_EXISTING, 0, NULL);
@@ -205,6 +217,52 @@ static void con_show_cursor(void)
     SetConsoleCursorInfo(g_hout, &ci);
 }
 
+static void con_save_attr(void)
+{
+    if (g_hout == INVALID_HANDLE_VALUE) return;
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (GetConsoleScreenBufferInfo(g_hout, &info)) {
+        g_orig_console_attr = info.wAttributes;
+        g_console_attr_saved = true;
+    }
+}
+
+static void con_set_highlight(bool on)
+{
+    if (g_hout == INVALID_HANDLE_VALUE) return;
+    
+    /* Save original attributes on first call */
+    if (!g_console_attr_saved) {
+        con_save_attr();
+    }
+    
+    if (on) {
+        /* Use ANSI if available, otherwise use console attributes */
+        if (g_ansi) {
+            con_write(ANSI_REVERSE);
+        } else {
+            /* Set inverse video using console attributes */
+            /* Swap foreground and background colors */
+            WORD attr = g_orig_console_attr;
+            WORD fg = attr & 0x0F;
+            WORD bg = (attr >> 4) & 0x0F;
+            /* If background is black (0), use white (7) for highlight bg */
+            if (bg == 0) bg = 7;
+            /* Swap them */
+            SetConsoleTextAttribute(g_hout, (WORD)((fg << 4) | bg));
+        }
+    } else {
+        if (g_ansi) {
+            con_write(ANSI_RESET);
+        } else {
+            /* Restore original attributes */
+            if (g_console_attr_saved) {
+                SetConsoleTextAttribute(g_hout, g_orig_console_attr);
+            }
+        }
+    }
+}
+
 static void clear_area(int top_row, int rows, int width)
 {
     for (int r = 0; r < rows; r++) {
@@ -227,7 +285,7 @@ static void get_console_size(int *cols, int *rows, int *cur_row)
     } else { *cols = 80; *rows = 25; *cur_row = 0; }
 }
 
-static int read_key(void)
+static int con_read_key(void)
 {
     INPUT_RECORD ir;
     DWORD        nread;
@@ -262,7 +320,7 @@ static int read_key(void)
     }
 }
 
-static bool list_subdirs(const char *dir_path, NameList *out)
+static bool con_list_subdirs(const char *dir_path, NameList *out)
 {
     char pattern[MAX_PATH];
     WIN32_FIND_DATAA fd;
@@ -375,6 +433,17 @@ static void con_show_cursor(void)
     if (g_tty_out >= 0) tty_write_u(g_tty_out, "\x1b[?25h", 6);
 }
 
+/* Linux uses ANSI escape sequences for highlighting */
+static void con_set_highlight(bool on)
+{
+    if (g_tty_out < 0) return;
+    if (on) {
+        tty_write_u(g_tty_out, ANSI_REVERSE, strlen(ANSI_REVERSE));
+    } else {
+        tty_write_u(g_tty_out, ANSI_RESET, strlen(ANSI_RESET));
+    }
+}
+
 static void clear_area(int top_row, int rows, int width)
 {
     if (g_tty_out < 0) return;
@@ -418,7 +487,7 @@ static void get_console_size(int *cols, int *rows, int *cur_row)
     }
 }
 
-static int read_key(void)
+static int con_read_key(void)
 {
     if (g_tty_in < 0) return KEY_ESC;
     PlatformHandle h = (PlatformHandle)(intptr_t)(g_tty_in + 1);
@@ -448,7 +517,7 @@ static int read_key(void)
     }
 }
 
-static bool list_subdirs(const char *dir_path, NameList *out)
+static bool con_list_subdirs(const char *dir_path, NameList *out)
 {
     out->items = NULL; out->count = 0; out->cap = 0;
     DIR *d = opendir(dir_path);
@@ -482,7 +551,664 @@ static bool list_subdirs(const char *dir_path, NameList *out)
 /* ======================================================================== */
 
 /* ======================================================================== */
-/* =================== Shared helpers (use con_* from above) =============== */
+/* =================== UiIoOps abstraction layer ========================== */
+/* ======================================================================== */
+
+static UiIoOps g_default_ops;
+static UiIoOps *g_ui_ops = NULL;
+
+#ifndef NDEBUG
+/* Forward declaration for stdio TUI test backend.
+ * Returns pointer to static ops struct, or NULL if NCD_TUI_TEST!=1. */
+static UiIoOps *stdio_backend_init(void);
+#endif
+
+#ifdef NCD_TEST_BUILD
+/* Forward declarations for test backend */
+static void test_backend_open_console(void);
+static void test_backend_close_console(void);
+static void test_backend_write(const char *s);
+static void test_backend_write_at(int row, int col, const char *s);
+static void test_backend_write_padded(const char *s, int width);
+static void test_backend_cursor_pos(int row, int col);
+static void test_backend_hide_cursor(void);
+static void test_backend_show_cursor(void);
+static void test_backend_clear_area(int top_row, int rows, int width);
+static void test_backend_get_size(int *cols, int *rows, int *cur_row);
+static int  test_backend_read_key(void);
+#endif /* NCD_TEST_BUILD */
+
+/* ======================================================================== */
+/* =================== Scripted key queue ================================= */
+/* ======================================================================== */
+
+#define KEY_QUEUE_MAX 256
+
+static int  g_key_queue[KEY_QUEUE_MAX];
+static int  g_key_queue_head = 0;
+static int  g_key_queue_tail = 0;
+static bool g_key_queue_strict = false;
+
+static void load_keys_from_env(void)
+{
+    static bool loaded = false;
+    if (loaded) return;
+    loaded = true;
+    
+    const char *keys = getenv("NCD_UI_KEYS");
+    if (keys && keys[0]) {
+        ui_inject_keys(keys);
+    }
+    
+    const char *keys_file = getenv("NCD_UI_KEYS_FILE");
+    if (keys_file && keys_file[0]) {
+        ui_inject_keys_from_file(keys_file);
+    }
+    
+    const char *strict = getenv("NCD_UI_KEYS_STRICT");
+    if (strict && strict[0] == '1') {
+        g_key_queue_strict = true;
+    }
+}
+
+static void init_default_ops(void)
+{
+    g_default_ops.open_console  = ui_open_console;
+    g_default_ops.close_console = ui_close_console;
+    g_default_ops.write         = con_write;
+    g_default_ops.write_at      = NULL; /* not used directly */
+    g_default_ops.write_padded  = con_write_padded;
+    g_default_ops.cursor_pos    = con_cursor_pos;
+    g_default_ops.hide_cursor   = con_hide_cursor;
+    g_default_ops.show_cursor   = con_show_cursor;
+    g_default_ops.clear_area    = clear_area;
+    g_default_ops.get_size      = get_console_size;
+    g_default_ops.read_key      = con_read_key;
+    g_default_ops.ansi_enabled  = g_ansi;
+}
+
+void ui_set_io_backend(UiIoOps *ops)
+{
+    g_ui_ops = ops;
+}
+
+UiIoOps *ui_get_io_backend(void)
+{
+    if (!g_ui_ops) {
+        /* Auto-load keys from environment */
+        load_keys_from_env();
+
+#ifndef NDEBUG
+        /* In debug builds, check for stdio TUI test mode */
+        {
+            UiIoOps *stdio_ops = stdio_backend_init();
+            if (stdio_ops) {
+                g_ui_ops = stdio_ops;
+                return g_ui_ops;
+            }
+        }
+#endif
+        init_default_ops();
+        g_ui_ops = &g_default_ops;
+    }
+    return g_ui_ops;
+}
+
+#ifdef NCD_TEST_BUILD
+/* ======================================================================== */
+/* =================== Test backend (in-memory grid) ====================== */
+/* ======================================================================== */
+
+#define TEST_GRID_MAX_COLS 160
+#define TEST_GRID_MAX_ROWS 60
+
+typedef struct {
+    char grid[TEST_GRID_MAX_ROWS][TEST_GRID_MAX_COLS];
+    int  cols;
+    int  rows;
+    int  cur_row;
+    int  cur_col;
+    bool cursor_hidden;
+} TestBackendState;
+
+static TestBackendState g_test_backend;
+static bool g_test_backend_active = false;
+
+static void test_backend_open_console(void)
+{
+    /* no-op */
+}
+
+static void test_backend_close_console(void)
+{
+    /* no-op */
+}
+
+static void test_backend_write(const char *s)
+{
+    if (!g_test_backend_active || !s) return;
+    while (*s) {
+        if (g_test_backend.cur_row >= 0 && g_test_backend.cur_row < g_test_backend.rows &&
+            g_test_backend.cur_col >= 0 && g_test_backend.cur_col < g_test_backend.cols) {
+            g_test_backend.grid[g_test_backend.cur_row][g_test_backend.cur_col] = *s;
+        }
+        g_test_backend.cur_col++;
+        s++;
+    }
+}
+
+static void test_backend_write_at(int row, int col, const char *s)
+{
+    if (!g_test_backend_active) return;
+    g_test_backend.cur_row = row;
+    g_test_backend.cur_col = col;
+    test_backend_write(s);
+}
+
+static void test_backend_write_padded(const char *s, int width)
+{
+    if (!g_test_backend_active || width <= 0) return;
+    int slen = (int)strlen(s);
+    char buf[512];
+    if (slen >= width) {
+        int copy = width - 3; if (copy < 0) copy = 0;
+        memcpy(buf, s, (size_t)copy);
+        if (width >= 3) { buf[copy]='.'; buf[copy+1]='.'; buf[copy+2]='.'; }
+        buf[width < (int)sizeof(buf) ? width : (int)sizeof(buf)-1] = '\0';
+    } else {
+        memcpy(buf, s, (size_t)slen);
+        memset(buf + slen, ' ', (size_t)(width - slen));
+        buf[width < (int)sizeof(buf) ? width : (int)sizeof(buf)-1] = '\0';
+    }
+    test_backend_write(buf);
+}
+
+static void test_backend_cursor_pos(int row, int col)
+{
+    if (!g_test_backend_active) return;
+    g_test_backend.cur_row = row;
+    g_test_backend.cur_col = col;
+}
+
+static void test_backend_hide_cursor(void)
+{
+    if (!g_test_backend_active) return;
+    g_test_backend.cursor_hidden = true;
+}
+
+static void test_backend_show_cursor(void)
+{
+    if (!g_test_backend_active) return;
+    g_test_backend.cursor_hidden = false;
+}
+
+static void test_backend_clear_area(int top_row, int num_rows, int width)
+{
+    if (!g_test_backend_active) return;
+    for (int r = top_row; r < top_row + num_rows && r < g_test_backend.rows; r++) {
+        if (r < 0) continue;
+        int w = width < g_test_backend.cols ? width : g_test_backend.cols;
+        memset(g_test_backend.grid[r], ' ', (size_t)w);
+        if (w < g_test_backend.cols) g_test_backend.grid[r][w] = '\0';
+        else g_test_backend.grid[r][g_test_backend.cols - 1] = '\0';
+    }
+}
+
+static void test_backend_get_size(int *cols, int *rows, int *cur_row)
+{
+    if (!g_test_backend_active) {
+        *cols = 80; *rows = 25; *cur_row = 0;
+        return;
+    }
+    *cols = g_test_backend.cols;
+    *rows = g_test_backend.rows;
+    *cur_row = g_test_backend.cur_row;
+}
+
+UiIoOps *ui_create_test_backend(int cols, int rows)
+{
+    UiIoOps *ops = (UiIoOps *)calloc(1, sizeof(UiIoOps));
+    if (!ops) return NULL;
+    ops->open_console  = test_backend_open_console;
+    ops->close_console = test_backend_close_console;
+    ops->write         = test_backend_write;
+    ops->write_at      = test_backend_write_at;
+    ops->write_padded  = test_backend_write_padded;
+    ops->cursor_pos    = test_backend_cursor_pos;
+    ops->hide_cursor   = test_backend_hide_cursor;
+    ops->show_cursor   = test_backend_show_cursor;
+    ops->clear_area    = test_backend_clear_area;
+    ops->get_size      = test_backend_get_size;
+    ops->read_key      = test_backend_read_key;
+    ops->ansi_enabled  = true;
+
+    memset(&g_test_backend, 0, sizeof(g_test_backend));
+    if (cols > TEST_GRID_MAX_COLS) cols = TEST_GRID_MAX_COLS;
+    if (rows > TEST_GRID_MAX_ROWS) rows = TEST_GRID_MAX_ROWS;
+    if (cols < 1) cols = 80;
+    if (rows < 1) rows = 25;
+    g_test_backend.cols = cols;
+    g_test_backend.rows = rows;
+    g_test_backend.cur_row = 0;
+    g_test_backend.cur_col = 0;
+    g_test_backend.cursor_hidden = false;
+    for (int r = 0; r < rows; r++) {
+        memset(g_test_backend.grid[r], ' ', (size_t)cols);
+        g_test_backend.grid[r][cols] = '\0';
+    }
+    g_test_backend_active = true;
+    return ops;
+}
+
+void ui_destroy_test_backend(UiIoOps *ops)
+{
+    if (ops) free(ops);
+    g_test_backend_active = false;
+}
+
+const char *ui_test_backend_row(int row)
+{
+    if (!g_test_backend_active || row < 0 || row >= g_test_backend.rows)
+        return "";
+    /* trim trailing spaces for readability */
+    char *line = g_test_backend.grid[row];
+    int len = (int)strlen(line);
+    while (len > 0 && line[len - 1] == ' ') len--;
+    line[len] = '\0';
+    return line;
+}
+
+int ui_test_backend_find_row(const char *substring)
+{
+    if (!g_test_backend_active || !substring) return -1;
+    for (int r = 0; r < g_test_backend.rows; r++) {
+        if (strstr(ui_test_backend_row(r), substring) != NULL)
+            return r;
+    }
+    return -1;
+}
+#endif /* NCD_TEST_BUILD -- test backend grid */
+
+static int key_queue_pop(void)
+{
+    if (g_key_queue_head == g_key_queue_tail) return KEY_UNKNOWN;
+    int k = g_key_queue[g_key_queue_head];
+    g_key_queue_head = (g_key_queue_head + 1) % KEY_QUEUE_MAX;
+    return k;
+}
+
+static bool key_queue_push(int k)
+{
+    int next = (g_key_queue_tail + 1) % KEY_QUEUE_MAX;
+    if (next == g_key_queue_head) return false; /* full */
+    g_key_queue[g_key_queue_tail] = k;
+    g_key_queue_tail = next;
+    return true;
+}
+
+static int parse_key_token(const char *tok)
+{
+    while (*tok == ' ' || *tok == '\t') tok++;
+    size_t len = strlen(tok);
+    while (len > 0 && (tok[len - 1] == ' ' || tok[len - 1] == '\t' || tok[len - 1] == '\n' || tok[len - 1] == '\r')) len--;
+
+    if (len == 0) return KEY_UNKNOWN;
+
+    if (len >= 5 && strncasecmp(tok, "TEXT:", 5) == 0) {
+        /* TEXT tokens are expanded one character at a time.
+         * We only return the first char here; caller must handle multi-char. */
+        /* Actually, we handle this at the parser level. */
+        return KEY_UNKNOWN;
+    }
+
+    if (strncasecmp(tok, "UP", len) == 0) return KEY_UP;
+    if (strncasecmp(tok, "DOWN", len) == 0) return KEY_DOWN;
+    if (strncasecmp(tok, "LEFT", len) == 0) return KEY_LEFT;
+    if (strncasecmp(tok, "RIGHT", len) == 0) return KEY_RIGHT;
+    if (strncasecmp(tok, "PGUP", len) == 0) return KEY_PGUP;
+    if (strncasecmp(tok, "PGDN", len) == 0) return KEY_PGDN;
+    if (strncasecmp(tok, "HOME", len) == 0) return KEY_HOME;
+    if (strncasecmp(tok, "END", len) == 0) return KEY_END;
+    if (strncasecmp(tok, "ENTER", len) == 0) return KEY_ENTER;
+    if (strncasecmp(tok, "ESC", len) == 0) return KEY_ESC;
+    if (strncasecmp(tok, "TAB", len) == 0) return KEY_TAB;
+    if (strncasecmp(tok, "BACKSPACE", len) == 0) return KEY_BACKSPACE;
+    if (strncasecmp(tok, "DELETE", len) == 0) return KEY_DELETE;
+    if (strncasecmp(tok, "SPACE", len) == 0) return ' ';
+
+    /* Single printable char */
+    if (len == 1 && (unsigned char)tok[0] >= 32 && (unsigned char)tok[0] <= 126)
+        return (unsigned char)tok[0];
+
+    return KEY_UNKNOWN;
+}
+
+int ui_inject_keys(const char *key_script)
+{
+    if (!key_script || !key_script[0]) return 0;
+
+    char *buf = strdup(key_script);
+    if (!buf) return -1;
+
+    char *p = buf;
+    while (*p) {
+        char *comma = strchr(p, ',');
+        if (comma) *comma = '\0';
+
+        /* trim whitespace */
+        char *tok = p;
+        while (*tok == ' ' || *tok == '\t') tok++;
+        size_t len = strlen(tok);
+        while (len > 0 && (tok[len - 1] == ' ' || tok[len - 1] == '\t' || tok[len - 1] == '\n' || tok[len - 1] == '\r')) len--;
+
+        if (len >= 5 && strncasecmp(tok, "TEXT:", 5) == 0) {
+            const char *text = tok + 5;
+            while (*text) {
+                if (!key_queue_push((unsigned char)*text)) { free(buf); return -1; }
+                text++;
+            }
+        } else {
+            int k = parse_key_token(tok);
+            if (k != KEY_UNKNOWN) {
+                if (!key_queue_push(k)) { free(buf); return -1; }
+            }
+        }
+
+        if (!comma) break;
+        p = comma + 1;
+    }
+
+    free(buf);
+    return 0;
+}
+
+int ui_inject_keys_from_file(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0 || sz > 65536) { fclose(f); return -1; }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return -1; }
+    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) { free(buf); fclose(f); return -1; }
+    buf[sz] = '\0';
+    fclose(f);
+    int rc = ui_inject_keys(buf);
+    free(buf);
+    return rc;
+}
+
+void ui_clear_injected_keys(void)
+{
+    g_key_queue_head = g_key_queue_tail = 0;
+}
+
+bool ui_injected_keys_empty(void)
+{
+    return g_key_queue_head == g_key_queue_tail;
+}
+
+/* ======================================================================== */
+/* =================== Key-queue-only read_key (for stdio backend) ======= */
+/* ======================================================================== */
+
+static int queue_only_read_key(void)
+{
+    if (g_key_queue_head != g_key_queue_tail)
+        return key_queue_pop();
+    return KEY_ESC;
+}
+
+#ifdef NCD_TEST_BUILD
+
+static int test_backend_read_key(void)
+{
+    /* Check injected key queue first */
+    if (g_key_queue_head != g_key_queue_tail) {
+        return key_queue_pop();
+    }
+
+    /* Check strict mode */
+    const char *strict = getenv("NCD_UI_KEYS_STRICT");
+    if (strict && strict[0] == '1') {
+        return KEY_ESC; /* deterministic failure */
+    }
+
+    /* Optional timeout from environment */
+    const char *to_env = getenv("NCD_UI_KEY_TIMEOUT_MS");
+    if (to_env) {
+        int to_ms = atoi(to_env);
+        if (to_ms > 0) {
+            int waited = 0;
+            while (waited < to_ms) {
+                if (g_key_queue_head != g_key_queue_tail)
+                    return key_queue_pop();
+#if NCD_PLATFORM_WINDOWS
+                Sleep(10);
+#else
+                usleep(10000);
+#endif
+                waited += 10;
+            }
+            return KEY_ESC;
+        }
+    }
+
+    return KEY_ESC;
+}
+
+/* ======================================================================== */
+/* =================== Snapshot API ======================================= */
+/* ======================================================================== */
+
+UiSnapshot *ui_snapshot_capture(void)
+{
+    if (!g_test_backend_active) return NULL;
+
+    UiSnapshot *snap = (UiSnapshot *)calloc(1, sizeof(UiSnapshot));
+    if (!snap) return NULL;
+
+    snap->rows = (char **)malloc(sizeof(char *) * g_test_backend.rows);
+    if (!snap->rows) { free(snap); return NULL; }
+
+    snap->row_count = g_test_backend.rows;
+    snap->width = g_test_backend.cols;
+    snap->selected_row = -1;
+    snap->scroll_top = 0;
+    snap->filter[0] = '\0';
+
+    for (int r = 0; r < g_test_backend.rows; r++) {
+        const char *row = ui_test_backend_row(r);
+        snap->rows[r] = strdup(row);
+        if (strstr(row, SEL_IND) != NULL && strstr(row, BOX_V) != NULL) {
+            snap->selected_row = r;
+        }
+        if (strstr(row, "NCD") != NULL && (strstr(row, "match") != NULL || strstr(row, "filter") != NULL)) {
+            snap->has_header = true;
+            const char *f = strstr(row, "filter:");
+            if (f) {
+                f += 7;
+                while (*f == ' ' || *f == '\"') f++;
+                char *dst = snap->filter;
+                int n = 0;
+                while (*f && *f != '\"' && n < 63) { dst[n++] = *f++; }
+                dst[n] = '\0';
+            }
+        }
+    }
+    return snap;
+}
+
+void ui_snapshot_free(UiSnapshot *snap)
+{
+    if (!snap) return;
+    if (snap->rows) {
+        for (int i = 0; i < snap->row_count; i++) free(snap->rows[i]);
+        free(snap->rows);
+    }
+    free(snap);
+}
+
+#endif /* NCD_TEST_BUILD -- test backend read_key + snapshot */
+
+/* ======================================================================== */
+/* =================== Stdio TUI test backend (debug builds only) ========= */
+/* ======================================================================== */
+
+/*
+ * When NCD_TUI_TEST=1 is set (debug builds only), the TUI renders to an
+ * in-memory grid and dumps the final frame to stdout on close.  Keys are
+ * read from the injected key queue (set via NCD_UI_KEYS or NCD_UI_KEYS_FILE).
+ * This lets batch files drive the TUI and capture output for comparison
+ * against expected output files.
+ */
+#ifndef NDEBUG
+
+#define STDIO_GRID_MAX_COLS 160
+#define STDIO_GRID_MAX_ROWS 60
+
+static char  g_stdio_grid[STDIO_GRID_MAX_ROWS][STDIO_GRID_MAX_COLS];
+static int   g_stdio_cols = 80;
+static int   g_stdio_rows = 25;
+static int   g_stdio_cur_row = 0;
+static int   g_stdio_cur_col = 0;
+static bool  g_stdio_active = false;
+
+static void stdio_open_console(void)
+{
+    const char *env_cols = getenv("NCD_TUI_COLS");
+    const char *env_rows = getenv("NCD_TUI_ROWS");
+    if (env_cols) { int c = atoi(env_cols); if (c > 0 && c <= STDIO_GRID_MAX_COLS) g_stdio_cols = c; }
+    if (env_rows) { int r = atoi(env_rows); if (r > 0 && r <= STDIO_GRID_MAX_ROWS) g_stdio_rows = r; }
+    for (int r = 0; r < g_stdio_rows; r++) {
+        memset(g_stdio_grid[r], ' ', (size_t)g_stdio_cols);
+        g_stdio_grid[r][g_stdio_cols] = '\0';
+    }
+    g_stdio_cur_row = 0;
+    g_stdio_cur_col = 0;
+    g_stdio_active = true;
+}
+
+static void stdio_close_console(void)
+{
+    if (!g_stdio_active) return;
+    /* Dump final frame to stdout */
+    for (int r = 0; r < g_stdio_rows; r++) {
+        /* Trim trailing spaces */
+        char *line = g_stdio_grid[r];
+        int len = (int)strlen(line);
+        while (len > 0 && line[len - 1] == ' ') len--;
+        line[len] = '\0';
+        printf("%s\n", line);
+    }
+    fflush(stdout);
+    g_stdio_active = false;
+}
+
+static void stdio_write(const char *s)
+{
+    if (!g_stdio_active || !s) return;
+    while (*s) {
+        if (*s == '\n') {
+            g_stdio_cur_row++;
+            g_stdio_cur_col = 0;
+        } else if (*s == '\r') {
+            g_stdio_cur_col = 0;
+        } else {
+            if (g_stdio_cur_row >= 0 && g_stdio_cur_row < g_stdio_rows &&
+                g_stdio_cur_col >= 0 && g_stdio_cur_col < g_stdio_cols) {
+                g_stdio_grid[g_stdio_cur_row][g_stdio_cur_col] = *s;
+            }
+            g_stdio_cur_col++;
+        }
+        s++;
+    }
+}
+
+static void stdio_write_at(int row, int col, const char *s)
+{
+    if (!g_stdio_active) return;
+    g_stdio_cur_row = row;
+    g_stdio_cur_col = col;
+    stdio_write(s);
+}
+
+static void stdio_write_padded(const char *s, int width)
+{
+    if (!g_stdio_active || width <= 0) return;
+    int slen = (int)strlen(s);
+    char buf[512];
+    if (slen >= width) {
+        int copy = width - 3; if (copy < 0) copy = 0;
+        memcpy(buf, s, (size_t)copy);
+        if (width >= 3) { buf[copy]='.'; buf[copy+1]='.'; buf[copy+2]='.'; }
+        buf[width < (int)sizeof(buf) ? width : (int)sizeof(buf)-1] = '\0';
+    } else {
+        memcpy(buf, s, (size_t)slen);
+        memset(buf + slen, ' ', (size_t)(width - slen));
+        buf[width < (int)sizeof(buf) ? width : (int)sizeof(buf)-1] = '\0';
+    }
+    stdio_write(buf);
+}
+
+static void stdio_cursor_pos(int row, int col)
+{
+    g_stdio_cur_row = row;
+    g_stdio_cur_col = col;
+}
+
+static void stdio_hide_cursor(void) { /* no-op */ }
+static void stdio_show_cursor(void) { /* no-op */ }
+
+static void stdio_clear_area(int top_row, int num_rows, int width)
+{
+    if (!g_stdio_active) return;
+    for (int r = top_row; r < top_row + num_rows && r < g_stdio_rows; r++) {
+        if (r < 0) continue;
+        int w = width < g_stdio_cols ? width : g_stdio_cols;
+        memset(g_stdio_grid[r], ' ', (size_t)w);
+        if (w < g_stdio_cols) g_stdio_grid[r][w] = '\0';
+        else g_stdio_grid[r][g_stdio_cols - 1] = '\0';
+    }
+}
+
+static void stdio_get_size(int *cols, int *rows, int *cur_row)
+{
+    *cols = g_stdio_cols;
+    *rows = g_stdio_rows;
+    *cur_row = g_stdio_cur_row;
+}
+
+static UiIoOps g_stdio_ops;
+
+static UiIoOps *stdio_backend_init(void)
+{
+    const char *env = getenv("NCD_TUI_TEST");
+    fprintf(stderr, "STDIO_INIT: NCD_TUI_TEST=%s\n", env ? env : "(null)");
+    if (!env || env[0] != '1') return NULL;
+    fprintf(stderr, "STDIO_INIT: activating stdio backend\n");
+
+    g_stdio_ops.open_console  = stdio_open_console;
+    g_stdio_ops.close_console = stdio_close_console;
+    g_stdio_ops.write         = stdio_write;
+    g_stdio_ops.write_at      = stdio_write_at;
+    g_stdio_ops.write_padded  = stdio_write_padded;
+    g_stdio_ops.cursor_pos    = stdio_cursor_pos;
+    g_stdio_ops.hide_cursor   = stdio_hide_cursor;
+    g_stdio_ops.show_cursor   = stdio_show_cursor;
+    g_stdio_ops.clear_area    = stdio_clear_area;
+    g_stdio_ops.get_size      = stdio_get_size;
+    g_stdio_ops.read_key      = queue_only_read_key;
+    g_stdio_ops.ansi_enabled  = false;
+    return &g_stdio_ops;
+}
+
+#endif /* !NDEBUG -- stdio TUI test backend */
+
+/* ======================================================================== */
+/* =================== Shared helpers (use ops from above) ================ */
 /* ======================================================================== */
 
 static void names_free(NameList *list)
@@ -580,6 +1306,17 @@ static void nav_clamp_scroll(NavState *st)
 /* ========================= Shared drawing logic ========================== */
 /* ======================================================================== */
 
+/* Helper macros to route through g_ui_ops */
+#define OP_WRITE(s)        g_ui_ops->write(s)
+#define OP_WRITELN(s)      do { g_ui_ops->write(s); g_ui_ops->write("\n"); } while(0)
+#define OP_WRITE_PAD(s,w)  g_ui_ops->write_padded(s,w)
+#define OP_CURSOR(r,c)     g_ui_ops->cursor_pos(r,c)
+#define OP_HIDE()          g_ui_ops->hide_cursor()
+#define OP_SHOW()          g_ui_ops->show_cursor()
+#define OP_CLEAR(t,r,w)    g_ui_ops->clear_area(t,r,w)
+#define OP_SIZE(c,r,cr)    g_ui_ops->get_size(c,r,cr)
+#define OP_ANSI            g_ui_ops->ansi_enabled
+
 /* Helper: Draw a single list row */
 static void draw_list_row(UiState *st, int row, int vis_idx, bool is_selected)
 {
@@ -588,9 +1325,9 @@ static void draw_list_row(UiState *st, int row, int vis_idx, bool is_selected)
     char line[512];
     int list_start = st->top_row + 3;
 
-    con_cursor_pos(list_start + row, 0);
-    con_write(BOX_V);
-    if (is_selected && g_ansi) con_write(ANSI_REVERSE);
+    OP_CURSOR(list_start + row, 0);
+    OP_WRITE(BOX_V);
+    if (is_selected) con_set_highlight(true);
 
     if (vis_idx >= 0 && vis_idx < st->filtered_count) {
         int real_idx = st->filtered[vis_idx];
@@ -600,9 +1337,9 @@ static void draw_list_row(UiState *st, int row, int vis_idx, bool is_selected)
     } else {
         line[0] = '\0';
     }
-    con_write_padded(line, inner);
-    if (is_selected && g_ansi) con_write(ANSI_RESET);
-    con_write(BOX_V);
+    OP_WRITE_PAD(line, inner);
+    if (is_selected) con_set_highlight(false);
+    OP_WRITE(BOX_V);
 }
 
 /* Helper: Draw scrollbar */
@@ -616,8 +1353,8 @@ static void draw_scrollbar(UiState *st)
         int thumb = (int)((double)st->scroll_top / (st->filtered_count - st->visible_rows)
                           * (track - 1));
         for (int r = 0; r < track; r++) {
-            con_cursor_pos(list_start + r, w - 1);
-            con_write(r == thumb ? "#" : ".");
+            OP_CURSOR(list_start + r, w - 1);
+            OP_WRITE(r == thumb ? "#" : ".");
         }
     }
 }
@@ -633,14 +1370,14 @@ static void draw_box(UiState *st)
         st->first_draw = false;
         
         /* Draw box frame and header */
-        con_cursor_pos(st->top_row, 0);
-        con_write(BOX_TL);
-        for (i = 0; i < inner; i++) con_write(BOX_H);
-        con_write(BOX_TR);
+        OP_CURSOR(st->top_row, 0);
+        OP_WRITE(BOX_TL);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+        OP_WRITE(BOX_TR);
 
-        con_cursor_pos(st->top_row + 1, 0);
-        con_write(BOX_V);
-        if (g_ansi) con_write(ANSI_BOLD ANSI_CYAN);
+        OP_CURSOR(st->top_row + 1, 0);
+        OP_WRITE(BOX_V);
+        if (OP_ANSI) OP_WRITE(ANSI_BOLD ANSI_CYAN);
         char header[256];
         if (st->filter_len > 0) {
             snprintf(header, sizeof(header),
@@ -651,14 +1388,14 @@ static void draw_box(UiState *st)
                      "  NCD  --  %d match%s for \"%s\"  (type to filter)",
                      st->count, st->count == 1 ? "" : "es", st->search_str);
         }
-        con_write_padded(header, inner);
-        if (g_ansi) con_write(ANSI_RESET);
-        con_write(BOX_V);
+        OP_WRITE_PAD(header, inner);
+        if (OP_ANSI) OP_WRITE(ANSI_RESET);
+        OP_WRITE(BOX_V);
 
-        con_cursor_pos(st->top_row + 2, 0);
-        con_write(BOX_ML);
-        for (i = 0; i < inner; i++) con_write(BOX_H);
-        con_write(BOX_MR);
+        OP_CURSOR(st->top_row + 2, 0);
+        OP_WRITE(BOX_ML);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+        OP_WRITE(BOX_MR);
 
         /* Draw all list rows */
         for (int r = 0; r < st->visible_rows; r++) {
@@ -667,10 +1404,10 @@ static void draw_box(UiState *st)
         }
 
         /* Draw bottom border */
-        con_cursor_pos(st->top_row + 3 + st->visible_rows, 0);
-        con_write(BOX_BL);
-        for (i = 0; i < inner; i++) con_write(BOX_H);
-        con_write(BOX_BR);
+        OP_CURSOR(st->top_row + 3 + st->visible_rows, 0);
+        OP_WRITE(BOX_BL);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+        OP_WRITE(BOX_BR);
 
         /* Draw scrollbar */
         draw_scrollbar(st);
@@ -711,75 +1448,75 @@ static void nav_draw(NavState *st)
     int inner = w - 2;
     int i;
 
-    con_cursor_pos(st->top_row, 0);
-    con_write(BOX_TL);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_TR);
+    OP_CURSOR(st->top_row, 0);
+    OP_WRITE(BOX_TL);
+    for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_TR);
 
-    con_cursor_pos(st->top_row + 1, 0);
-    con_write(BOX_V);
-    if (g_ansi) con_write(ANSI_BOLD ANSI_CYAN);
-    con_write_padded("  NCD Navigator  (Up/Down=siblings  Tab=child  Left=parent  Right=enter  Backspace=Back  Enter=OK  Esc=Cancel)", inner);
-    if (g_ansi) con_write(ANSI_RESET);
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 1, 0);
+    OP_WRITE(BOX_V);
+    if (OP_ANSI) OP_WRITE(ANSI_BOLD ANSI_CYAN);
+    OP_WRITE_PAD("  NCD Navigator  (Up/Down=siblings  Tab=child  Left=parent  Right=enter  Backspace=Back  Enter=OK  Esc=Cancel)", inner);
+    if (OP_ANSI) OP_WRITE(ANSI_RESET);
+    OP_WRITE(BOX_V);
 
-    con_cursor_pos(st->top_row + 2, 0);
-    con_write(BOX_V);
-    { char line[512]; snprintf(line, sizeof(line), "  Parent : %.*s", (int)(sizeof(line) - 13), st->has_parent ? st->parent_path : "(root)"); con_write_padded(line, inner); }
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 2, 0);
+    OP_WRITE(BOX_V);
+    { char line[512]; snprintf(line, sizeof(line), "  Parent : %.*s", (int)(sizeof(line) - 13), st->has_parent ? st->parent_path : "(root)"); OP_WRITE_PAD(line, inner); }
+    OP_WRITE(BOX_V);
 
-    con_cursor_pos(st->top_row + 3, 0);
-    con_write(BOX_V);
-    { char line[512]; snprintf(line, sizeof(line), "  Current: %.*s", (int)(sizeof(line) - 13), st->current_path); con_write_padded(line, inner); }
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 3, 0);
+    OP_WRITE(BOX_V);
+    { char line[512]; snprintf(line, sizeof(line), "  Current: %.*s", (int)(sizeof(line) - 13), st->current_path); OP_WRITE_PAD(line, inner); }
+    OP_WRITE(BOX_V);
 
-    con_cursor_pos(st->top_row + 4, 0);
-    con_write(BOX_ML);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_MR);
+    OP_CURSOR(st->top_row + 4, 0);
+    OP_WRITE(BOX_ML);
+    for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_MR);
 
     int row = st->top_row + 5;
     for (int r = 0; r < st->visible_rows; r++) {
         int idx = st->sibling_scroll + r;
-        con_cursor_pos(row + r, 0);
-        con_write(BOX_V);
+        OP_CURSOR(row + r, 0);
+        OP_WRITE(BOX_V);
         char line[512];
         if (idx < st->siblings.count) {
             bool is_sel = (idx == st->sibling_sel);
             snprintf(line, sizeof(line), "  %c %s", is_sel ? '>' : ' ', st->siblings.items[idx]);
-            if (is_sel && g_ansi) con_write(ANSI_REVERSE);
-            con_write_padded(line, inner);
-            if (is_sel && g_ansi) con_write(ANSI_RESET);
-        } else { line[0] = '\0'; con_write_padded(line, inner); }
-        con_write(BOX_V);
+            if (is_sel) con_set_highlight(true);
+            OP_WRITE_PAD(line, inner);
+            if (is_sel) con_set_highlight(false);
+        } else { line[0] = '\0'; OP_WRITE_PAD(line, inner); }
+        OP_WRITE(BOX_V);
     }
 
     row += st->visible_rows;
-    con_cursor_pos(row, 0);
-    con_write(BOX_ML);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_MR);
+    OP_CURSOR(row, 0);
+    OP_WRITE(BOX_ML);
+    for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_MR);
 
     row++;
     for (int r = 0; r < st->visible_rows; r++) {
         int idx = st->child_scroll + r;
-        con_cursor_pos(row + r, 0);
-        con_write(BOX_V);
+        OP_CURSOR(row + r, 0);
+        OP_WRITE(BOX_V);
         char line[512];
         if (idx < st->children.count) {
             bool is_sel = (idx == st->child_sel);
             snprintf(line, sizeof(line), "  %c child: %s", is_sel ? '>' : ' ', st->children.items[idx]);
-            if (is_sel && g_ansi) con_write(ANSI_REVERSE);
-            con_write_padded(line, inner);
-            if (is_sel && g_ansi) con_write(ANSI_RESET);
-        } else { line[0] = '\0'; con_write_padded(line, inner); }
-        con_write(BOX_V);
+            if (is_sel) con_set_highlight(true);
+            OP_WRITE_PAD(line, inner);
+            if (is_sel) con_set_highlight(false);
+        } else { line[0] = '\0'; OP_WRITE_PAD(line, inner); }
+        OP_WRITE(BOX_V);
     }
 
-    con_cursor_pos(row + st->visible_rows, 0);
-    con_write(BOX_BL);
-    for (i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_BR);
+    OP_CURSOR(row + st->visible_rows, 0);
+    OP_WRITE(BOX_BL);
+    for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_BR);
 }
 
 static bool nav_reload_lists(NavState *st)
@@ -789,11 +1526,11 @@ static bool nav_reload_lists(NavState *st)
     st->has_parent = path_parent(st->current_path, st->parent_path, sizeof(st->parent_path));
 
     if (st->has_parent) {
-        if (!list_subdirs(st->parent_path, &st->siblings)) return false;
+        if (!con_list_subdirs(st->parent_path, &st->siblings)) return false;
     } else {
         if (!names_push(&st->siblings, st->current_path)) return false;
     }
-    if (!list_subdirs(st->current_path, &st->children)) return false;
+    if (!con_list_subdirs(st->current_path, &st->children)) return false;
 
     const char *leaf = path_leaf(st->current_path);
     st->sibling_sel = 0;
@@ -821,7 +1558,7 @@ static int navigate_run(const char *start_path,
 {
     int nav_result = NAV_RESULT_CANCEL;
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
 
     int bw = cols; if (bw > 120) bw = 120; if (bw < 40) bw = 40;
     int max_list = (rows - 10) / 2;
@@ -829,10 +1566,10 @@ static int navigate_run(const char *start_path,
     if (max_list > 10) max_list = 10;
 
     int total_rows = 7 + (max_list * 2);
-    for (int i = 0; i < total_rows; i++) con_writeln("");
+    for (int i = 0; i < total_rows; i++) OP_WRITELN("");
 
     /* Re-query cursor after printing newlines */
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
 
@@ -848,11 +1585,11 @@ static int navigate_run(const char *start_path,
         return NAV_RESULT_CANCEL;
     }
 
-    con_hide_cursor();
+    OP_HIDE();
     nav_draw(&st);
 
     for (;;) {
-        int key = read_key();
+        int key = g_ui_ops->read_key();
         if (key == KEY_ENTER) {
                 platform_strncpy_s(out_path, out_path_size, st.current_path);
             nav_result = NAV_RESULT_SELECT;
@@ -905,8 +1642,8 @@ static int navigate_run(const char *start_path,
         nav_draw(&st);
     }
 
-    clear_area(box_top, total_rows, bw);
-    con_cursor_pos(box_top, 0);
+    OP_CLEAR(box_top, total_rows, bw);
+    OP_CURSOR(box_top, 0);
     names_free(&st.siblings);
     names_free(&st.children);
     return nav_result;
@@ -920,15 +1657,11 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
     if (!matches || count <= 0) return -1;
     if (count == 1) return 0;
 
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE) { ui_close_console(); return 0; }
-#else
-    if (g_tty_out < 0) { ui_close_console(); return 0; }
-#endif
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
 
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
 
     int max_list = rows - 6;
     if (max_list < 3) max_list = 3;
@@ -937,15 +1670,15 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
 
     int bw = cols; if (bw > 120) bw = 120; if (bw < 40) bw = 40;
     int total_rows = 4 + visible;
-    for (int i = 0; i < total_rows; i++) con_writeln("");
+    for (int i = 0; i < total_rows; i++) OP_WRITELN("");
 
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
 
     /* Allocate filtered index array */
     int *filtered = (int *)malloc(sizeof(int) * count);
-    if (!filtered) { ui_close_console(); return 0; }
+    if (!filtered) { ops->close_console(); return 0; }
 
     UiState st = {
         .top_row      = box_top,
@@ -968,12 +1701,12 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
     /* Initialize identity mapping */
     for (int i = 0; i < count; i++) filtered[i] = i;
 
-    con_hide_cursor();
+    OP_HIDE();
     draw_box(&st);
 
     int result = -1;
     for (;;) {
-        int key = read_key();
+        int key = ops->read_key();
         switch (key) {
             case KEY_UP:
                 if (st.selected > 0) st.selected--;
@@ -1004,7 +1737,7 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                     if (new_vis < 1) new_vis = 1;
                     /* Resize box if needed */
                     if (new_vis != st.visible_rows) {
-                        clear_area(box_top, total_rows, bw);
+                        OP_CLEAR(box_top, total_rows, bw);
                         st.visible_rows = new_vis;
                         total_rows = 4 + new_vis;
                     }
@@ -1015,8 +1748,8 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                 if (st.filtered_count == 0) break;
                 int real_idx = st.filtered[st.selected];
                 char nav_out[MAX_PATH] = {0};
-                clear_area(box_top, total_rows, bw);
-                con_cursor_pos(box_top, 0);
+                OP_CLEAR(box_top, total_rows, bw);
+                OP_CURSOR(box_top, 0);
                 int nav_result = navigate_run(matches[real_idx].full_path,
                                               nav_out, sizeof(nav_out), true);
                 if (nav_result == NAV_RESULT_BACK) { draw_box(&st); continue; }
@@ -1041,7 +1774,7 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                     apply_filter(&st);
                     int new_vis = st.filtered_count < max_list ? st.filtered_count : max_list;
                     if (new_vis != st.visible_rows) {
-                        clear_area(box_top, total_rows, bw);
+                        OP_CLEAR(box_top, total_rows, bw);
                         st.visible_rows = new_vis;
                         total_rows = 4 + new_vis;
                     }
@@ -1059,7 +1792,7 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
                     int new_vis = st.filtered_count < max_list ? st.filtered_count : max_list;
                     if (new_vis < 1) new_vis = 1;
                     if (new_vis != st.visible_rows) {
-                        clear_area(box_top, total_rows, bw);
+                        OP_CLEAR(box_top, total_rows, bw);
                         st.visible_rows = new_vis;
                         total_rows = 4 + new_vis;
                     }
@@ -1073,10 +1806,10 @@ int ui_select_match_ex(const NcdMatch *matches, int count,
 
 done:
     free(filtered);
-    clear_area(box_top, total_rows, bw);
-    con_cursor_pos(box_top, 0);
-    con_show_cursor();
-    ui_close_console();
+    OP_CLEAR(box_top, total_rows, bw);
+    OP_CURSOR(box_top, 0);
+    OP_SHOW();
+    ops->close_console();
     return result;
 }
 
@@ -1114,7 +1847,7 @@ typedef struct {
 static void history_clear_area(int start_row, int num_rows)
 {
     for (int r = 0; r < num_rows; r++) {
-        con_cursor_pos(start_row + r, 0);
+        OP_CURSOR(start_row + r, 0);
 #if NCD_PLATFORM_WINDOWS
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
         CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -1132,8 +1865,8 @@ static void history_draw_row(HistoryUiState *s, int row, int idx, int list_start
 {
     bool is_selected = (idx == s->selected);
 
-    con_cursor_pos(list_start + row, 0);
-    con_write(BOX_V);
+    OP_CURSOR(list_start + row, 0);
+    OP_WRITE(BOX_V);
 
     char line[256];
     const char *path = s->matches[idx].full_path;
@@ -1147,10 +1880,10 @@ static void history_draw_row(HistoryUiState *s, int row, int idx, int list_start
         snprintf(line, sizeof(line), " %d) %s", idx + 1, path);
     }
 
-    if (is_selected && g_ansi) con_write(ANSI_REVERSE);
-    con_write_padded(line, inner);
-    if (is_selected && g_ansi) con_write(ANSI_RESET);
-    con_write(BOX_V);
+    if (is_selected) con_set_highlight(true);
+    OP_WRITE_PAD(line, inner);
+    if (is_selected) con_set_highlight(false);
+    OP_WRITE(BOX_V);
 }
 
 static void history_draw_box(HistoryUiState *s, int inner, int list_start, const char *title)
@@ -1158,32 +1891,32 @@ static void history_draw_box(HistoryUiState *s, int inner, int list_start, const
     int w = s->box_width;
 
     /* Title bar */
-    con_cursor_pos(s->top_row, 0);
-    con_write(BOX_TL);
+    OP_CURSOR(s->top_row, 0);
+    OP_WRITE(BOX_TL);
     {
         int title_len = (int)strlen(title);
         int left_pad = (inner - title_len) / 2;
         int right_pad = inner - title_len - left_pad;
         if (left_pad < 0) left_pad = 0;
         if (right_pad < 0) right_pad = 0;
-        for (int i = 0; i < left_pad; i++) con_write(BOX_H);
-        con_write(title);
-        for (int i = 0; i < right_pad; i++) con_write(BOX_H);
+        for (int i = 0; i < left_pad; i++) OP_WRITE(BOX_H);
+        OP_WRITE(title);
+        for (int i = 0; i < right_pad; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_TR);
+    OP_WRITE(BOX_TR);
 
     /* Help text */
-    con_cursor_pos(s->top_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(s->top_row + 1, 0);
+    OP_WRITE(BOX_V);
     const char *help = " Enter=select, Del=remove, Esc=cancel ";
-    con_write_padded(help, inner);
-    con_write(BOX_V);
+    OP_WRITE_PAD(help, inner);
+    OP_WRITE(BOX_V);
 
     /* Separator */
-    con_cursor_pos(s->top_row + 2, 0);
-    con_write(BOX_ML);
-    for (int i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_MR);
+    OP_CURSOR(s->top_row + 2, 0);
+    OP_WRITE(BOX_ML);
+    for (int i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_MR);
 
     /* List rows */
     for (int i = 0; i < s->visible_rows; i++) {
@@ -1191,18 +1924,18 @@ static void history_draw_box(HistoryUiState *s, int inner, int list_start, const
         if (idx < s->count) {
             history_draw_row(s, i, idx, list_start, inner);
         } else {
-            con_cursor_pos(list_start + i, 0);
-            con_write(BOX_V);
-            con_write_padded("", inner);
-            con_write(BOX_V);
+            OP_CURSOR(list_start + i, 0);
+            OP_WRITE(BOX_V);
+            OP_WRITE_PAD("", inner);
+            OP_WRITE(BOX_V);
         }
     }
 
     /* Bottom border */
-    con_cursor_pos(s->top_row + 3 + s->visible_rows, 0);
-    con_write(BOX_BL);
-    for (int i = 0; i < inner; i++) con_write(BOX_H);
-    con_write(BOX_BR);
+    OP_CURSOR(s->top_row + 3 + s->visible_rows, 0);
+    OP_WRITE(BOX_BL);
+    for (int i = 0; i < inner; i++) OP_WRITE(BOX_H);
+    OP_WRITE(BOX_BR);
 }
 
 /*
@@ -1217,15 +1950,11 @@ int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
     if (!matches || !count || *count <= 0) return -1;
     if (*count == 1) return 0;
 
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE) { ui_close_console(); return 0; }
-#else
-    if (g_tty_out < 0) { ui_close_console(); return 0; }
-#endif
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
 
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
 
     int max_list = rows - 6;
     if (max_list < 3) max_list = 3;
@@ -1234,9 +1963,9 @@ int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
 
     int bw = cols; if (bw > 120) bw = 120; if (bw < 40) bw = 40;
     int total_rows = 4 + visible;
-    for (int i = 0; i < total_rows; i++) con_writeln("");
+    for (int i = 0; i < total_rows; i++) OP_WRITELN("");
 
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
 
@@ -1253,12 +1982,12 @@ int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
     int list_start = st.top_row + 3;
     const char *title = "History (Del to remove)";
 
-    con_hide_cursor();
+    OP_HIDE();
     history_draw_box(&st, inner, list_start, title);
 
     int result = -1;
     for (;;) {
-        int key = read_key();
+        int key = ops->read_key();
         switch (key) {
             case KEY_UP:
                 if (st.selected > 0) st.selected--;
@@ -1334,8 +2063,8 @@ int ui_select_history(NcdMatch *matches, int *count, NcdMetadata *meta,
     }
 
 history_done:
-    con_show_cursor();
-    ui_close_console();
+    OP_SHOW();
+    ops->close_console();
     return result;
 }
 
@@ -1344,18 +2073,12 @@ bool ui_navigate_directory(const char *start_path,
                            size_t      out_path_size)
 {
     if (!start_path || !start_path[0] || !out_path || out_path_size == 0) return false;
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
-        ui_close_console(); return false;
-    }
-#else
-    if (g_tty_out < 0 || g_tty_in < 0) { ui_close_console(); return false; }
-#endif
-    con_hide_cursor();
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
+    OP_HIDE();
     int nav = navigate_run(start_path, out_path, out_path_size, false);
-    con_show_cursor();
-    ui_close_console();
+    OP_SHOW();
+    ops->close_console();
     return nav == NAV_RESULT_SELECT;
 }
 
@@ -1381,8 +2104,8 @@ static void draw_drive_box(DriveUiState *st, const char *drives,
     int list_start = st->top_row + 3;
     
     /* Title bar */
-    con_cursor_pos(st->top_row, 0);
-    con_write(BOX_TL);
+    OP_CURSOR(st->top_row, 0);
+    OP_WRITE(BOX_TL);
     {
         char title[128];
         snprintf(title, sizeof(title), " NCD Database Update Required ");
@@ -1390,87 +2113,87 @@ static void draw_drive_box(DriveUiState *st, const char *drives,
         int left_pad = (inner - title_len) / 2;
         int right_pad = inner - title_len - left_pad;
         int i;
-        for (i = 0; i < left_pad; i++) con_write(BOX_H);
-        con_write(title);
-        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+        for (i = 0; i < left_pad; i++) OP_WRITE(BOX_H);
+        OP_WRITE(title);
+        for (i = 0; i < right_pad; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_TR);
+    OP_WRITE(BOX_TR);
     
     /* Help text */
-    con_cursor_pos(st->top_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 1, 0);
+    OP_WRITE(BOX_V);
     {
         char help[256];
         snprintf(help, sizeof(help), " %-3s | %-7s | %s",
                  "Sel", "Version", "Drive");
-        con_write_padded(help, inner);
+        OP_WRITE_PAD(help, inner);
     }
-    con_write(BOX_V);
+    OP_WRITE(BOX_V);
     
     /* Separator line */
-    con_cursor_pos(st->top_row + 2, 0);
-    con_write(BOX_ML);
+    OP_CURSOR(st->top_row + 2, 0);
+    OP_WRITE(BOX_ML);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_MR);
+    OP_WRITE(BOX_MR);
     
     /* Drive list */
     for (int row = 0; row < st->visible_rows; row++) {
         int idx = st->scroll_top + row;
-        con_cursor_pos(list_start + row, 0);
-        con_write(BOX_V);
+        OP_CURSOR(list_start + row, 0);
+        OP_WRITE(BOX_V);
         
         if (idx < st->count) {
             bool is_selected_row = (idx == st->selected);
             bool is_checked = selected_drives[idx];
             
-            if (is_selected_row && g_ansi) con_write(ANSI_REVERSE);
+            if (is_selected_row) con_set_highlight(true);
             
             char line[512];
             snprintf(line, sizeof(line), " [%c] | v%-5u | %c:",
                      is_checked ? 'X' : ' ',
                      versions[idx],
                      drives[idx]);
-            con_write_padded(line, inner);
+            OP_WRITE_PAD(line, inner);
             
-            if (is_selected_row && g_ansi) con_write(ANSI_RESET);
+            if (is_selected_row) con_set_highlight(false);
         } else {
-            con_write_padded("", inner);
+            OP_WRITE_PAD("", inner);
         }
-        con_write(BOX_V);
+        OP_WRITE(BOX_V);
     }
     
     /* Footer with instructions */
     int footer_row = list_start + st->visible_rows;
-    con_cursor_pos(footer_row, 0);
-    con_write(BOX_ML);
+    OP_CURSOR(footer_row, 0);
+    OP_WRITE(BOX_ML);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_MR);
+    OP_WRITE(BOX_MR);
     
-    con_cursor_pos(footer_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(footer_row + 1, 0);
+    OP_WRITE(BOX_V);
     {
         char footer[256];
         snprintf(footer, sizeof(footer), " SPACE=Toggle  A=All  N=None  ENTER=Update Selected  ESC=Skip All ");
         int pad = inner - (int)strlen(footer);
-        con_write(footer);
+        OP_WRITE(footer);
         int i;
-        for (i = 0; i < pad; i++) con_write(" ");
+        for (i = 0; i < pad; i++) OP_WRITE(" ");
     }
-    con_write(BOX_V);
+    OP_WRITE(BOX_V);
     
-    con_cursor_pos(footer_row + 2, 0);
-    con_write(BOX_BL);
+    OP_CURSOR(footer_row + 2, 0);
+    OP_WRITE(BOX_BL);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_BR);
+    OP_WRITE(BOX_BR);
 }
 
 static void drive_clamp_scroll(DriveUiState *st)
@@ -1493,27 +2216,14 @@ int ui_select_drives_for_update(const char *drives,
 {
     if (!drives || !versions || !selected || count <= 0) return UI_UPDATE_NONE;
     
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
-        ui_close_console();
-        /* Default to update all on TUI failure */
-        for (int i = 0; i < count; i++) selected[i] = true;
-        return UI_UPDATE_ALL;
-    }
-#else
-    if (g_tty_out < 0 || g_tty_in < 0) {
-        ui_close_console();
-        for (int i = 0; i < count; i++) selected[i] = true;
-        return UI_UPDATE_ALL;
-    }
-#endif
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
     
     /* Initialize all as selected */
     for (int i = 0; i < count; i++) selected[i] = true;
     
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     
     int bw = cols;
     if (bw > max_width) bw = max_width;
@@ -1525,9 +2235,9 @@ int ui_select_drives_for_update(const char *drives,
     int visible = count < max_list ? count : max_list;
     
     int total_rows = 5 + visible;
-    for (int i = 0; i < total_rows; i++) con_writeln("");
+    for (int i = 0; i < total_rows; i++) OP_WRITELN("");
     
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
     
@@ -1541,13 +2251,13 @@ int ui_select_drives_for_update(const char *drives,
         .first_draw = true
     };
     
-    con_hide_cursor();
+    OP_HIDE();
     draw_drive_box(&st, drives, versions, selected);
     
     int result = UI_UPDATE_NONE;
     
     for (;;) {
-        int key = read_key();
+        int key = ops->read_key();
         switch (key) {
             case KEY_UP:
                 if (st.selected > 0) st.selected--;
@@ -1615,10 +2325,10 @@ int ui_select_drives_for_update(const char *drives,
     }
     
 drive_done:
-    clear_area(box_top, total_rows, bw);
-    con_cursor_pos(box_top, 0);
-    con_show_cursor();
-    ui_close_console();
+    OP_CLEAR(box_top, total_rows, bw);
+    OP_CURSOR(box_top, 0);
+    OP_SHOW();
+    ops->close_console();
     return result;
 }
 
@@ -1659,8 +2369,8 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
     int list_start = st->top_row + 3;
     
     /* Title bar */
-    con_cursor_pos(st->top_row, 0);
-    con_write(BOX_TL);
+    OP_CURSOR(st->top_row, 0);
+    OP_WRITE(BOX_TL);
     {
         char title[128];
         snprintf(title, sizeof(title), " NCD Configuration ");
@@ -1668,42 +2378,42 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
         int left_pad = (inner - title_len) / 2;
         int right_pad = inner - title_len - left_pad;
         int i;
-        for (i = 0; i < left_pad; i++) con_write(BOX_H);
-        con_write(title);
-        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+        for (i = 0; i < left_pad; i++) OP_WRITE(BOX_H);
+        OP_WRITE(title);
+        for (i = 0; i < right_pad; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_TR);
+    OP_WRITE(BOX_TR);
     
     /* Help text */
-    con_cursor_pos(st->top_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 1, 0);
+    OP_WRITE(BOX_V);
     if (st->input_mode) {
-        con_write_padded(" Enter/Tab=Confirm  Esc=Cancel ", inner);
+        OP_WRITE_PAD(" Enter/Tab=Confirm  Esc=Cancel ", inner);
     } else {
-        con_write_padded(" UP/DOWN=Navigate  SPACE=Toggle  +/- or 0-9=Adjust  X=Exclusions ", inner);
+        OP_WRITE_PAD(" UP/DOWN=Navigate  SPACE=Toggle  +/- or 0-9=Adjust  X=Exclusions ", inner);
     }
-    con_write(BOX_V);
+    OP_WRITE(BOX_V);
     
     /* Separator line */
-    con_cursor_pos(st->top_row + 2, 0);
-    con_write(BOX_ML);
+    OP_CURSOR(st->top_row + 2, 0);
+    OP_WRITE(BOX_ML);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_MR);
+    OP_WRITE(BOX_MR);
     
     /* Config items */
     for (int row = 0; row < st->visible_rows; row++) {
         int idx = row;
-        con_cursor_pos(list_start + row, 0);
-        con_write(BOX_V);
+        OP_CURSOR(list_start + row, 0);
+        OP_WRITE(BOX_V);
         
         if (idx < item_count) {
             bool is_selected_row = (idx == st->selected);
             ConfigItem *item = &items[idx];
             
-            if (is_selected_row && g_ansi) con_write(ANSI_REVERSE);
+            if (is_selected_row) con_set_highlight(true);
             
             char line[512];
             if (item->is_bool) {
@@ -1727,27 +2437,27 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
                     }
                 }
             }
-            con_write_padded(line, inner);
+            OP_WRITE_PAD(line, inner);
             
-            if (is_selected_row && g_ansi) con_write(ANSI_RESET);
+            if (is_selected_row) con_set_highlight(false);
         } else {
-            con_write_padded("", inner);
+            OP_WRITE_PAD("", inner);
         }
-        con_write(BOX_V);
+        OP_WRITE(BOX_V);
     }
     
     /* Footer with instructions */
     int footer_row = list_start + st->visible_rows;
-    con_cursor_pos(footer_row, 0);
-    con_write(BOX_ML);
+    OP_CURSOR(footer_row, 0);
+    OP_WRITE(BOX_ML);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_MR);
+    OP_WRITE(BOX_MR);
     
-    con_cursor_pos(footer_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(footer_row + 1, 0);
+    OP_WRITE(BOX_V);
     {
         char footer[256];
         if (st->input_mode) {
@@ -1764,19 +2474,19 @@ static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count
             snprintf(footer, sizeof(footer), " ENTER=Save  ESC=Cancel ");
         }
         int pad = inner - (int)strlen(footer);
-        con_write(footer);
+        OP_WRITE(footer);
         int i;
-        for (i = 0; i < pad; i++) con_write(" ");
+        for (i = 0; i < pad; i++) OP_WRITE(" ");
     }
-    con_write(BOX_V);
+    OP_WRITE(BOX_V);
     
-    con_cursor_pos(footer_row + 2, 0);
-    con_write(BOX_BL);
+    OP_CURSOR(footer_row + 2, 0);
+    OP_WRITE(BOX_BL);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_BR);
+    OP_WRITE(BOX_BR);
 }
 
 bool ui_edit_config(NcdMetadata *meta)
@@ -1790,18 +2500,8 @@ bool ui_edit_config(NcdMetadata *meta)
         db_config_init_defaults(cfg);
     }
     
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
-        ui_close_console();
-        return false;
-    }
-#else
-    if (g_tty_out < 0 || g_tty_in < 0) {
-        ui_close_console();
-        return false;
-    }
-#endif
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
     
     /* Create working copies of values */
     bool show_hidden = cfg->default_show_hidden;
@@ -1826,7 +2526,7 @@ bool ui_edit_config(NcdMetadata *meta)
     int item_count = sizeof(items) / sizeof(items[0]);
     
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     
     int bw = 60;
     if (bw > cols - 4) bw = cols - 4;
@@ -1837,9 +2537,9 @@ bool ui_edit_config(NcdMetadata *meta)
     int visible = item_count < max_list ? item_count : max_list;
     
     int total_rows = 5 + visible;
-    for (int i = 0; i < total_rows; i++) con_writeln("");
+    for (int i = 0; i < total_rows; i++) OP_WRITELN("");
     
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int box_top = cur_row - total_rows;
     if (box_top < 0) box_top = 0;
     
@@ -1852,13 +2552,13 @@ bool ui_edit_config(NcdMetadata *meta)
         .first_draw = true
     };
     
-    con_hide_cursor();
+    OP_HIDE();
     draw_config_box(&st, items, item_count, meta);
     
     bool saved = false;
     
     for (;;) {
-        int key = read_key();
+        int key = ops->read_key();
         
         /* Handle input mode for numeric fields */
         if (st.input_mode) {
@@ -1993,12 +2693,12 @@ bool ui_edit_config(NcdMetadata *meta)
     
 config_done:
     /* Get current console size to clear properly */
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     /* Clear total_rows + 1 to include the bottom border row */
-    clear_area(box_top, total_rows + 1, cols);
-    con_cursor_pos(box_top, 0);
-    con_show_cursor();
-    ui_close_console();
+    OP_CLEAR(box_top, total_rows + 1, cols);
+    OP_CURSOR(box_top, 0);
+    OP_SHOW();
+    ops->close_console();
     return saved;
 }
 
@@ -2025,7 +2725,7 @@ typedef struct {
 static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
 {
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     
     int visible = st->count < EXCLUSION_MAX_DISPLAY ? st->count : EXCLUSION_MAX_DISPLAY;
     if (visible < 3) visible = 3;  /* Minimum height */
@@ -2034,8 +2734,8 @@ static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
     int inner = st->box_width - 2;
     
     /* Title bar */
-    con_cursor_pos(st->top_row, 0);
-    con_write(BOX_TL);
+    OP_CURSOR(st->top_row, 0);
+    OP_WRITE(BOX_TL);
     {
         char title[128];
         snprintf(title, sizeof(title), " Exclusion List ");
@@ -2043,43 +2743,43 @@ static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
         int left_pad = (inner - title_len) / 2;
         int right_pad = inner - title_len - left_pad;
         int i;
-        for (i = 0; i < left_pad; i++) con_write(BOX_H);
-        con_write(title);
-        for (i = 0; i < right_pad; i++) con_write(BOX_H);
+        for (i = 0; i < left_pad; i++) OP_WRITE(BOX_H);
+        OP_WRITE(title);
+        for (i = 0; i < right_pad; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_TR);
+    OP_WRITE(BOX_TR);
     
     /* Help text */
-    con_cursor_pos(st->top_row + 1, 0);
-    con_write(BOX_V);
+    OP_CURSOR(st->top_row + 1, 0);
+    OP_WRITE(BOX_V);
     if (st->editing) {
-        con_write_padded(" Enter=Save  Esc=Cancel ", inner);
+        OP_WRITE_PAD(" Enter=Save  Esc=Cancel ", inner);
     } else {
-        con_write_padded(" A=Add D=Del E=Edit  Enter=Done  Esc=Cancel ", inner);
+        OP_WRITE_PAD(" A=Add D=Del E=Edit  Enter=Done  Esc=Cancel ", inner);
     }
-    con_write(BOX_V);
+    OP_WRITE(BOX_V);
     
     /* Separator */
-    con_cursor_pos(st->top_row + 2, 0);
-    con_write(BOX_ML);
+    OP_CURSOR(st->top_row + 2, 0);
+    OP_WRITE(BOX_ML);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_MR);
+    OP_WRITE(BOX_MR);
     
     /* Draw items */
     for (int i = 0; i < visible; i++) {
         int idx = st->first_display + i;
         int row = st->top_row + 3 + i;
-        con_cursor_pos(row, 0);
-        con_write(BOX_V);
+        OP_CURSOR(row, 0);
+        OP_WRITE(BOX_V);
         
         if (idx < st->count) {
             NcdExclusionEntry *entry = &meta->exclusions.entries[idx];
             bool is_selected = (idx == st->selected);
             
-            if (is_selected && g_ansi) con_write(ANSI_REVERSE);
+            if (is_selected) con_set_highlight(true);
             
             /* Format: [drive] pattern */
             char line[256];
@@ -2100,44 +2800,34 @@ static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
                 line[inner] = '\0';
             }
             
-            con_write_padded(line, inner);
-            if (is_selected && g_ansi) con_write(ANSI_RESET);
+            OP_WRITE_PAD(line, inner);
+            if (is_selected) con_set_highlight(false);
         } else {
             /* Empty slot */
-            con_write_padded("", inner);
+            OP_WRITE_PAD("", inner);
         }
-        con_write(BOX_V);
+        OP_WRITE(BOX_V);
     }
     
     /* Bottom border */
-    con_cursor_pos(st->top_row + 3 + visible, 0);
-    con_write(BOX_BL);
+    OP_CURSOR(st->top_row + 3 + visible, 0);
+    OP_WRITE(BOX_BL);
     {
         int i;
-        for (i = 0; i < inner; i++) con_write(BOX_H);
+        for (i = 0; i < inner; i++) OP_WRITE(BOX_H);
     }
-    con_write(BOX_BR);
+    OP_WRITE(BOX_BR);
 }
 
 bool ui_edit_exclusions(NcdMetadata *meta)
 {
     if (!meta) return false;
     
-    ui_open_console();
-#if NCD_PLATFORM_WINDOWS
-    if (g_hout == INVALID_HANDLE_VALUE || g_hin == INVALID_HANDLE_VALUE) {
-        ui_close_console();
-        return false;
-    }
-#else
-    if (g_tty_out < 0 || g_tty_in < 0) {
-        ui_close_console();
-        return false;
-    }
-#endif
+    UiIoOps *ops = ui_get_io_backend();
+    ops->open_console();
     
     int cols, rows, cur_row;
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     
     ExclusionUiState st = {
         .top_row = cur_row,
@@ -2155,11 +2845,11 @@ bool ui_edit_exclusions(NcdMetadata *meta)
     bool saved = false;
     bool cancelled = false;
     
-    con_hide_cursor();
+    OP_HIDE();
     draw_exclusion_box(&st, meta);
     
     while (!cancelled && !saved) {
-        int key = read_key();
+        int key = ops->read_key();
         
         if (st.editing) {
             /* Edit mode - handle text input */
@@ -2343,14 +3033,14 @@ bool ui_edit_exclusions(NcdMetadata *meta)
     }
     
     /* Cleanup */
-    get_console_size(&cols, &rows, &cur_row);
+    OP_SIZE(&cols, &rows, &cur_row);
     int visible = st.count < EXCLUSION_MAX_DISPLAY ? st.count : EXCLUSION_MAX_DISPLAY;
     if (visible < 3) visible = 3;
     int box_height = visible + 4;
-    clear_area(st.top_row, box_height + 1, cols);
-    con_cursor_pos(st.top_row, 0);
-    con_show_cursor();
-    ui_close_console();
+    OP_CLEAR(st.top_row, box_height + 1, cols);
+    OP_CURSOR(st.top_row, 0);
+    OP_SHOW();
+    ops->close_console();
     
     return saved && !cancelled;
 }

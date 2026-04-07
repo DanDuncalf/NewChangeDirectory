@@ -518,6 +518,10 @@ static bool try_queue_mutation(ServiceState *state,
  * check_service_ready  --  Check if service is ready for data-dependent operations
  *
  * Returns true if request can proceed, false if busy response was sent.
+ *
+ * Note: During SCANNING state, we only block if there's no existing database
+ * (initial scan). If we have database data, we continue serving requests
+ * using the existing data while the rescan happens in background.
  */
 static bool check_service_ready(NcdIpcConnection *conn, 
                                  uint32_t sequence,
@@ -534,9 +538,14 @@ static bool check_service_ready(NcdIpcConnection *conn,
             return false;
             
         case SERVICE_STATE_SCANNING:
-            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_SCANNING,
-                                  service_state_get_status_message(state));
-            return false;
+            /* Only block if this is the initial scan (no database yet) */
+            if (!service_state_has_database_data(state)) {
+                ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_SCANNING,
+                                      service_state_get_status_message(state));
+                return false;
+            }
+            /* We have existing data - allow requests to proceed during rescan */
+            return true;
             
         case SERVICE_STATE_STARTING:
             ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_NOT_READY,
@@ -690,7 +699,6 @@ static void *loader_thread_func(void *param) {
     SnapshotPublisher *pub = ctx->pub;
     
     if (!state || !pub) {
-        log_msg("ERROR - Loader thread received NULL state or pub");
         return 0;
     }
     
@@ -971,6 +979,21 @@ static bool signal_stop_service(void) {
     return (result == NCD_IPC_OK);
 }
 
+/* Print service usage information */
+static void print_usage(void) {
+    printf("NCD Service - Resident state service for NewChangeDirectory\n");
+    printf("\n");
+    printf("Usage:\n");
+    printf("  ncdservice start              Start the service (daemon mode)\n");
+    printf("  ncdservice stop               Stop the running service\n");
+    printf("  ncdservice status             Show service status (running/stopped)\n");
+    printf("  ncdservice /agdb              Run service in foreground with debug output\n");
+    printf("  ncdservice -conf <path>       Use custom config file\n");
+    printf("  ncdservice --daemon           Run service in foreground (internal use)\n");
+    printf("\n");
+    printf("With no arguments, prints this help message and shows service status.\n");
+}
+
 /* Spawn detached child process to run as daemon */
 static int spawn_daemon(const char *exe_path) {
     STARTUPINFOA si = {sizeof(si)};
@@ -1129,13 +1152,19 @@ int main(int argc, char *argv[]) {
         /* Check for debug flag */
         if (strcmp(argv[1], "/agdb") == 0 || strcmp(argv[1], "-agdb") == 0) {
             g_debug_mode = 1;
-            printf("NCD Service: Debug mode enabled\n");
+            g_file_log = 1;
+            fprintf(stderr, "NCD Service: Debug mode enabled\n");
+            log_init();
+            log_msg("Debug mode enabled");
+            fflush(stderr);
             /* Shift arguments and continue parsing */
             if (argc > 2) {
                 argv[1] = argv[2];
                 argc--;
             } else {
                 /* Only /agdb was passed, run service */
+                fprintf(stderr, "NCD Service: Calling run_service()...\n");
+                fflush(stderr);
                 return run_service();
             }
         }
@@ -1201,12 +1230,13 @@ int main(int argc, char *argv[]) {
         
         /* Unknown command - fall through to print usage */
         fprintf(stderr, "Unknown command: %s\n", argv[1]);
-        fprintf(stderr, "Usage: %s [/agdb] [-conf <path>] [start|stop|status]\n", argv[0]);
-        return 1;
+        /* fall through to print_usage */
     }
     
-    /* No arguments = run daemon directly (backward compatible) */
-    return run_service();
+    /* No arguments = print usage and status */
+    print_usage();
+    printf("\nService status: %s\n", is_service_running() ? "running" : "stopped");
+    return 0;
     
 #else /* Linux/POSIX */
     

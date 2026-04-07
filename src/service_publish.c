@@ -7,6 +7,7 @@
 #include "shm_platform.h"
 #include "shm_types.h"
 #include "database.h"
+#include "platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -99,26 +100,101 @@ static size_t compute_metadata_snapshot_size(const NcdMetadata *meta) {
     return size;
 }
 
-static size_t compute_database_snapshot_size(const NcdDatabase *db) {
-    size_t size = sizeof(ShmSnapshotHdr);
-    
-    /* Section descriptors */
-    size += db->drive_count * sizeof(ShmSectionDesc);
-    
-    /* Align to 8 bytes */
-    size = (size + 7) & ~7;
-    
-    /* Database section header */
-    size += sizeof(ShmDatabaseSection);
-    size += db->drive_count * sizeof(ShmDriveSection);
-    
-    /* Per-drive data */
-    for (int i = 0; i < db->drive_count; i++) {
-        DriveData *drv = &db->drives[i];
-        size += drv->dir_count * sizeof(ShmDirEntry);
-        size += drv->name_pool_len;
+static void copy_ansi_to_shm(const char *src, NcdShmChar *dst, size_t dst_count) {
+    if (!dst || dst_count == 0) {
+        return;
     }
-    
+    dst[0] = 0;
+    if (!src) {
+        return;
+    }
+#if NCD_PLATFORM_WINDOWS
+    size_t i = 0;
+    while (src[i] && i + 1 < dst_count) {
+        dst[i] = (NcdShmChar)(unsigned char)src[i];
+        i++;
+    }
+    dst[i] = 0;
+#else
+    platform_strncpy_s(dst, dst_count, src);
+#endif
+}
+
+static void derive_mount_point(const DriveData *drv, NcdShmChar *out, size_t out_count) {
+    if (!drv || !out || out_count == 0) {
+        return;
+    }
+    out[0] = 0;
+
+    if (drv->mount_point[0]) {
+        shm_strncpy(out, drv->mount_point, out_count - 1);
+        out[out_count - 1] = 0;
+        return;
+    }
+
+    if (drv->label[0]) {
+        copy_ansi_to_shm(drv->label, out, out_count);
+        if (out[0]) {
+            return;
+        }
+    }
+
+    {
+        char mount_path[MAX_PATH] = {0};
+        if (drv->letter && platform_build_mount_path(drv->letter, mount_path, sizeof(mount_path))) {
+            copy_ansi_to_shm(mount_path, out, out_count);
+        }
+    }
+}
+
+static void derive_volume_label(const DriveData *drv, NcdShmChar *out, size_t out_count) {
+    if (!drv || !out || out_count == 0) {
+        return;
+    }
+    out[0] = 0;
+
+    if (drv->volume_label[0]) {
+        shm_strncpy(out, drv->volume_label, out_count - 1);
+        out[out_count - 1] = 0;
+        return;
+    }
+
+    if (drv->label[0]) {
+        copy_ansi_to_shm(drv->label, out, out_count);
+        return;
+    }
+
+    derive_mount_point(drv, out, out_count);
+}
+
+static size_t compute_database_snapshot_size(const NcdDatabase *db) {
+    size_t size = sizeof(ShmDatabaseHeader);
+    size += (size_t)db->drive_count * sizeof(ShmMountEntry);
+    size = SHM_ALIGN8(size);
+
+    for (int i = 0; i < db->drive_count; i++) {
+        const DriveData *drv = &db->drives[i];
+        NcdShmChar mount_point[NCD_MAX_PATH] = {0};
+        NcdShmChar volume_label[64] = {0};
+        size_t mount_bytes;
+        size_t label_bytes;
+
+        derive_mount_point(drv, mount_point, NCD_ARRAY_SIZE(mount_point));
+        derive_volume_label(drv, volume_label, NCD_ARRAY_SIZE(volume_label));
+
+        mount_bytes = (shm_strlen(mount_point) + 1) * sizeof(NcdShmChar);
+        label_bytes = (shm_strlen(volume_label) + 1) * sizeof(NcdShmChar);
+
+        size += (size_t)drv->dir_count * sizeof(ShmDirEntry);
+        size = SHM_ALIGN8(size);
+        size += drv->name_pool_len;
+        size = SHM_ALIGN8(size);
+        size += mount_bytes;
+        size = SHM_ALIGN8(size);
+        size += label_bytes;
+        size = SHM_ALIGN8(size);
+    }
+
     return size;
 }
 
@@ -291,105 +367,109 @@ static bool build_metadata_snapshot(uint8_t *buf, size_t buf_size,
 static bool build_database_snapshot(uint8_t *buf, size_t buf_size,
                                      const NcdDatabase *db,
                                      uint64_t generation) {
-    if (!buf || !db || buf_size < sizeof(ShmSnapshotHdr)) {
+    if (!buf || !db || buf_size < sizeof(ShmDatabaseHeader)) {
         return false;
     }
     
     memset(buf, 0, buf_size);
     
-    /* Header */
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
+    /* Header (v2 format) */
+    ShmDatabaseHeader *hdr = (ShmDatabaseHeader *)buf;
     hdr->magic = NCD_SHM_DB_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
-    hdr->flags = NCD_SHM_FLAG_COMPLETE | NCD_SHM_FLAG_READONLY;
+    hdr->version = NCD_SHM_TYPES_VERSION;
+    hdr->text_encoding = NCD_SHM_TEXT_ENCODING;
+    hdr->last_scan = db->last_scan;
+    hdr->show_hidden = db->default_show_hidden ? 1 : 0;
+    hdr->show_system = db->default_show_system ? 1 : 0;
     hdr->total_size = (uint32_t)buf_size;
-    hdr->section_count = (uint32_t)db->drive_count;
+    hdr->mount_count = (uint32_t)db->drive_count;
     hdr->generation = generation;
     
-    size_t offset = sizeof(ShmSnapshotHdr);
-    
-    /* Section descriptors (one per drive) */
-    ShmSectionDesc *sections = (ShmSectionDesc *)(buf + offset);
-    offset += db->drive_count * sizeof(ShmSectionDesc);
-    
-    /* Align to 8 bytes */
-    offset = (offset + 7) & ~7;
+    size_t offset = sizeof(ShmDatabaseHeader);
+    if (offset + (size_t)db->drive_count * sizeof(ShmMountEntry) > buf_size) {
+        return false;
+    }
+    ShmMountEntry *mounts = (ShmMountEntry *)(buf + offset);
+    offset += (size_t)db->drive_count * sizeof(ShmMountEntry);
+    offset = SHM_ALIGN8(offset);
     hdr->header_size = (uint32_t)offset;
-    
-    /* Database section header */
-    if (offset + sizeof(ShmDatabaseSection) > buf_size) {
-        return false;
-    }
-    ShmDatabaseSection *dbsec = (ShmDatabaseSection *)(buf + offset);
-    dbsec->drive_count = (uint32_t)db->drive_count;
-    dbsec->drives_off = (uint32_t)(offset + sizeof(ShmDatabaseSection));
-    dbsec->last_scan = db->last_scan;
-    dbsec->show_hidden = db->default_show_hidden;
-    dbsec->show_system = db->default_show_system;
-    offset += sizeof(ShmDatabaseSection);
-    
-    /* Drive sections */
-    if (offset + db->drive_count * sizeof(ShmDriveSection) > buf_size) {
-        return false;
-    }
-    ShmDriveSection *drive_secs = (ShmDriveSection *)(buf + offset);
-    offset += db->drive_count * sizeof(ShmDriveSection);
-    
+
     for (int i = 0; i < db->drive_count; i++) {
-        DriveData *drv = &db->drives[i];
-        
-        /* Check bounds before writing */
-        /* Note: ShmDriveSection was already counted in the array allocation above */
-        size_t drive_data_size = drv->dir_count * sizeof(ShmDirEntry) + 
-                                 drv->name_pool_len;
-        if (offset + drive_data_size > buf_size) {
+        const DriveData *drv = &db->drives[i];
+        NcdShmChar mount_point[NCD_MAX_PATH] = {0};
+        NcdShmChar volume_label[64] = {0};
+        size_t mount_bytes;
+        size_t label_bytes;
+
+        derive_mount_point(drv, mount_point, NCD_ARRAY_SIZE(mount_point));
+        derive_volume_label(drv, volume_label, NCD_ARRAY_SIZE(volume_label));
+
+        mount_bytes = (shm_strlen(mount_point) + 1) * sizeof(NcdShmChar);
+        label_bytes = (shm_strlen(volume_label) + 1) * sizeof(NcdShmChar);
+
+        mounts[i].dir_count = (uint32_t)drv->dir_count;
+        mounts[i].type = (uint32_t)drv->type;
+        mounts[i].reserved = 0;
+
+        mounts[i].dirs_offset = (uint32_t)offset;
+        if (offset + (size_t)drv->dir_count * sizeof(ShmDirEntry) > buf_size) {
             return false;
         }
-        
-        /* Set up section descriptor */
-        sections[i].type = (uint16_t)(0x10 + i);
-        sections[i].offset = (uint32_t)offset;
-        
-        /* Drive header */
-        drive_secs[i].letter = drv->letter;
-        memcpy(drive_secs[i].label, drv->label, sizeof(drive_secs[i].label));
-        drive_secs[i].type = (uint32_t)drv->type;
-        drive_secs[i].dir_count = (uint32_t)drv->dir_count;
-        /* Note: offset points to the start of this drive's ShmDriveSection in the array */
-        /* The entries come AFTER the entire drive_secs array, not after each section */
-        uint32_t entries_start = (uint32_t)(hdr->header_size + sizeof(ShmDatabaseSection) + 
-                                             db->drive_count * sizeof(ShmDriveSection));
-        for (int k = 0; k < i; k++) {
-            entries_start += db->drives[k].dir_count * sizeof(ShmDirEntry) + 
-                            (uint32_t)db->drives[k].name_pool_len;
+        if (drv->dir_count > 0 && drv->dirs) {
+            for (int j = 0; j < drv->dir_count; j++) {
+                ShmDirEntry *dst = (ShmDirEntry *)(buf + mounts[i].dirs_offset) + j;
+                dst->parent = drv->dirs[j].parent;
+                dst->name_off = drv->dirs[j].name_off;
+                dst->is_hidden = drv->dirs[j].is_hidden;
+                dst->is_system = drv->dirs[j].is_system;
+                dst->pad[0] = 0;
+                dst->pad[1] = 0;
+            }
+        } else if (drv->dir_count > 0) {
+            return false;
         }
-        drive_secs[i].dirs_off = entries_start;
-        drive_secs[i].pool_off = entries_start + drv->dir_count * sizeof(ShmDirEntry);
-        drive_secs[i].pool_size = (uint32_t)drv->name_pool_len;
-        
-        /* Directory entries */
-        ShmDirEntry *entries = (ShmDirEntry *)(buf + entries_start);
-        for (int j = 0; j < drv->dir_count; j++) {
-            entries[j].parent = drv->dirs[j].parent;
-            entries[j].name_off = drv->dirs[j].name_off;
-            entries[j].is_hidden = drv->dirs[j].is_hidden;
-            entries[j].is_system = drv->dirs[j].is_system;
+        offset += (size_t)drv->dir_count * sizeof(ShmDirEntry);
+        offset = SHM_ALIGN8(offset);
+
+        mounts[i].pool_offset = (uint32_t)offset;
+        mounts[i].pool_size = (uint32_t)drv->name_pool_len;
+        if (offset + drv->name_pool_len > buf_size) {
+            return false;
         }
-        
-        /* Name pool */
         if (drv->name_pool_len > 0) {
-            /* Bounds check for memcpy */
-            if (drive_secs[i].pool_off + drv->name_pool_len > buf_size) {
+            if (!drv->name_pool) {
                 return false;
             }
-            memcpy(buf + drive_secs[i].pool_off, drv->name_pool, drv->name_pool_len);
+            memcpy(buf + mounts[i].pool_offset, drv->name_pool, drv->name_pool_len);
         }
-        
-        offset += drive_data_size;
-        sections[i].size = (uint32_t)(offset - sections[i].offset);
+        offset += drv->name_pool_len;
+        offset = SHM_ALIGN8(offset);
+
+        mounts[i].mount_point_off = (uint32_t)offset;
+        mounts[i].mount_point_len = (uint32_t)mount_bytes;
+        if (offset + mount_bytes > buf_size) {
+            return false;
+        }
+        memcpy(buf + mounts[i].mount_point_off, mount_point, mount_bytes);
+        offset += mount_bytes;
+        offset = SHM_ALIGN8(offset);
+
+        mounts[i].volume_label_off = (uint32_t)offset;
+        mounts[i].volume_label_len = (uint32_t)label_bytes;
+        if (offset + label_bytes > buf_size) {
+            return false;
+        }
+        memcpy(buf + mounts[i].volume_label_off, volume_label, label_bytes);
+        offset += label_bytes;
+        offset = SHM_ALIGN8(offset);
+    }
+
+    if (offset > buf_size) {
+        return false;
     }
     
     /* Compute and store checksum */
+    hdr->total_size = (uint32_t)offset;
     hdr->checksum = shm_compute_checksum(buf, buf_size);
     
     return true;

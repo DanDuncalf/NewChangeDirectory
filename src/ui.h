@@ -129,6 +129,123 @@ bool ui_edit_config(NcdMetadata *meta);
  */
 bool ui_edit_exclusions(NcdMetadata *meta);
 
+/* ========================================================== I/O backend  */
+
+/*
+ * UI I/O operations abstraction.
+ * The default implementation uses the platform console.
+ * Tests can install an in-memory backend for headless validation.
+ */
+typedef struct UiIoOps {
+    void (*open_console)(void);
+    void (*close_console)(void);
+    void (*write)(const char *s);
+    void (*write_at)(int row, int col, const char *s);
+    void (*write_padded)(const char *s, int width);
+    void (*cursor_pos)(int row, int col);
+    void (*hide_cursor)(void);
+    void (*show_cursor)(void);
+    void (*clear_area)(int top_row, int rows, int width);
+    void (*get_size)(int *cols, int *rows, int *cur_row);
+    int  (*read_key)(void);
+    bool ansi_enabled;
+} UiIoOps;
+
+/*
+ * Install a custom I/O backend.
+ * Pass NULL to restore the default platform backend.
+ */
+void ui_set_io_backend(UiIoOps *ops);
+
+/*
+ * Get the current I/O backend.
+ */
+UiIoOps *ui_get_io_backend(void);
+
+/*
+ * Scripted key injection for automated TUI testing.
+ *
+ * key_script: comma-separated tokens such as:
+ *   UP, DOWN, LEFT, RIGHT, PGUP, PGDN, HOME, END
+ *   ENTER, ESC, TAB, BACKSPACE, DELETE
+ *   TEXT:hello
+ *
+ * Returns 0 on success, -1 on parse error.
+ */
+int ui_inject_keys(const char *key_script);
+
+/*
+ * Load scripted keys from a file.
+ */
+int ui_inject_keys_from_file(const char *path);
+
+/*
+ * Clear any injected keys.
+ */
+void ui_clear_injected_keys(void);
+
+/*
+ * Check if injected key queue is empty.
+ */
+bool ui_injected_keys_empty(void);
+
+/* ======================================== test backend (NCD_TEST_BUILD) */
+#ifdef NCD_TEST_BUILD
+
+/*
+ * Frame snapshot for test assertions.
+ * Allocated only when test backend is active.
+ */
+typedef struct UiSnapshot {
+    char **rows;          /* Array of row strings */
+    int    row_count;     /* Number of rows captured */
+    int    width;         /* Grid width */
+    int    selected_row;  /* Highlighted row index (-1 if none) */
+    char   filter[64];    /* Current filter text */
+    int    scroll_top;    /* First visible item index */
+    bool   has_header;    /* Whether header/title was detected */
+} UiSnapshot;
+
+/*
+ * Capture a snapshot of the current test backend frame.
+ * Returns NULL if test backend is not active.
+ * Caller must free with ui_snapshot_free().
+ */
+UiSnapshot *ui_snapshot_capture(void);
+
+/*
+ * Free a snapshot and all associated memory.
+ */
+void ui_snapshot_free(UiSnapshot *snap);
+
+/*
+ * Test backend: create an in-memory grid backend.
+ * cols/rows: grid dimensions (e.g., 80, 25)
+ * Returns a backend that records all output to an internal character grid.
+ * The backend pointer remains valid until ui_set_io_backend(NULL) is called.
+ */
+UiIoOps *ui_create_test_backend(int cols, int rows);
+
+/*
+ * Destroy a test backend created with ui_create_test_backend().
+ */
+void ui_destroy_test_backend(UiIoOps *ops);
+
+/*
+ * Get the text content of a specific row from the test backend.
+ * Returns a pointer to internal storage (do not free).
+ * Returns empty string if out of bounds.
+ */
+const char *ui_test_backend_row(int row);
+
+/*
+ * Find the first row containing the given substring in the test backend.
+ * Returns row index or -1 if not found.
+ */
+int ui_test_backend_find_row(const char *substring);
+
+#endif /* NCD_TEST_BUILD */
+
 #ifdef __cplusplus
 }
 #endif

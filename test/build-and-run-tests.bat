@@ -98,7 +98,7 @@ set OBJDIR=obj
 :: Create object directory
 if not exist %OBJDIR% mkdir %OBJDIR%
 
-set CFLAGS=/nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I. /I%SRCDIR% /I%SHARED% /c /Fo%OBJDIR%\
+set CFLAGS=/nologo /W3 /O2 /DNDEBUG /DNCD_TEST_BUILD /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /D_CRT_SECURE_NO_WARNINGS /std:c11 /I. /I%SRCDIR% /I%SHARED% /c /Fo%OBJDIR%\
 
 echo ========================================
 echo Building object files...
@@ -121,8 +121,8 @@ echo Compiling cli.c...
 cl %CFLAGS% %SRCDIR%\cli.c
 if errorlevel 1 goto :error
 
-echo Compiling platform.c (NCD-specific)...
-cl %CFLAGS% /Fo%OBJDIR%\ncd_platform.obj %SRCDIR%\platform.c
+echo Compiling platform_ncd.c (NCD-specific)...
+cl %CFLAGS% /Fo%OBJDIR%\ncd_platform.obj %SRCDIR%\platform_ncd.c
 if errorlevel 1 goto :error
 
 :: Compile shared source files (with sh_ prefix to avoid name collision)
@@ -266,6 +266,81 @@ if errorlevel 1 goto :error
 link %LINK_FLAGS% /OUT:test_service_integration.exe %OBJDIR%\test_service_integration.obj %OBJDIR%\test_framework.obj %OBJDIR%\service_state.obj %OBJDIR%\matcher.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
+:: Compile IPC test dependencies
+echo Compiling IPC test dependencies...
+cl %CFLAGS% ipc_test_common.c
+if errorlevel 1 goto :error
+
+:: Phase 1: IPC Ping Test
+echo Building ipc_ping_test.exe...
+cl %CFLAGS% ipc_ping_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_ping_test.exe %OBJDIR%\ipc_ping_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 1: IPC State Test
+echo Building ipc_state_test.exe...
+cl %CFLAGS% ipc_state_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_state_test.exe %OBJDIR%\ipc_state_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 1: IPC Shutdown Test
+echo Building ipc_shutdown_test.exe...
+cl %CFLAGS% ipc_shutdown_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_shutdown_test.exe %OBJDIR%\ipc_shutdown_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 2: IPC Metadata Test
+echo Building ipc_metadata_test.exe...
+cl %CFLAGS% ipc_metadata_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_metadata_test.exe %OBJDIR%\ipc_metadata_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 2: IPC Heuristic Test
+echo Building ipc_heuristic_test.exe...
+cl %CFLAGS% ipc_heuristic_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_heuristic_test.exe %OBJDIR%\ipc_heuristic_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 2: IPC Rescan Test
+echo Building ipc_rescan_test.exe...
+cl %CFLAGS% ipc_rescan_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_rescan_test.exe %OBJDIR%\ipc_rescan_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 3: IPC Flush Test
+echo Building ipc_flush_test.exe...
+cl %CFLAGS% ipc_flush_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_flush_test.exe %OBJDIR%\ipc_flush_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 3: IPC CLI
+echo Building ipc_cli.exe...
+cl %CFLAGS% ipc_cli.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_cli.exe %OBJDIR%\ipc_cli.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 4: IPC Fuzzer
+echo Building ipc_fuzzer.exe...
+cl %CFLAGS% ipc_fuzzer.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_fuzzer.exe %OBJDIR%\ipc_fuzzer.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Phase 4: IPC Stress Test
+echo Building ipc_stress_test.exe...
+cl %CFLAGS% ipc_stress_test.c
+if errorlevel 1 goto :error
+link %LINK_FLAGS% /OUT:ipc_stress_test.exe %OBJDIR%\ipc_stress_test.obj %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\ncd_platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
 echo.
 echo ========================================
 echo Build successful! Running tests...
@@ -383,6 +458,27 @@ if errorlevel 1 (
 )
 echo.
 
+echo --- Running IPC diagnostic tests ---
+echo.
+
+echo --- Running ipc_ping_test.exe (quick test) ---
+ipc_ping_test.exe --once
+if errorlevel 1 (
+    echo NOTE: ipc_ping_test.exe - service may not be running (non-fatal)
+) else (
+    echo PASSED: ipc_ping_test.exe
+)
+echo.
+
+echo --- Running ipc_state_test.exe ---
+ipc_state_test.exe --all
+if errorlevel 1 (
+    echo NOTE: ipc_state_test.exe - service may not be running (non-fatal)
+) else (
+    echo PASSED: ipc_state_test.exe
+)
+echo.
+
 echo --- Running test_db_corruption.exe ---
 test_db_corruption.exe
 if errorlevel 1 (
@@ -436,6 +532,16 @@ if defined TEST_FAILED (
     echo ALL UNIT TESTS PASSED
 )
 echo ========================================
+echo.
+
+:: Run TUI tests
+echo ========================================
+echo Running TUI tests...
+echo ========================================
+call Win\test_tui.bat
+if errorlevel 1 (
+    echo WARNING: TUI tests had failures (non-fatal for unit test suite)
+)
 echo.
 echo To run comprehensive feature tests (requires Administrator):
 echo   test\Win\test_features.bat

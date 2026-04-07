@@ -1,16 +1,6 @@
 /*
  * database.c  --  Load, save, and manipulate the NCD directory database
  *
- * Debug test flags (debug builds only)
- */
-#if DEBUG
-bool g_test_no_checksum = false;
-bool g_test_slow_mode = false;
-#endif
-
-/*
- * database.c  --  Load, save, and manipulate the NCD directory database
- *
  * Storage format (compact JSON, written on one line):
  * {
  *   "version":  1,
@@ -69,6 +59,12 @@ bool g_test_slow_mode = false;
 #if NCD_PLATFORM_LINUX
 #include <sys/stat.h>
 #include <sys/types.h>
+#endif
+
+/* Debug test flags (debug builds only) */
+#if DEBUG
+bool g_test_no_checksum = false;
+bool g_test_slow_mode = false;
 #endif
 
 /* ================================================================ error handling */
@@ -141,6 +137,39 @@ void db_free(NcdDatabase *db)
         free(db->drives);
     }
     free(db);
+}
+
+void db_make_mutable(NcdDatabase *db)
+{
+    if (!db || !db->is_blob) return;
+
+    for (int i = 0; i < db->drive_count; i++) {
+        DriveData *drv = &db->drives[i];
+        if (drv->dir_count > 0 && drv->dirs) {
+            size_t dirs_size = sizeof(DirEntry) * (size_t)drv->dir_count;
+            DirEntry *new_dirs = (DirEntry *)ncd_malloc(dirs_size);
+            memcpy(new_dirs, drv->dirs, dirs_size);
+            drv->dirs = new_dirs;
+            drv->dir_capacity = drv->dir_count;
+        } else {
+            drv->dirs = NULL;
+            drv->dir_capacity = 0;
+        }
+
+        if (drv->name_pool_len > 0 && drv->name_pool) {
+            char *new_pool = (char *)ncd_malloc(drv->name_pool_len);
+            memcpy(new_pool, drv->name_pool, drv->name_pool_len);
+            drv->name_pool = new_pool;
+            drv->name_pool_cap = drv->name_pool_len;
+        } else {
+            drv->name_pool = NULL;
+            drv->name_pool_cap = 0;
+        }
+    }
+
+    db->is_blob = false;
+    free(db->blob_buf);
+    db->blob_buf = NULL;
 }
 
 /* ============================================================ path helper */

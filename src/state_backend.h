@@ -125,6 +125,14 @@ int state_backend_open_local(NcdStateView **out, NcdStateSourceInfo *info);
  */
 void state_backend_close(NcdStateView *view);
 
+/*
+ * state_backend_error_string  --  Get the last error message
+ *
+ * Returns a human-readable error string describing the last failure.
+ * The string is valid until the next call to a state_backend function.
+ */
+const char *state_backend_error_string(void);
+
 /* --------------------------------------------------------- state access     */
 
 /*

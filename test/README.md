@@ -35,39 +35,43 @@ This directory contains the comprehensive test suite for NewChangeDirectory (NCD
 
 ## Quick Start
 
-### Comprehensive Test Runner (All 4 Environments)
+### Comprehensive Test Runner (6 Test Suites)
 
-The comprehensive test runner executes all NCD tests across all four testing environments:
-1. **Windows WITHOUT service** (standalone mode)
-2. **Windows WITH service** (shared memory mode)
-3. **WSL WITHOUT service** (standalone mode)
-4. **WSL WITH service** (shared memory mode)
+The comprehensive test runner executes **six test suites** organized by platform and service configuration:
 
-**PowerShell (Windows or WSL):**
+| # | Test Script | Platform | Tests |
+|---|-------------|----------|-------|
+| 1 | `test_service_win.bat` | Windows | Service in isolation (no client) |
+| 2 | `test_service_wsl.sh` | WSL | Service in isolation (no client) |
+| 3 | `test_ncd_win_standalone.bat` | Windows | NCD client without service |
+| 4 | `test_ncd_win_with_service.bat` | Windows | NCD client with service |
+| 5 | `test_ncd_wsl_standalone.sh` | WSL | NCD client without service |
+| 6 | `test_ncd_wsl_with_service.sh` | WSL | NCD client with service |
+
+**Quick Run (All Tests from Root):**
+```batch
+:: Builds and runs all 6 test suites
+build_and_run_alltests.bat
+```
+
+**PowerShell Alternative (Windows or WSL):**
 ```powershell
 cd test
 powershell -ExecutionPolicy Bypass -File run_all_tests.ps1
 ```
 
-**Bash (WSL):**
+**Bash Alternative (WSL):**
 ```bash
 cd test
 ./run_all_tests.sh
 ```
 
-**Options:**
-```bash
-# Run only Windows tests
-./run_all_tests.sh --windows-only
-
-# Run only WSL tests  
-./run_all_tests.sh --wsl-only
-
-# Skip service tests (run only standalone)
-./run_all_tests.sh --no-service
-
-# Show detailed output
-./run_all_tests.sh --verbose
+**Options for build_and_run_alltests.bat:**
+```batch
+build_and_run_alltests.bat --windows-only     :: Run only Windows tests
+build_and_run_alltests.bat --wsl-only         :: Run only WSL tests
+build_and_run_alltests.bat --no-service       :: Skip tests requiring service
+build_and_run_alltests.bat --skip-build       :: Skip build phase, just run tests
 ```
 
 ### Individual Test Suites
@@ -105,8 +109,29 @@ chmod +x test_agent_commands.sh
 
 ## Test Structure
 
+### Main Test Scripts (6 Test Suites)
+
+These are the primary test entry points organized by platform and service configuration:
+
+| Test Script | Platform | Description |
+|-------------|----------|-------------|
+| `test_service_win.bat` | Windows | Service tests without client (isolated) |
+| `test_service_wsl.sh` | WSL/Linux | Service tests without client (isolated) |
+| `test_ncd_win_standalone.bat` | Windows | NCD client tests - standalone mode |
+| `test_ncd_win_with_service.bat` | Windows | NCD client tests - with service |
+| `test_ncd_wsl_standalone.sh` | WSL/Linux | NCD client tests - standalone mode |
+| `test_ncd_wsl_with_service.sh` | WSL/Linux | NCD client tests - with service |
+
+### Complete Directory Structure
+
 ```
 test/
+├── test_service_win.bat       # [NEW] Windows Service tests (no client)
+├── test_service_wsl.sh        # [NEW] WSL Service tests (no client)
+├── test_ncd_win_standalone.bat   # [NEW] NCD Windows without service
+├── test_ncd_win_with_service.bat # [NEW] NCD Windows with service
+├── test_ncd_wsl_standalone.sh    # [NEW] NCD WSL without service
+├── test_ncd_wsl_with_service.sh  # [NEW] NCD WSL with service
 ├── test_framework.h           # Minimal unit testing framework
 ├── test_framework.c           # Test framework implementation
 ├── test_database.c            # Database module tests (34 tests)
@@ -145,7 +170,7 @@ test/
 ├── Win/                       # Windows-specific tests
 │   ├── test_features.bat      # Windows feature tests (VHD-based)
 │   └── test_agent_commands.bat # Agent command tests
-├── Wsl/                       # WSL-specific tests
+├── Wsl/                       # WSL/Linux-specific tests
 │   ├── test_features.sh       # WSL feature tests (ramdisk-based)
 │   ├── test_agent_commands.sh # Agent command tests
 │   ├── test_integration.sh    # Integration tests

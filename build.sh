@@ -31,6 +31,7 @@ esac
 # Parse arguments
 BUILD_X64=0
 BUILD_ARM64=0
+BUILD_DEBUG=0
 TARGET_ARCH="${1:-host}"
 
 case "$TARGET_ARCH" in
@@ -44,8 +45,15 @@ case "$TARGET_ARCH" in
         BUILD_X64=1
         BUILD_ARM64=1
         ;;
+    debug)
+        BUILD_DEBUG=1
+        if [ "$HOST_ARCH" = "arm64" ]; then
+            BUILD_ARM64=1
+        else
+            BUILD_X64=1
+        fi
+        ;;
     host|*)
-        # Build for host architecture by default
         if [ "$HOST_ARCH" = "arm64" ]; then
             BUILD_ARM64=1
         else
@@ -53,6 +61,11 @@ case "$TARGET_ARCH" in
         fi
         ;;
 esac
+
+# Check for "debug" as second argument
+if [ "${2:-}" = "debug" ]; then
+    BUILD_DEBUG=1
+fi
 
 # Compilers
 CC_X64="${CC:-gcc}"
@@ -90,7 +103,11 @@ COMMON_SOURCES=(
 )
 
 # Base compiler flags
-BASE_CFLAGS="-std=c11 -Wall -Wextra -O2 -DNDEBUG -D_GNU_SOURCE"
+if [ $BUILD_DEBUG -eq 1 ]; then
+    BASE_CFLAGS="-std=c11 -Wall -Wextra -O0 -g3 -DDEBUG -D_GNU_SOURCE"
+else
+    BASE_CFLAGS="-std=c11 -Wall -Wextra -O2 -DNDEBUG -D_GNU_SOURCE"
+fi
 
 # Architecture-specific flags
 CFLAGS_X64="${BASE_CFLAGS} -march=x86-64-v2"

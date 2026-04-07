@@ -20,6 +20,23 @@ static char g_last_error[256] = {0};
 /* Convenience macros for accessing local mode fields */
 #define LOCAL(view) ((view)->data.local)
 
+/* Service backend entry points (implemented in state_backend_service.c) */
+extern void state_backend_close_service(NcdStateView *view);
+extern const NcdMetadata *state_view_metadata_service(const NcdStateView *view);
+extern const NcdDatabase *state_view_database_service(const NcdStateView *view);
+extern int state_backend_submit_heuristic_update_service(NcdStateView *view,
+                                                         const char *search,
+                                                         const char *target);
+extern int state_backend_submit_metadata_update_service(NcdStateView *view,
+                                                        int update_type,
+                                                        const void *data,
+                                                        size_t data_size);
+extern int state_backend_request_rescan_service(NcdStateView *view,
+                                                const bool drive_mask[26],
+                                                bool scan_root_only);
+extern int state_backend_request_flush_service(NcdStateView *view);
+extern const char *state_backend_service_error_string(void);
+
 /* --------------------------------------------------------- error handling   */
 
 static void set_error(const char *msg) {
@@ -170,6 +187,11 @@ void state_backend_close(NcdStateView *view) {
         return;
     }
 
+    if (view->info.from_service) {
+        state_backend_close_service(view);
+        return;
+    }
+
     /* Save metadata if dirty */
     if (LOCAL(view).metadata_dirty && LOCAL(view).metadata) {
         save_metadata_if_dirty(view);
@@ -192,14 +214,26 @@ void state_backend_close(NcdStateView *view) {
 /* --------------------------------------------------------- state access     */
 
 const NcdMetadata *state_view_metadata(const NcdStateView *view) {
-    if (!view || view->info.from_service || !LOCAL(view).metadata_loaded) {
+    if (!view) {
+        return NULL;
+    }
+    if (view->info.from_service) {
+        return state_view_metadata_service(view);
+    }
+    if (!LOCAL(view).metadata_loaded) {
         return NULL;
     }
     return LOCAL(view).metadata;
 }
 
 const NcdDatabase *state_view_database(const NcdStateView *view) {
-    if (!view || view->info.from_service || !LOCAL(view).database_loaded) {
+    if (!view) {
+        return NULL;
+    }
+    if (view->info.from_service) {
+        return state_view_database_service(view);
+    }
+    if (!LOCAL(view).database_loaded) {
         return NULL;
     }
     return LOCAL(view).database;
@@ -210,7 +244,16 @@ const NcdDatabase *state_view_database(const NcdStateView *view) {
 int state_backend_submit_heuristic_update(NcdStateView *view,
                                           const char *search,
                                           const char *target) {
-    if (!view || view->info.from_service || !LOCAL(view).metadata) {
+    if (!view) {
+        set_error("No metadata available");
+        return -1;
+    }
+
+    if (view->info.from_service) {
+        return state_backend_submit_heuristic_update_service(view, search, target);
+    }
+
+    if (!LOCAL(view).metadata) {
         set_error("No metadata available");
         return -1;
     }
@@ -231,7 +274,16 @@ int state_backend_submit_metadata_update(NcdStateView *view,
                                          int update_type,
                                          const void *data,
                                          size_t data_size) {
-    if (!view || view->info.from_service || !LOCAL(view).metadata) {
+    if (!view) {
+        set_error("No metadata available");
+        return -1;
+    }
+
+    if (view->info.from_service) {
+        return state_backend_submit_metadata_update_service(view, update_type, data, data_size);
+    }
+
+    if (!LOCAL(view).metadata) {
         set_error("No metadata available");
         return -1;
     }
@@ -333,6 +385,10 @@ int state_backend_submit_metadata_update(NcdStateView *view,
 int state_backend_request_rescan(NcdStateView *view,
                                  const bool drive_mask[26],
                                  bool scan_root_only) {
+    if (view && view->info.from_service) {
+        return state_backend_request_rescan_service(view, drive_mask, scan_root_only);
+    }
+
     /* In local mode, we don't handle rescan here */
     /* The caller (main.c) should perform the rescan directly */
     (void)view;
@@ -342,6 +398,10 @@ int state_backend_request_rescan(NcdStateView *view,
 }
 
 int state_backend_request_flush(NcdStateView *view) {
+    if (view && view->info.from_service) {
+        return state_backend_request_flush_service(view);
+    }
+
     /* In local mode, flush just saves metadata if dirty */
     if (view && !view->info.from_service && LOCAL(view).metadata_dirty) {
         if (!save_metadata_if_dirty(view)) {
@@ -385,7 +445,15 @@ int state_backend_open_best_effort(NcdStateView **out, NcdStateSourceInfo *info)
         if (result == 0) {
             return 0;  /* Service connection successful */
         }
-        /* Service check passed but connection failed - fall back */
+        /* Service exists but is busy (loading/scanning) - do NOT fall back */
+        const char *service_err = state_backend_service_error_string();
+        if (service_err && strstr(service_err, "not yet available")) {
+            /* Copy service error to local error buffer */
+            set_error(service_err);
+            /* Propagate the error up - client should know service is busy */
+            return -1;
+        }
+        /* For other errors (version mismatch, etc.), fall back to local */
     }
 
     /* Fall back to local mode */

@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -207,6 +208,12 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
     if (sent < 0 || (size_t)sent != msg_len) {
         return errno_to_ipc(errno);
     }
+    
+    /* Set receive timeout to prevent indefinite hangs */
+    struct timeval tv;
+    tv.tv_sec = 5;  /* 5 second timeout */
+    tv.tv_usec = 0;
+    setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     
     /* Read response */
     uint8_t resp_buf[NCD_IPC_MAX_MSG_SIZE];

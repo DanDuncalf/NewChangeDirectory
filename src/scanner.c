@@ -727,7 +727,13 @@ int scan_subdirectory(NcdDatabase   *db,
                       const NcdExclusionList *exclusions)
 {
     if (!subdir_path || !subdir_path[0]) return -1;
-    
+
+    /* Blob-loaded databases have dirs/name_pool pointing into a single
+     * read-only buffer.  Detach them before any modifications. */
+    if (db->is_blob) {
+        db_make_mutable(db);
+    }
+
     /* Find or create the drive */
     DriveData *drv = NULL;
     for (int i = 0; i < db->drive_count; i++) {

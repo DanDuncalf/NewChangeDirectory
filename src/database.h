@@ -28,6 +28,13 @@ NcdDatabase *db_create(void);
 /* Release all memory owned by db (including the db struct itself). */
 void db_free(NcdDatabase *db);
 
+/*
+ * Convert a blob-loaded database into a fully mutable one.
+ * After this call, db->is_blob is false and all per-drive arrays
+ * (dirs, name_pool) are independent heap allocations.
+ */
+void db_make_mutable(NcdDatabase *db);
+
 /* --------------------------------------------------------- persistence    */
 
 /*

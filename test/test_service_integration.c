@@ -363,11 +363,11 @@ TEST(agent_service_status_running) {
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     
-    /* Give service time to fully initialize */
+    /* Give service time to fully initialize - may need longer for DB load */
 #if NCD_PLATFORM_WINDOWS
-    Sleep(500);
+    Sleep(1000);
 #else
-    usleep(500000);
+    usleep(1000000);
 #endif
     
     char output[256] = {0};
@@ -376,11 +376,16 @@ TEST(agent_service_status_running) {
     /* Should succeed */
     ASSERT_EQ_INT(0, exit_code);
     
-    /* Should report starting or ready (database may not be loaded yet) */
+    /* Should report starting, loading, or ready (database may not be loaded yet) */
     bool has_status = (strstr(output, "STARTING") != NULL) ||
                       (strstr(output, "starting") != NULL) ||
+                      (strstr(output, "LOADING") != NULL) ||
+                      (strstr(output, "loading") != NULL) ||
                       (strstr(output, "READY") != NULL) ||
                       (strstr(output, "ready") != NULL);
+    if (!has_status) {
+        printf("  [DEBUG] Output was: %.100s\n", output);
+    }
     ASSERT_TRUE(has_status);
     
     /* Should NOT say not_running */
@@ -406,11 +411,11 @@ TEST(agent_service_status_json_running) {
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     
-    /* Give service time to fully initialize */
+    /* Give service time to fully initialize - may need longer for DB load */
 #if NCD_PLATFORM_WINDOWS
-    Sleep(500);
+    Sleep(1000);
 #else
-    usleep(500000);
+    usleep(1000000);
 #endif
     
     char output[256] = {0};
