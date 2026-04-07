@@ -66,6 +66,12 @@ NewChangeDirectory/
 │   ├── _ncd                  # Zsh completion
 │   └── ncd.ps1               # PowerShell completion
 ├── test/                     # Test suite
+│   ├── test_service_win.bat       # [NEW] Windows Service tests (isolated)
+│   ├── test_service_wsl.sh        # [NEW] WSL Service tests (isolated)
+│   ├── test_ncd_win_standalone.bat   # [NEW] NCD Windows - standalone
+│   ├── test_ncd_win_with_service.bat # [NEW] NCD Windows - with service
+│   ├── test_ncd_wsl_standalone.sh    # [NEW] NCD WSL - standalone
+│   ├── test_ncd_wsl_with_service.sh  # [NEW] NCD WSL - with service
 │   ├── test_framework.h/.c   # Minimal unit testing framework
 │   ├── test_database.c       # Database module unit tests
 │   ├── test_matcher.c        # Matcher module unit tests
@@ -180,33 +186,66 @@ All tests must be **completely isolated** from the user's real data:
 4. **Clean up after tests** - Remove all test files and databases
 5. **Use `NCD_TEST_MODE=1`** - Set this environment variable to disable background rescans during testing
 
-### Comprehensive Test Runner (All 4 Environments)
+### Comprehensive Test Runner (6 Test Suites)
 
-The comprehensive test runner executes all NCD tests across **all four testing environments**:
+The comprehensive test runner executes **six test suites** organized by platform and whether testing the service in isolation or the NCD client with/without service:
 
-| Environment | Platform | Service State | Description |
-|-------------|----------|---------------|-------------|
-| 1 | Windows | Standalone | Tests without resident service (disk-based state) |
-| 2 | Windows | With Service | Tests with resident service (shared memory state) |
-| 3 | WSL | Standalone | Tests without resident service (disk-based state) |
-| 4 | WSL | With Service | Tests with resident service (shared memory state) |
+| # | Test Script | Platform | Description |
+|---|-------------|----------|-------------|
+| 1 | `test_service_win.bat` | Windows | Service tests without client (isolated) |
+| 2 | `test_service_wsl.sh` | WSL | Service tests without client (isolated) |
+| 3 | `test_ncd_win_standalone.bat` | Windows | NCD client tests - standalone mode |
+| 4 | `test_ncd_win_with_service.bat` | Windows | NCD client tests - with service |
+| 5 | `test_ncd_wsl_standalone.sh` | WSL | NCD client tests - standalone mode |
+| 6 | `test_ncd_wsl_with_service.sh` | WSL | NCD client tests - with service |
 
-**PowerShell (Windows or WSL):**
+**Quick Run (All Tests from Root):**
+```batch
+:: Builds and runs all 6 test suites
+build_and_run_alltests.bat
+```
+
+**Run Individual Test Suites:**
+```batch
+:: Windows Service tests (isolated)
+test\test_service_win.bat
+
+:: Windows NCD without service
+test\test_ncd_win_standalone.bat
+
+:: Windows NCD with service
+test\test_ncd_win_with_service.bat
+```
+
+```bash
+# WSL Service tests (isolated)
+bash test/test_service_wsl.sh
+
+# WSL NCD without service
+bash test/test_ncd_wsl_standalone.sh
+
+# WSL NCD with service
+bash test/test_ncd_wsl_with_service.sh
+```
+
+**Alternative Runners:**
+
+*PowerShell (Windows or WSL):*
 ```powershell
 cd test
 powershell -ExecutionPolicy Bypass -File run_all_tests.ps1
 ```
 
-**Bash (WSL):**
+*Bash (WSL):*
 ```bash
 cd test
 ./run_all_tests.sh
 ```
 
-**Makefile (WSL):**
+*Makefile (WSL):*
 ```bash
 cd test
-make all-environments          # All 4 environments
+make all-environments          # All environments
 make all-environments-standalone # Standalone only (no service)
 ```
 
@@ -720,7 +759,7 @@ The auto-rescan interval is now configurable. Use `ncd /c` to edit the configura
 - **Auto-rescan hours**: Number of hours (1-168) before automatically triggering a background rescan
 - **Never** (-1): Disable auto-rescan entirely
 
-The default is 24 hours. When the database is older than the configured interval, NCD will automatically spawn a background rescan after a successful navigation.
+The default is -1 (never auto-rescan). When set to a positive value and the database is older than the configured interval, NCD will automatically spawn a background rescan after a successful navigation.
 
 **⚠️ WARNING:** The background rescan uses `ncd /r` which scans **ALL drives/mounts**. If you don't want this behavior, set `rescan_interval_hours=-1` or be aware that using `ncd` manually (outside of test mode) may trigger full system scans.
 
@@ -1062,7 +1101,7 @@ export NCD_TEST_MODE=1
 ncd some_search
 ```
 
-**Note:** When running NCD manually (not through tests), the auto-rescan feature may trigger a full system scan (`ncd /r`) if the database is older than the configured interval (default: 24 hours). To prevent this, either:
+**Note:** When running NCD manually (not through tests), the auto-rescan feature may trigger a full system scan (`ncd /r`) if the database is older than the configured interval (default: -1/disabled). To enable auto-rescan, use `ncd /c rescan_interval_hours=24`. To ensure it stays disabled, either:
 - Set `NCD_TEST_MODE=1` before running NCD
 - Use `ncd /c rescan_interval_hours=-1` to disable auto-rescan permanently
 

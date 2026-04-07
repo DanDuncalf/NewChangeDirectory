@@ -301,7 +301,7 @@ TEST(config_init_defaults_populates_all_fields) {
     ASSERT_FALSE(cfg.default_show_system);
     ASSERT_FALSE(cfg.default_fuzzy_match);
     ASSERT_EQ_INT(-1, cfg.default_timeout);
-    ASSERT_EQ_INT(24, cfg.rescan_interval_hours); /* Default is 24 hours */
+    ASSERT_EQ_INT(-1, cfg.rescan_interval_hours); /* Default is -1 (never auto-rescan) */
     ASSERT_TRUE(cfg.has_defaults);
     
     return 0;
