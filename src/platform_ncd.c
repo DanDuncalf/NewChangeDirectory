@@ -32,8 +32,9 @@ static const char *pseudo_filesystems[] = {
 /* Check if a filesystem type is a pseudo filesystem */
 bool platform_is_pseudo_fs(const char *fstype)
 {
+    if (!fstype) return false;
     for (int i = 0; pseudo_filesystems[i]; i++) {
-        if (strcmp(fstype, pseudo_filesystems[i]) == 0)
+        if (_stricmp(fstype, pseudo_filesystems[i]) == 0)
             return true;
     }
     return false;
@@ -149,6 +150,23 @@ int ncd_platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
     }
 
     fclose(mf);
+    
+    /* Ensure root filesystem (/) is always included as drive 0 for native Linux paths.
+     * The root may be filtered out above if it's a pseudo-fs like rootfs on some systems.
+     */
+    bool has_root = false;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(mount_ptrs[i], "/") == 0) {
+            has_root = true;
+            break;
+        }
+    }
+    if (!has_root && count < max_mounts) {
+        snprintf(mount_bufs[count], buf_size, "/");
+        mount_ptrs[count] = mount_bufs[count];
+        count++;
+    }
+    
     return count;
 #endif
 }
@@ -170,7 +188,6 @@ int platform_write_help_suffix(char *buf, size_t buf_size)
     return snprintf(buf, buf_size,
         "\r\n"
         "Linux/WSL Specific:\r\n"
-        "  /r /        Rescan root filesystem only (excludes /mnt/*)\r\n"
         "  X: or X:\\   Navigate Windows drive X: via /mnt/X\r\n");
 #else
     (void)buf;
@@ -201,11 +218,21 @@ char platform_parse_drive_from_search(const char *search, char *out_search, size
         char drive = (char)toupper((unsigned char)search[0]);
         platform_strncpy_s(out_search, out_size, search + 2);
         return drive;
-    } else {
-        /* Copy search as-is and default to first available mount */
-        platform_strncpy_s(out_search, out_size, search);
-        return '\x01';
     }
+    
+    /* Get drive letter from current working directory */
+    char cwd[MAX_PATH] = {0};
+    if (platform_get_current_dir(cwd, sizeof(cwd))) {
+        char drive = platform_get_drive_letter(cwd);
+        if (drive != 0) {
+            platform_strncpy_s(out_search, out_size, search);
+            return drive;
+        }
+    }
+    
+    /* CWD is a native Linux path (not /mnt/X) - use drive 0 */
+    platform_strncpy_s(out_search, out_size, search);
+    return 0;
 #endif
 }
 
@@ -266,11 +293,21 @@ int platform_get_available_drives(char *out_drives, int max_drives)
     const char *mnt_ptrs[26];
     int count = ncd_platform_enumerate_mounts(mnt_bufs, mnt_ptrs, MAX_PATH, max_drives);
     
-    for (int i = 0; i < count && i < max_drives; i++) {
+    int out_count = 0;
+    bool has_drive_0 = false;
+    for (int i = 0; i < count && out_count < max_drives; i++) {
         char letter = platform_get_drive_letter(mnt_ptrs[i]);
-        out_drives[i] = letter ? letter : (char)(i + 1);
+        if (letter == 0) {
+            /* Native Linux filesystem (not /mnt/X) - use drive 0 */
+            if (!has_drive_0) {
+                out_drives[out_count++] = 0;
+                has_drive_0 = true;
+            }
+        } else {
+            out_drives[out_count++] = letter;
+        }
     }
-    return count;
+    return out_count;
 #endif
 }
 

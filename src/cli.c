@@ -31,7 +31,6 @@ static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
 {
     if (!tok || !tok[0] || !mask || !count) return false;
 
-    bool saw_sep = false;
     bool saw_letter = false;
     int i = 0;
     while (tok[i]) {
@@ -49,7 +48,7 @@ static bool parse_drive_list_token(const char *tok, bool *mask, int *count)
             continue;
         }
         if (c == ',' || c == '-') {
-            saw_sep = true;
+            /* Separator - skip it */
             i++;
             continue;
         }
@@ -463,50 +462,41 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
             }
         }
 
-        /* Combined flags: /i, /s, /a, /z, /v, /r */
-        if (arg[0] == '/' || arg[0] == '-') {
-            const char *p = arg + 1;
-            bool unknown = false;
+        /* Single-letter flags: /i, /s, /a, /z, /v, /r */
+        if ((arg[0] == '/' || arg[0] == '-') && arg[1] != '\0' && arg[2] == '\0') {
+            char c = (char)toupper((unsigned char)arg[1]);
+            bool known = true;
             
-            while (*p) {
-                char c = (char)toupper((unsigned char)*p);
-                
-                switch (c) {
-                    case 'I':
-                        opts->show_hidden = true;
-                        break;
-                    case 'S':
-                        opts->show_system = true;
-                        break;
-                    case 'A':
-                        opts->show_hidden = true;
-                        opts->show_system = true;
-                        break;
-                    case 'Z':
-                        opts->fuzzy_match = true;
-                        break;
-                    case 'V':
-                        opts->show_version = true;
-                        break;
-                    case 'R':
-                        /* Defer exact "/r" to dedicated /r parser below. */
-                        if (p[1] == '\0') {
-                            unknown = true;
-                        } else {
-                            opts->force_rescan = true;
-                        }
-                        break;
-                    default:
-                        unknown = true;
-                        break;
-                }
-                p++;
+            switch (c) {
+                case 'I':
+                    opts->show_hidden = true;
+                    break;
+                case 'S':
+                    opts->show_system = true;
+                    break;
+                case 'A':
+                    opts->show_hidden = true;
+                    opts->show_system = true;
+                    break;
+                case 'Z':
+                    opts->fuzzy_match = true;
+                    break;
+                case 'V':
+                    opts->show_version = true;
+                    break;
+                case 'R':
+                    /* Defer exact "/r" to dedicated /r parser below. */
+                    known = false;
+                    break;
+                default:
+                    known = false;
+                    break;
             }
             
-            if (!unknown) {
+            if (known) {
                 continue;
             }
-            /* Unknown letters - fall through so explicit long options can match. */
+            /* Unknown single letter - fall through so explicit long options can match. */
         }
 
         /* Tag list: /gl or /gL */
@@ -740,6 +730,11 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                     continue;
                 }
             } else {
+#if NCD_PLATFORM_LINUX
+                ncd_println("NCD: Drive letter syntax (/rBDE) is not supported on Linux.");
+                ncd_println("      Use /r / for root filesystem or /r /mnt/X for Windows drives.");
+                return false;
+#else
                 opts->force_rescan = true;
                 for (int k = 2; arg[k]; k++) {
                     char c = (char)toupper((unsigned char)arg[k]);
@@ -750,6 +745,7 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                     }
                 }
                 continue;
+#endif
             }
         }
 

@@ -100,7 +100,8 @@ typedef long          LONG;
 /*
  * MetaFileHdr  --  fixed-size header at offset 0 of a metadata file
  *
- * sizeof(MetaFileHdr) == 20; every field is naturally aligned.
+ * sizeof(MetaFileHdr) == 24; fields are arranged to avoid padding.
+ * Note: checksum is placed at offset 16 for 8-byte alignment.
  */
 typedef struct {
     uint32_t magic;            /* NCD_META_MAGIC                              */
@@ -109,7 +110,7 @@ typedef struct {
     uint8_t  reserved;         /* always 0                                    */
     uint32_t reserved2;        /* always 0                                    */
     uint64_t checksum;         /* CRC64 of all data after this header         */
-} MetaFileHdr;                 /* 20 bytes */
+} MetaFileHdr;                 /* 24 bytes */
 
 /* Section IDs in metadata file */
 #define NCD_META_SECTION_CONFIG      0x01
@@ -327,6 +328,9 @@ typedef struct {
      */
     void *name_index;                 /* NULL until built (actually NameIndex*) */
     int   name_index_generation;      /* Incremented on modification */
+    
+    /* Reference counting for safe in-memory swapping during rescans */
+    int   ref_count;                  /* Incremented by db_retain(), db_free() decrements */
 } NcdDatabase;
 
 /*
@@ -366,7 +370,7 @@ typedef struct {
     uint32_t frequency;               /* Times this search->target chosen    */
     time_t   last_used;               /* Timestamp of last selection         */
     uint8_t  pad[4];                  /* Padding for 8-byte alignment        */
-} NcdHeurEntryV2;                     /* 528 bytes per entry                 */
+} NcdHeurEntryV2;                     /* ~8212 bytes per entry (2 * NCD_MAX_PATH + alignment padding) */
 
 /*
  * NcdHeuristicsV2  --  enhanced heuristics database

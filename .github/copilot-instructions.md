@@ -1,12 +1,13 @@
 # GitHub Copilot Instructions for NewChangeDirectory
 
 ## Project Purpose
-NewChangeDirectory (NCD) is a lightweight command-line directory switching utility for Windows and Linux. It maintains a path database and supports fuzzy path matching + heuristics to accelerate `cd` workflows.
+NewChangeDirectory (NCD) is a lightweight command-line directory switching utility for Windows and Linux. It maintains a path database and supports fuzzy path matching + heuristics to accelerate `cd` workflows.  It also has agentic support through the /agent option for AI-assisted path management.
 
 ## Recommended agent workflow
 - Use repository-level rules in `coding_agent_rules.md` / `developer_agent_rules.md` (Plan, Subagent, Verify, Elegance).
 - Keep fixes minimal, with one semantic change per PR.
-- Confirm behavior with manual run of `ncd` and/or `NewChangeDirectory` binary after building.
+- When adding features, add appropriate user facing tests, and unit tests investigate how to do this by reading .md files in the test folder.
+- Run the automated tests which are found in the tests/ directory after each change.  Fix any issues before submitting.
 
 ## Build and run
 ### Windows
@@ -34,10 +35,6 @@ NewChangeDirectory (NCD) is a lightweight command-line directory switching utili
 - Use `bool`, explicit checks for null pointers, and stable string-handling helpers in `platform.c` (e.g., `platform_strncpy_s`).
 - Follow existing comment style: top-of-file license/usage block and section markers (`/* ============================================================= ... */`).
 
-## No tests, so always verify manually
-- There is no dedicated test suite in repository.
-- Use `build.bat`, `build.sh` and at least one command scenario to verify behavior.
-
 ## Common pitfalls in this filter
 - Maintain cross-platform path separators and case sensitivity branches (Windows vs POSIX) in `platform.c` and `scanner.c`.
 - Preserve memory limits, static buffers, and no dynamic allocation assumptions for embedded-like logic.
@@ -48,14 +45,3 @@ NewChangeDirectory (NCD) is a lightweight command-line directory switching utili
 - If change requires algorithmic redesign, create a short architecture note comment.
 - Do not convert to a large C++ rewrite; keep C11 idiom.
 
----
-
-## Suggested prompts
-- "Find and fix the bug where `heur_note_choice` can overwrite the wrong entry if casing differs on Windows." 
-- "Add command-line option `/-l` to list available matches from the database without changing directory." 
-- "Refactor the `matcher` path scoring into a new `score_path` helper and add unit-like CLI assertions." 
-
-## Next agent customization ideas
-- `/create-instruction copilot-scope-db-updates`: Focus only on DB/scan heuristics (`src/database.c`, `src/scanner.c`).
-- `/create-instruction copilot-scope-cli-options`: Add and test CLI options (`src/main.c`, `src/ncd.h`).
-- `/create-agent copilot-ncd-regression`: Automatically run build and known scenario “smoke tests” after code edits, then report passes/fails.

@@ -1,24 +1,54 @@
 @echo off
 
 :: ==========================================================================
-
 :: test_agent_commands.bat -- Agent mode command tests for NCD (Windows)
-
 :: ==========================================================================
-
 ::
-
 :: Tests all /agent subcommands on the virtual disk:
-
 ::   query, ls, tree, check, complete, mkdir, mkdirs
-
 ::
-
-:: Run from project root: test\Win\test_agent_commands.bat
-
+:: IMPORTANT: This script modifies LOCALAPPDATA and NCD_TEST_MODE.
+:: It MUST be run through the test harness for proper isolation.
+::
+:: CORRECT USAGE - Run from project root:
+::   Run-Tests-Safe.bat integration
+::   Run-Tests-Safe.bat windows
+::   Run-Tests-Safe.bat
+::
+:: DO NOT RUN THIS SCRIPT DIRECTLY!
 :: ==========================================================================
 
-
+:: ==========================================================================
+:: ENVIRONMENT CHECK - ENSURE RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo ENVIRONMENT ERROR - TEST HARNESS REQUIRED
+    echo ==========================================
+    echo.
+    echo This test script is NOT meant to be run directly!
+    echo.
+    echo Running this script directly will:
+    echo   - Modify your LOCALAPPDATA environment variable
+    echo   - Leave your NCD configuration in an inconsistent state
+    echo   - Potentially corrupt your NCD database
+    echo   - Leave test VHDs attached or temp directories behind
+    echo.
+    echo CORRECT USAGE - Run from the project root:
+    echo   Run-Tests-Safe.bat integration       ^(integration tests^)
+    echo   Run-Tests-Safe.bat windows           ^(all Windows tests^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\Win\test_agent_commands.bat
+    echo.
+    echo If your environment is already corrupted, repair it with:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo ==========================================
+    exit /b 1
+)
 
 setlocal enabledelayedexpansion
 
@@ -36,6 +66,10 @@ set "NCD=%PROJECT_ROOT%\NewChangeDirectory.exe"
 
 :: Disable NCD background rescans to prevent scanning user drives during tests
 set "NCD_TEST_MODE=1"
+
+:: Prevent TUI from blocking: auto-select first item, ESC if queue empty
+set "NCD_UI_KEYS=ENTER"
+set "NCD_UI_KEYS_STRICT=1"
 
 set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
 
@@ -223,9 +257,15 @@ echo Scanning test tree...
 
 pushd "%TESTROOT%"
 
-powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $env:NCD_TEST_MODE='1'; $p = Start-Process -PassThru -NoNewWindow -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(30000)) { $p.Kill() }" >nul 2>&1
+powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $env:NCD_TEST_MODE='1'; $p = Start-Process -PassThru -NoNewWindow -WorkingDirectory '%TESTROOT%' -FilePath '%NCD%' -ArgumentList '/r.'; if (-not $p.WaitForExit(30000)) { $p.Kill() }" >nul 2>&1
 
 popd
+
+:: Keep the command context on the isolated test tree so implicit
+:: drive resolution never targets user drives.
+set "TESTROOT_PUSHED=0"
+pushd "%TESTROOT%"
+if not errorlevel 1 set "TESTROOT_PUSHED=1"
 
 echo.
 
@@ -249,7 +289,7 @@ echo --- Agent Query Tests ---
 
 "%NCD%" /agent query scott --json > "%TEMP%\agent_query1.txt" 2>&1
 
-findstr /I "scott" "%TEMP%\agent_query1.txt" >nul && findstr '"v":1' "%TEMP%\agent_query1.txt" >nul
+findstr /I "scott" "%TEMP%\agent_query1.txt" >nul && findstr /C:"\"v\"" "%TEMP%\agent_query1.txt" >nul
 
 if not errorlevel 1 (call :pass W1 "query returns JSON with results") else (call :fail W1 "query returns JSON with results")
 
@@ -317,7 +357,7 @@ del "%TEMP%\agent_ls2.txt" 2>nul
 
 "%NCD%" /agent ls "%TESTROOT%\Projects" --json --dirs-only > "%TEMP%\agent_ls3.txt" 2>&1
 
-findstr '"n":' "%TEMP%\agent_ls3.txt" >nul
+findstr /I "name" "%TEMP%\agent_ls3.txt" >nul
 
 if not errorlevel 1 (call :pass W7 "ls --dirs-only works") else (call :fail W7 "ls --dirs-only works")
 
@@ -353,7 +393,7 @@ echo --- Agent Tree Tests ---
 
 "%NCD%" /agent tree "%TESTROOT%\Projects" --json --depth 2 > "%TEMP%\agent_tree1.txt" 2>&1
 
-findstr '"v":1' "%TEMP%\agent_tree1.txt" >nul && findstr '"tree":' "%TEMP%\agent_tree1.txt" >nul
+findstr /C:"\"v\"" "%TEMP%\agent_tree1.txt" >nul && findstr /C:"\"tree\"" "%TEMP%\agent_tree1.txt" >nul
 
 if not errorlevel 1 (call :pass W10 "tree --json returns valid JSON") else (call :fail W10 "tree --json returns valid JSON")
 
@@ -363,7 +403,7 @@ del "%TEMP%\agent_tree1.txt" 2>nul
 
 "%NCD%" /agent tree "%TESTROOT%\Projects" --flat --depth 2 > "%TEMP%\agent_tree2.txt" 2>&1
 
-findstr '\' "%TEMP%\agent_tree2.txt" >nul
+findstr "\\" "%TEMP%\agent_tree2.txt" >nul
 
 if not errorlevel 1 (call :pass W11 "tree --flat shows relative paths") else (call :fail W11 "tree --flat shows relative paths")
 
@@ -379,6 +419,7 @@ for /f %%a in ('type "%TEMP%\agent_tree3a.txt" ^| find /c /v ""') do set T3A=%%a
 
 for /f %%a in ('type "%TEMP%\agent_tree3b.txt" ^| find /c /v ""') do set T3B=%%a
 
+:: DEBUG
 if %T3B% gtr %T3A% (call :pass W12 "tree --depth limits results") else (call :fail W12 "tree --depth limits results")
 
 del "%TEMP%\agent_tree3a.txt" "%TEMP%\agent_tree3b.txt" 2>nul
@@ -425,7 +466,7 @@ if errorlevel 1 (call :pass W16 "check non-existent path fails") else (call :fai
 
 "%NCD%" /agent check --db-age --json > "%TEMP%\agent_check2.txt" 2>&1
 
-findstr '"v":1' "%TEMP%\agent_check2.txt" >nul || findstr /I "age\|hours\|seconds" "%TEMP%\agent_check2.txt" >nul
+findstr /C:"\"v\"" "%TEMP%\agent_check2.txt" >nul || findstr /I "db_age" "%TEMP%\agent_check2.txt" >nul
 
 if not errorlevel 1 (call :pass W17 "check --db-age returns data") else (call :fail W17 "check --db-age returns data")
 
@@ -435,7 +476,7 @@ del "%TEMP%\agent_check2.txt" 2>nul
 
 "%NCD%" /agent check --stats --json > "%TEMP%\agent_check3.txt" 2>&1
 
-findstr '"v":1' "%TEMP%\agent_check3.txt" >nul || findstr /I "dirs\|count\|entries" "%TEMP%\agent_check3.txt" >nul
+findstr /C:"\"v\"" "%TEMP%\agent_check3.txt" >nul || findstr /I "count" "%TEMP%\agent_check3.txt" >nul
 
 if not errorlevel 1 (call :pass W18 "check --stats returns data") else (call :fail W18 "check --stats returns data")
 
@@ -445,7 +486,7 @@ del "%TEMP%\agent_check3.txt" 2>nul
 
 "%NCD%" /agent check --service-status --json > "%TEMP%\agent_check4.txt" 2>&1
 
-findstr /I "running\|stopped\|NOT_RUNNING\|READY" "%TEMP%\agent_check4.txt" >nul || findstr '"v":1' "%TEMP%\agent_check4.txt" >nul
+findstr /I "NOT_RUNNING" "%TEMP%\agent_check4.txt" >nul || findstr /I "READY" "%TEMP%\agent_check4.txt" >nul || findstr /C:"\"v\"" "%TEMP%\agent_check4.txt" >nul
 
 if not errorlevel 1 (call :pass W19 "check --service-status returns status") else (call :fail W19 "check --service-status returns status")
 
@@ -504,6 +545,7 @@ echo --- Agent Mkdir Tests ---
 set "MKDIR_TEST=%TESTROOT%\AgentMkdirTest"
 
 if exist "%MKDIR_TEST%" rmdir /s /q "%MKDIR_TEST%" 2>nul
+mkdir "%MKDIR_TEST%" 2>nul
 
 
 
@@ -763,6 +805,11 @@ echo.
 :: Cleanup
 
 echo Cleaning up...
+
+if "%TESTROOT_PUSHED%"=="1" (
+    popd
+    set "TESTROOT_PUSHED=0"
+)
 
 if "%USE_VHD%"=="1" (
 

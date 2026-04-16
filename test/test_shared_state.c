@@ -260,7 +260,7 @@ TEST(structure_sizes) {
      * but they should be consistent within a platform */
     ASSERT_TRUE(sizeof(ShmSnapshotHdr) >= 32 && sizeof(ShmSnapshotHdr) <= 64);
     ASSERT_EQ_INT(12, sizeof(ShmDirEntry));
-    ASSERT_EQ_INT(16, sizeof(ShmConfigSection));
+    ASSERT_EQ_INT(16, sizeof(ShmConfigSection));  /* compiler aligns to 4 */
     ASSERT_EQ_INT(16, sizeof(ShmGroupEntry));
     ASSERT_EQ_INT(16, sizeof(ShmHeurEntry));
     ASSERT_EQ_INT(8, sizeof(ShmExclusionEntry));

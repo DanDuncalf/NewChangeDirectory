@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #include "ncd.h"
 #include "result.h"
@@ -211,4 +212,46 @@ void result_ok(const char *full_path, char drive_letter)
     (void)drive_letter;
     write_result(true, "", full_path, msg);
 #endif
+}
+
+/* ============================================================= heuristic helpers */
+
+void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
+{
+    if (!dst || dst_size == 0) return;
+    dst[0] = '\0';
+    if (!src) return;
+
+    size_t len = strlen(src);
+    size_t a = 0;
+    while (a < len && isspace((unsigned char)src[a])) a++;
+    size_t b = len;
+    while (b > a && isspace((unsigned char)src[b - 1])) b--;
+
+    size_t j = 0;
+    for (size_t i = a; i < b && j + 1 < dst_size; i++) {
+        char c = src[i];
+        if (c == '\t' || c == '\r' || c == '\n') c = ' ';
+        if (to_lower) c = (char)tolower((unsigned char)c);
+        dst[j++] = c;
+    }
+    dst[j] = '\0';
+}
+
+void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
+{
+    if (!matches || count <= 1 || !preferred_path || !preferred_path[0]) return;
+    for (int i = 0; i < count; i++) {
+#if NCD_PLATFORM_WINDOWS
+        if (_stricmp(matches[i].full_path, preferred_path) == 0) {
+#else
+        if (strcasecmp(matches[i].full_path, preferred_path) == 0) {
+#endif
+            if (i == 0) return;
+            NcdMatch tmp = matches[0];
+            matches[0] = matches[i];
+            matches[i] = tmp;
+            return;
+        }
+    }
 }

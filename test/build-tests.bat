@@ -56,6 +56,8 @@ cl %CFLAGS% /Fo%OBJDIR%\platform.obj %SRCDIR%\platform_ncd.c
 if errorlevel 1 goto :error
 cl %CFLAGS% /Fo%OBJDIR%\scanner.obj %SRCDIR%\scanner.c
 if errorlevel 1 goto :error
+cl %CFLAGS% /Fo%OBJDIR%\service_state.obj %SRCDIR%\service_state.c
+if errorlevel 1 goto :error
 
 :: Compile shared source files (with sh_ prefix to avoid name collision)
 cl %CFLAGS% /Fo%OBJDIR%\sh_platform.obj %SHARED%\platform.c
@@ -103,16 +105,30 @@ if errorlevel 1 goto :error
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_scanner.exe test_scanner.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
+:: Compile IPC for service tests
+cl %CFLAGS% %SRCDIR%\control_ipc_win.c
+if errorlevel 1 goto :error
+
 :: Service tests: test_service_lazy_load.exe
-cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_lazy_load.exe test_service_lazy_load.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_lazy_load.exe test_service_lazy_load.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\service_state.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
 :: Service tests: test_service_lifecycle.exe
-cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_lifecycle.exe test_service_lifecycle.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_lifecycle.exe test_service_lifecycle.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
 :: Service tests: test_service_integration.exe
-cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_integration.exe test_service_integration.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_integration.exe test_service_integration.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Service tests: test_service_version_compat.exe
+echo Building test_service_version_compat.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_version_compat.exe test_service_version_compat.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Service tests: test_legacy_service_shutdown.exe
+echo Building test_legacy_service_shutdown.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_legacy_service_shutdown.exe test_legacy_service_shutdown.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
 :: Compile IPC test dependencies

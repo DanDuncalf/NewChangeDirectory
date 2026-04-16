@@ -14,17 +14,107 @@
  * - sizeof(local variant) = 24 bytes (pointers only)
  * - sizeof(service variant) = 45,432 bytes (full embedded structures)
  * - Ratio: service is ~1893x larger than local
+ * 
+ * ISOLATION NOTE:
+ * On Linux/WSL, these tests require XDG_DATA_HOME to be set to a temp
+ * directory to avoid loading the user's real metadata. On Windows,
+ * LOCALAPPDATA should similarly be redirected for test isolation.
  */
 
 #include "test_framework.h"
 #include "../src/state_backend.h"
+#include "../src/ncd.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Stub functions for service backend - only local mode tested here */
-bool state_backend_service_available(void) { return false; }
-int state_backend_try_service(NcdStateView **out, NcdStateSourceInfo *info) { (void)out; (void)info; return -1; }
+#if NCD_PLATFORM_LINUX
+#include <unistd.h>
+#include <sys/stat.h>
+#else
+#include <direct.h>
+#include <windows.h>
+#endif
+
+/* Test isolation setup - save original env vars */
+static char g_orig_xdg_data_home[4096] = {0};
+static char g_orig_localappdata[4096] = {0};
+static char g_test_data_dir[4096] = {0};
+
+/* Setup test isolation - redirect data directories to temp location */
+static void setup_test_isolation(void) {
+#if NCD_PLATFORM_LINUX
+    /* Save original XDG_DATA_HOME */
+    const char *orig = getenv("XDG_DATA_HOME");
+    if (orig) {
+        strncpy(g_orig_xdg_data_home, orig, sizeof(g_orig_xdg_data_home) - 1);
+    }
+    
+    /* Create temp test directory */
+    snprintf(g_test_data_dir, sizeof(g_test_data_dir), "/tmp/ncd_parity_test_%d", getpid());
+    mkdir(g_test_data_dir, 0755);
+    
+    /* Create NCD subdirectory */
+    char ncd_dir[4096];
+    snprintf(ncd_dir, sizeof(ncd_dir), "%s/ncd", g_test_data_dir);
+    mkdir(ncd_dir, 0755);
+    
+    /* Set XDG_DATA_HOME to temp directory */
+    setenv("XDG_DATA_HOME", g_test_data_dir, 1);
+#else
+    /* Windows - save original LOCALAPPDATA */
+    const char *orig = getenv("LOCALAPPDATA");
+    if (orig) {
+        strncpy(g_orig_localappdata, orig, sizeof(g_orig_localappdata) - 1);
+    }
+    
+    /* Get temp directory */
+    const char *temp = getenv("TEMP");
+    if (!temp) temp = "C:\\temp";
+    
+    /* Create temp test directory */
+    snprintf(g_test_data_dir, sizeof(g_test_data_dir), 
+        "%s\\ncd_parity_test_%d", temp, GetCurrentProcessId());
+    _mkdir(g_test_data_dir);
+    
+    /* Create NCD subdirectory */
+    char ncd_dir[4096];
+    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", g_test_data_dir);
+    _mkdir(ncd_dir);
+    
+    (void)GetCurrentProcessId; /* Silence unused warning if not used */
+    
+    /* Set LOCALAPPDATA to temp directory */
+    SetEnvironmentVariableA("LOCALAPPDATA", g_test_data_dir);
+#endif
+}
+
+/* Cleanup test isolation - restore original env vars and remove temp dir */
+static void cleanup_test_isolation(void) {
+#if NCD_PLATFORM_LINUX
+    /* Restore original XDG_DATA_HOME */
+    if (g_orig_xdg_data_home[0]) {
+        setenv("XDG_DATA_HOME", g_orig_xdg_data_home, 1);
+    } else {
+        unsetenv("XDG_DATA_HOME");
+    }
+    
+    /* Remove temp directory recursively (best effort) */
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", g_test_data_dir);
+    system(cmd);
+#else
+    /* Restore original LOCALAPPDATA */
+    if (g_orig_localappdata[0]) {
+        SetEnvironmentVariableA("LOCALAPPDATA", g_orig_localappdata);
+    }
+    
+    /* Remove temp directory recursively (best effort) */
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\" 2>nul", g_test_data_dir);
+    system(cmd);
+#endif
+}
 
 /* Test that local backend works independently */
 TEST(local_backend_basic) {
@@ -276,5 +366,12 @@ TEST_MAIN(
     printf("- Service mode: embeds full copies of metadata/database in the union\n");
     printf("- Result: Service variant is ~1893x larger but provides data locality\n\n");
     printf("Note: NcdStateView is ~45KB, allocated on heap to avoid stack issues\n\n");
+    
+    /* Setup test isolation to avoid loading user's real metadata */
+    setup_test_isolation();
+    
     suite_service_parity();
+    
+    /* Cleanup test isolation */
+    cleanup_test_isolation();
 )

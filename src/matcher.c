@@ -50,13 +50,6 @@ static void *xrealloc(void *p, size_t n)
     return p;
 }
 
-static void *xcalloc(size_t n, size_t sz)
-{
-    void *p = calloc(n, sz);
-    if (!p) { fprintf(stderr, "NCD: out of memory\n"); exit(1); }
-    return p;
-}
-
 /* Name index implementation */
 NameIndex *name_index_build(const NcdDatabase *db)
 {

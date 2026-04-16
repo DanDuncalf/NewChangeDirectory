@@ -18,19 +18,25 @@ MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform_ncd.c $(SHA
 HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
 # Test executables (note: test_agent_mkdir and test_mkdirs skipped - use internal main.c enums not in headers)
-TESTS = test_database test_matcher test_history \
+TESTS = test_database test_matcher test_history test_config \
         test_strbuilder test_common test_platform test_metadata test_scanner \
         test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration \
-        test_service_database test_service_ipc test_service_empty_db \
-        test_cli_parse test_agent_mode test_result_output \
+        test_service_database test_service_ipc test_service_empty_db test_service_logging \
+        test_service_version_compat test_legacy_service_shutdown \
+        test_cli_parse test_agent_mode test_agent_integration test_result_output \
         test_shared_state test_shared_state_extended test_shm_platform test_ipc \
         test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended \
         test_integration_extended \
         test_ui_selector test_ui_history test_ui_config test_ui_navigator \
-        fuzz_database bench_matcher test_db_corruption test_bugs \
+        test_ui_extended test_ui_exclusions test_main \
+        test_database_extended test_odd_cases \
+        fuzz_database fuzz_database_load bench_matcher test_db_corruption test_bugs \
         ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
         ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli \
-        ipc_fuzzer ipc_stress_test
+        ipc_fuzzer ipc_stress_test \
+        test_service_stress test_service_rescan test_ipc_extended test_shm_stress fuzz_ipc \
+        test_cli_edge_cases test_scanner_extended test_matcher_extended \
+        test_result_edge_cases test_stress
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone
 
@@ -41,12 +47,30 @@ TEST_DB_SOURCES = test_database.c test_framework.c ../src/database.c ../src/scan
 test_database: $(TEST_DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Config tests
+TEST_CONFIG_SOURCES = test_config.c test_framework.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_config: $(TEST_CONFIG_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Matcher tests
 test_matcher: test_matcher.c test_framework.c $(MATCHER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Fuzz tests
+# Agent 1 tests - Database Extended
+DB_EXTENDED_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_database_extended: test_database_extended.c test_framework.c $(DB_EXTENDED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Agent 1 tests - Odd Cases
+test_odd_cases: test_odd_cases.c test_framework.c $(DB_EXTENDED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Fuzz tests (original)
 fuzz_database: fuzz_database.c $(DB_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Agent 1 tests - Database Load Fuzzer
+fuzz_database_load: fuzz_database_load.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Benchmarks
@@ -132,6 +156,21 @@ SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ..
 test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Service tests - logging
+SERVICE_LOGGING_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_service_logging: test_service_logging.c test_framework.c $(SERVICE_LOGGING_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - version compatibility
+SERVICE_VERSION_COMPAT_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_service_version_compat: test_service_version_compat.c test_framework.c $(SERVICE_VERSION_COMPAT_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service tests - legacy shutdown
+LEGACY_SHUTDOWN_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_legacy_service_shutdown: test_legacy_service_shutdown.c test_framework.c $(LEGACY_SHUTDOWN_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Tier 3 tests - CLI parsing
 # Uses extracted cli.c module
 CLI_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
@@ -141,6 +180,11 @@ test_cli_parse: test_cli_parse.c test_framework.c $(CLI_TEST_SOURCES)
 # Tier 3 tests - Agent mode
 AGENT_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_mode: test_agent_mode.c test_framework.c $(AGENT_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Agent integration (Phase 3 of CODEBASE_CLEANUP_PLAN.md)
+AGENT_INTEGRATION_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_agent_integration: test_agent_integration.c test_framework.c $(AGENT_INTEGRATION_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Tier 3 tests - Result output
@@ -206,6 +250,23 @@ test_ui_config: test_ui_config.c test_framework.c $(UI_TEST_SOURCES)
 test_ui_navigator: test_ui_navigator.c test_framework.c $(UI_TEST_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Agent 3 - Extended UI tests
+test_ui_extended: test_ui_extended.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_ui_exclusions: test_ui_exclusions.c test_framework.c $(UI_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Agent 3 - Main flow tests (signal handling, result escaping, sorting)
+MAIN_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
+test_main: test_main.c test_framework.c $(MAIN_TEST_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Key injection tests - unit tests for key parsing and queueing
+KEY_INJECTION_SOURCES = test_key_injection.c test_framework.c $(UI_TEST_SOURCES)
+test_key_injection: $(KEY_INJECTION_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # IPC Test Programs - Common infrastructure
 IPC_TEST_COMMON_SOURCES = ipc_test_common.c ../src/control_ipc_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
@@ -243,11 +304,55 @@ ipc_fuzzer: ipc_fuzzer.c $(IPC_TEST_COMMON_SOURCES)
 ipc_stress_test: ipc_stress_test.c $(IPC_TEST_COMMON_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
+# Agent 4 additions - Input Processing track
+AGENT4_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+
+test_cli_edge_cases: test_cli_edge_cases.c test_framework.c $(AGENT4_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_scanner_extended: test_scanner_extended.c test_framework.c $(AGENT4_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_matcher_extended: test_matcher_extended.c test_framework.c $(AGENT4_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_result_edge_cases: test_result_edge_cases.c test_framework.c ../src/result.c $(AGENT4_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_stress: test_stress.c test_framework.c $(AGENT4_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Agent 2: Service Infrastructure Tests
+# Service stress tests
+SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_service_stress: test_service_stress.c test_framework.c $(SERVICE_STRESS_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Service rescan tests
+SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_service_rescan: test_service_rescan.c test_framework.c $(SERVICE_RESCAN_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# IPC extended tests
+IPC_EXTENDED_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_ipc_extended: test_ipc_extended.c test_framework.c $(IPC_EXTENDED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# SHM stress tests
+SHM_STRESS_SOURCES = ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_shm_stress: test_shm_stress.c test_framework.c $(SHM_STRESS_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# IPC fuzz tests
+FUZZ_IPC_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_cli_parse test_agent_mode test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator
+test: test_database test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_key_injection
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -269,6 +374,9 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo "Running database tests..."
 	@./test_database
 	@echo ""
+	@echo "Running config tests..."
+	@./test_config
+	@echo ""
 	@echo "Running matcher tests..."
 	@./test_matcher
 	@echo ""
@@ -277,6 +385,9 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running agent mode tests..."
 	@./test_agent_mode || echo "Note: Some agent mode tests may fail without full main.c linkage"
+	@echo ""
+	@echo "Running agent integration tests..."
+	@./test_agent_integration || echo "Note: Some agent integration tests may fail without full main.c linkage"
 	@echo ""
 	@echo "Running metadata tests..."
 	@./test_metadata
@@ -289,6 +400,18 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running service parity tests..."
 	@./test_service_parity
+	@echo ""
+	@echo "Running service lifecycle tests..."
+	@./test_service_lifecycle
+	@echo ""
+	@echo "Running service integration tests..."
+	@./test_service_integration
+	@echo ""
+	@echo "Running service version compatibility tests..."
+	@./test_service_version_compat
+	@echo ""
+	@echo "Running legacy service shutdown tests..."
+	@./test_legacy_service_shutdown
 	@echo ""
 	@echo "Running CLI parse tests..."
 	@./test_cli_parse
@@ -322,6 +445,9 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running UI navigator tests..."
 	@./test_ui_navigator
+	@echo ""
+	@echo "Running key injection tests..."
+	@./test_key_injection
 	@echo ""
 	@echo "All unit tests complete."
 
@@ -394,6 +520,8 @@ clean:
 	rm -f ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test
 	rm -f ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli
 	rm -f ipc_fuzzer ipc_stress_test
+	rm -f stress_test.db
+	rm -f test_service_stress test_service_rescan test_ipc_extended test_shm_stress fuzz_ipc
 
 # Windows-specific test builds
 win-test:

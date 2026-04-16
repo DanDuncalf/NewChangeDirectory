@@ -1,4 +1,47 @@
 @echo off
+:: ==========================================================================
+:: test_minimal3.bat - Minimal NCD test script #3
+:: ==========================================================================
+::
+:: WARNING: This script has hardcoded paths and is for development only.
+:: It should NOT be run directly - use the test harness instead.
+::
+:: Run through the test harness:
+::   Run-Tests-Safe.bat windows
+::
+:: DO NOT RUN THIS SCRIPT DIRECTLY!
+:: ==========================================================================
+
+:: ==========================================================================
+:: ENVIRONMENT CHECK - ENSURE RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo ENVIRONMENT ERROR - TEST HARNESS REQUIRED
+    echo ==========================================
+    echo.
+    echo This test script has HARDCODED PATHS and is NOT meant to be run directly!
+    echo.
+    echo This is a DEVELOPMENT-ONLY script that:
+    echo   - Uses hardcoded paths ^(E:\llama\NewChangeDirectory^)
+    echo   - May not work on your system
+    echo   - Can corrupt your NCD configuration
+    echo.
+    echo CORRECT USAGE - Run from the project root:
+    echo   Run-Tests-Safe.bat windows           ^(all Windows tests^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\Win\test_minimal3.bat
+    echo.
+    echo If your environment is already corrupted, repair it with:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo ==========================================
+    exit /b 1
+)
+
 setlocal enabledelayedexpansion
 set "NCD=E:\llama\NewChangeDirectory\NewChangeDirectory.exe"
 set "LOG=%TEMP%\ncd_minimal_test3.log"

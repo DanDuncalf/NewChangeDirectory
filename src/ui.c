@@ -121,6 +121,9 @@ static void names_sort(NameList *list);
  *   list_subdirs(path, out)  -- fill NameList with subdirectory names
  */
 
+/* Forward declaration for key queue (used by con_read_key in all builds) */
+static int key_queue_pop(void);
+
 /* ======================================================================== */
 #if NCD_PLATFORM_WINDOWS
 /* ======================================================================== */
@@ -178,8 +181,6 @@ static void con_write(const char *s)
     DWORD wr;
     WriteConsoleA(g_hout, s, (DWORD)strlen(s), &wr, NULL);
 }
-
-static void con_writeln(const char *s) { con_write(s); con_write("\r\n"); }
 
 static void con_write_padded(const char *s, int width)
 {
@@ -287,6 +288,10 @@ static void get_console_size(int *cols, int *rows, int *cur_row)
 
 static int con_read_key(void)
 {
+    /* Check injected key queue first (for testing/automation) */
+    int injected = key_queue_pop();
+    if (injected != KEY_UNKNOWN) return injected;
+
     INPUT_RECORD ir;
     DWORD        nread;
     for (;;) {
@@ -394,8 +399,6 @@ static void con_write(const char *s)
     tty_write_u(g_tty_out, s, strlen(s));
 }
 
-static void con_writeln(const char *s) { con_write(s); con_write("\n"); }
-
 static void con_write_padded(const char *s, int width)
 {
     if (g_tty_out < 0 || width <= 0) return;
@@ -489,6 +492,10 @@ static void get_console_size(int *cols, int *rows, int *cur_row)
 
 static int con_read_key(void)
 {
+    /* Check injected key queue first (for testing/automation) */
+    int injected = key_queue_pop();
+    if (injected != KEY_UNKNOWN) return injected;
+
     if (g_tty_in < 0) return KEY_ESC;
     PlatformHandle h = (PlatformHandle)(intptr_t)(g_tty_in + 1);
     unsigned short vk = 0;
@@ -579,7 +586,7 @@ static int  test_backend_read_key(void);
 #endif /* NCD_TEST_BUILD */
 
 /* ======================================================================== */
-/* =================== Scripted key queue ================================= */
+/* =================== Scripted key queue (all builds) ==================== */
 /* ======================================================================== */
 
 #define KEY_QUEUE_MAX 256
@@ -635,7 +642,7 @@ void ui_set_io_backend(UiIoOps *ops)
 UiIoOps *ui_get_io_backend(void)
 {
     if (!g_ui_ops) {
-        /* Auto-load keys from environment */
+        /* Auto-load keys from environment (enables testing and automation) */
         load_keys_from_env();
 
 #ifndef NDEBUG
@@ -829,6 +836,7 @@ int ui_test_backend_find_row(const char *substring)
 }
 #endif /* NCD_TEST_BUILD -- test backend grid */
 
+/* Key queue functions - available in all builds for automation/testing */
 static int key_queue_pop(void)
 {
     if (g_key_queue_head == g_key_queue_tail) return KEY_UNKNOWN;
@@ -950,19 +958,7 @@ bool ui_injected_keys_empty(void)
     return g_key_queue_head == g_key_queue_tail;
 }
 
-/* ======================================================================== */
-/* =================== Key-queue-only read_key (for stdio backend) ======= */
-/* ======================================================================== */
-
-static int queue_only_read_key(void)
-{
-    if (g_key_queue_head != g_key_queue_tail)
-        return key_queue_pop();
-    return KEY_ESC;
-}
-
 #ifdef NCD_TEST_BUILD
-
 static int test_backend_read_key(void)
 {
     /* Check injected key queue first */
@@ -1179,6 +1175,14 @@ static void stdio_get_size(int *cols, int *rows, int *cur_row)
     *cols = g_stdio_cols;
     *rows = g_stdio_rows;
     *cur_row = g_stdio_cur_row;
+}
+
+static int queue_only_read_key(void)
+{
+    if (g_key_queue_head != g_key_queue_tail) {
+        return key_queue_pop();
+    }
+    return KEY_UNKNOWN;
 }
 
 static UiIoOps g_stdio_ops;
@@ -1888,8 +1892,6 @@ static void history_draw_row(HistoryUiState *s, int row, int idx, int list_start
 
 static void history_draw_box(HistoryUiState *s, int inner, int list_start, const char *title)
 {
-    int w = s->box_width;
-
     /* Title bar */
     OP_CURSOR(s->top_row, 0);
     OP_WRITE(BOX_TL);
@@ -2363,7 +2365,7 @@ typedef struct {
 static void draw_config_box(ConfigUiState *st, ConfigItem *items, int item_count,
                             NcdMetadata *meta)
 {
-    NcdConfig *cfg = &meta->cfg;
+    (void)meta; /* meta is passed for future use but currently not needed */
     int w = st->box_width;
     int inner = w - 2;
     int list_start = st->top_row + 3;
@@ -2730,7 +2732,6 @@ static void draw_exclusion_box(ExclusionUiState *st, NcdMetadata *meta)
     int visible = st->count < EXCLUSION_MAX_DISPLAY ? st->count : EXCLUSION_MAX_DISPLAY;
     if (visible < 3) visible = 3;  /* Minimum height */
     
-    int box_height = visible + 4;  /* Header + items + footer */
     int inner = st->box_width - 2;
     
     /* Title bar */

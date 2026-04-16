@@ -7,6 +7,45 @@
 ::
 ::   Visual Studio 2019 / 2022  (Community edition is fine)
 ::
+:: IMPORTANT: This script is meant to be run through the test harness.
+::   Run-Tests-Safe.bat unit
+::   Run-Tests-Safe.bat --windows-only
+::
+:: Running directly is NOT RECOMMENDED as Ctrl+C may leave environment
+:: variables in an inconsistent state.
+::
+
+:: ==========================================================================
+:: ENVIRONMENT CHECK - WARN IF NOT RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo WARNING: TEST HARNESS NOT DETECTED
+    echo ==========================================
+    echo.
+    echo This script is running WITHOUT the test harness protection.
+    echo.
+    echo This is NOT RECOMMENDED because:
+    echo   - If you press Ctrl+C, environment cleanup may not run
+    echo   - Your LOCALAPPDATA may be left pointing to temp directories
+    echo   - This can cause NCD to malfunction until you restart your shell
+    echo.
+    echo RECOMMENDED: Run through the test harness from project root:
+    echo   Run-Tests-Safe.bat unit              ^(unit tests only^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\build-and-run-tests.bat
+    echo.
+    echo If you continue and interrupt with Ctrl+C, run:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo Waiting 5 seconds before continuing...
+    echo ==========================================
+    echo.
+    ping -n 6 127.0.0.1 >nul 2>&1
+)
 
 setlocal enabledelayedexpansion
 

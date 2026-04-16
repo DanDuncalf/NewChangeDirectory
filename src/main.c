@@ -165,17 +165,6 @@ static void flush_all_dirty_dbs(void)
     g_dirty_db_count = 0;
 }
 
-/*
- * Check if any databases are dirty and need flushing.
- */
-static bool has_dirty_dbs(void)
-{
-    for (int i = 0; i < g_dirty_db_count; i++) {
-        if (g_dirty_dbs[i].dirty) return true;
-    }
-    return false;
-}
-
 /* ============================================================= state backend */
 
 /*
@@ -295,10 +284,18 @@ static void add_current_dir_to_history(void)
     }
     
     if (is_service_backend()) {
-        /* Service mode: send update via IPC */
-        struct { const char *path; char drive; } data = { cwd, drive };
+        /* Service mode: send update via IPC
+         * Data format: [path string (null-terminated)][drive byte]
+         * We send the actual string bytes, not a pointer! */
+        size_t path_len = strlen(cwd) + 1;  /* Include null terminator */
+        size_t data_len = path_len + 1;     /* path + drive byte */
+        char *data = (char *)malloc(data_len);
+        if (!data) return;
+        memcpy(data, cwd, path_len);
+        data[path_len] = drive;  /* Drive byte after null terminator */
         state_backend_submit_metadata_update(g_state_view, NCD_META_UPDATE_DIR_HISTORY_ADD, 
-                                             &data, sizeof(data));
+                                             data, data_len);
+        free(data);
     } else {
         /* Standalone mode: load, modify, save */
         NcdMetadata *meta = db_metadata_load();
@@ -324,28 +321,6 @@ static void add_current_dir_to_history(void)
  *   - Partial matching for similar searches
  */
 static NcdMetadata *g_metadata = NULL;
-
-/*
- * Helper: Save metadata using appropriate backend.
- * If service is connected, sends update via IPC.
- * If standalone, saves directly to disk.
- * update_type: NCD_META_UPDATE_* constant
- * data/data_size: update-specific data
- */
-static bool save_metadata_via_backend(int update_type, const void *data, size_t data_size)
-{
-    if (g_state_view && g_state_info.from_service) {
-        /* Service mode: send update via IPC */
-        int result = state_backend_submit_metadata_update(g_state_view, update_type, data, data_size);
-        return (result == 0);
-    } else {
-        /* Standalone mode: save directly (g_metadata must be set) */
-        if (g_metadata) {
-            return db_metadata_save(g_metadata);
-        }
-    }
-    return false;
-}
 
 /*
  * Callback for history deletion in UI (service mode)
@@ -388,21 +363,34 @@ static bool match_path_exclusion(const char *path, const NcdExclusionEntry *entr
 {
     if (!path || !entry || !entry->pattern[0]) return false;
     
-    const char *pattern = entry->pattern;
+    char norm_path[NCD_MAX_PATH];
+    char norm_pattern[NCD_MAX_PATH];
+    platform_strncpy_s(norm_path, sizeof(norm_path), path);
+    platform_strncpy_s(norm_pattern, sizeof(norm_pattern), entry->pattern);
+#if NCD_PLATFORM_WINDOWS
+    for (char *p = norm_path; *p; p++) {
+        if (*p == '/') *p = '\\';
+    }
+    for (char *p = norm_pattern; *p; p++) {
+        if (*p == '/') *p = '\\';
+    }
+#endif
+    
+    const char *pattern = norm_pattern;
     
     /* For root-only matches, check if pattern matches from the beginning */
     if (entry->match_from_root) {
         /* Must match from the beginning of the path */
         size_t pat_len = strlen(pattern);
-        size_t path_len = strlen(path);
+        size_t path_len = strlen(norm_path);
         
         if (path_len < pat_len) return false;
         
         /* Check if path starts with pattern (case-insensitive) */
 #if NCD_PLATFORM_WINDOWS
-        if (_strnicmp(path, pattern, pat_len) == 0) return true;
+        if (_strnicmp(norm_path, pattern, pat_len) == 0) return true;
 #else
-        if (strncasecmp(path, pattern, pat_len) == 0) return true;
+        if (strncasecmp(norm_path, pattern, pat_len) == 0) return true;
 #endif
         return false;
     }
@@ -410,7 +398,7 @@ static bool match_path_exclusion(const char *path, const NcdExclusionEntry *entr
     /* For non-root patterns, check if pattern appears anywhere in path */
     /* Simple wildcard matching for * and ? */
     const char *p = pattern;
-    const char *s = path;
+    const char *s = norm_path;
     const char *star = NULL;
     const char *ss = s;
     
@@ -503,27 +491,7 @@ static int filter_matches_by_exclusions(NcdMatch *matches, int match_count, cons
     return write_idx;  /* New count */
 }
 
-void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower)
-{
-    if (!dst || dst_size == 0) return;
-    dst[0] = '\0';
-    if (!src) return;
-
-    size_t len = strlen(src);
-    size_t a = 0;
-    while (a < len && isspace((unsigned char)src[a])) a++;
-    size_t b = len;
-    while (b > a && isspace((unsigned char)src[b - 1])) b--;
-
-    size_t j = 0;
-    for (size_t i = a; i < b && j + 1 < dst_size; i++) {
-        char c = src[i];
-        if (c == '\t' || c == '\r' || c == '\n') c = ' ';
-        if (to_lower) c = (char)tolower((unsigned char)c);
-        dst[j++] = c;
-    }
-    dst[j] = '\0';
-}
+/* heur_sanitize is now in result.c */
 
 bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size)
 {
@@ -555,19 +523,7 @@ void heur_note_choice(const char *search_raw, const char *target_path)
     save_metadata_if_dirty();
 }
 
-void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path)
-{
-    if (!matches || count <= 1 || !preferred_path || !preferred_path[0]) return;
-    for (int i = 0; i < count; i++) {
-        if (_stricmp(matches[i].full_path, preferred_path) == 0) {
-            if (i == 0) return;
-            NcdMatch tmp = matches[0];
-            matches[0] = matches[i];
-            matches[i] = tmp;
-            return;
-        }
-    }
-}
+/* heur_promote_match is now in result.c */
 
 void heur_print(void)
 {
@@ -667,6 +623,13 @@ extern void result_error(const char *fmt, ...);
 extern void result_cancel(void);
 extern void result_ok(const char *full_path, char drive_letter);
 
+/* Return true when test mode safety guards are enabled. */
+static bool ncd_test_mode_active(void)
+{
+    const char *test_mode = getenv("NCD_TEST_MODE");
+    return test_mode && test_mode[0] && strcmp(test_mode, "0") != 0;
+}
+
 /* ============================================= background rescan spawner  */
 
 /*
@@ -679,8 +642,7 @@ static void spawn_background_rescan(const char *db_path)
     (void)db_path;   /* per-drive files always live in %LOCALAPPDATA% */
     
     /* Skip background rescan in test mode to avoid scanning user drives */
-    const char *test_mode = getenv("NCD_TEST_MODE");
-    if (test_mode && test_mode[0]) {
+    if (ncd_test_mode_active()) {
         return;
     }
     
@@ -714,9 +676,14 @@ static bool check_service_version(bool *out_service_was_stopped, bool *out_servi
     }
     
     if (!ipc_service_exists()) {
-        return true;  /* No service running, OK to start new one */
+        /* Retry once — on Windows the named pipe may briefly not exist
+         * between server accept cycles. */
+        platform_sleep_ms(50);
+        if (!ipc_service_exists()) {
+            return true;  /* No service running, OK to start new one */
+        }
     }
-    
+
     /* Service exists - mark as running */
     if (out_service_running) {
         *out_service_running = true;
@@ -863,6 +830,13 @@ static bool handle_encoding_switch(uint8_t new_encoding, uint8_t current_encodin
         return false;
     }
     
+    /* Cannot change encoding while service is running - would require service restart */
+    if (is_service_backend()) {
+        ncd_println("Error: Cannot change encoding while service is running.");
+        ncd_println("Please stop the service first: ncd_service stop");
+        return false;
+    }
+    
     /* Update metadata config */
     NcdMetadata *meta = db_metadata_load();
     if (!meta) {
@@ -947,7 +921,12 @@ static void print_usage(void)
         "Navigation:\r\n"
         "  <search>      Partial directory name with optional wildcards (*, ?)\r\n"
         "  .             Browse from current directory (navigator mode)\r\n"
+#if NCD_PLATFORM_WINDOWS
         "  X: or X:\\     Browse from drive root (navigator mode)\r\n"
+#else
+        "  /             Browse from root filesystem (navigator mode)\r\n"
+        "  /mnt/X        Browse from Windows drive X: via /mnt (WSL only)\r\n"
+#endif
         "  @<group>      Jump to a group/bookmark (see Groups below)\r\n"
         "\r\n"
         "Search Options:\r\n"
@@ -972,15 +951,28 @@ static void print_usage(void)
         "  /gl           List all groups and their directories\r\n"
         "\r\n"
         "Scanning:\r\n"
+#if NCD_PLATFORM_WINDOWS
         "  /r            Rescan all drives\r\n"
+#else
+        "  /r            Rescan all mounted filesystems\r\n"
+        "  /r /          Rescan root filesystem only (excludes /mnt/*)\r\n"
+#endif
         "  /r .          Rescan current subdirectory only\r\n"
         "  /r.           Rescan current subdirectory only\r\n"
+#if NCD_PLATFORM_WINDOWS
         "  /r e,p        Rescan specific drives (space form)\r\n"
         "  /rBDE         Rescan specific drives (B:, D:, E:)\r\n"
         "  /r-b-d        Rescan all drives except B: and D:\r\n"
+#else
+        "  /r /mnt/c     Rescan specific mount (e.g., Windows C: drive)\r\n"
+#endif
         "\r\n"
         "Exclusions:\r\n"
+#if NCD_PLATFORM_WINDOWS
         "  /x <pat>      Add exclusion pattern (e.g., /x C:Windows)\r\n"
+#else
+        "  /x <pat>      Add exclusion pattern (e.g., /x /proc)\r\n"
+#endif
         "  /x- <pat>     Remove exclusion pattern\r\n"
         "  /xl           List exclusion patterns\r\n"
         "  -x/-x-/-xl    Dash aliases for /x options\r\n"
@@ -991,7 +983,9 @@ static void print_usage(void)
         "  /t <sec>      Scan timeout in seconds (default: 300, /t30 also accepted)\r\n"
         "  /retry <n>    Service busy retry count (0-255, 0=use config default)\r\n"
         "  /u8           Set text encoding to UTF-8 (default)\r\n"
+#if NCD_PLATFORM_WINDOWS
         "  /u16          Set text encoding to UTF-16LE (Windows/PowerShell)\r\n"
+#endif
         "  /v            Print version\r\n"
         "\r\n"
         "Agent Mode:\r\n"
@@ -1004,6 +998,7 @@ static void print_usage(void)
         ncd_print(suffix_buf);
     }
     
+#if NCD_PLATFORM_WINDOWS
     ncd_print(
         "\r\n"
         "Examples:\r\n"
@@ -1018,6 +1013,22 @@ static void print_usage(void)
         "  ncd /0                     Swap to previous directory\r\n"
         "  ncd /r                     Rescan all drives\r\n"
         "  ncd /rBDE                  Rescan drives B:, D:, E: only\r\n"
+#else
+    ncd_print(
+        "\r\n"
+        "Examples:\r\n"
+        "  ncd downloads              Search for \"downloads\"\r\n"
+        "  ncd scott/downloads        Search with path context\r\n"
+        "  ncd down*                  Wildcard: matches downloads, downgrade, etc.\r\n"
+        "  ncd *load*                 Wildcard: matches downloads, uploads, etc.\r\n"
+        "  ncd /z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
+        "  ncd .                      Browse current directory tree\r\n"
+        "  ncd /g @proj               Add current dir to @proj group\r\n"
+        "  ncd @proj                  Jump to @proj group\r\n"
+        "  ncd /0                     Swap to previous directory\r\n"
+        "  ncd /r                     Rescan all mounted filesystems\r\n"
+        "  ncd /r /                   Rescan root filesystem only\r\n"
+#endif
         "\r\n"
         "Tab Completion:\r\n"
         "  Bash:    source completions/ncd.bash\r\n"
@@ -1028,16 +1039,6 @@ static void print_usage(void)
 
 /* parse_drive_list_token, parse_args, parse_agent_args, glob_match are defined in cli.c */
 extern bool parse_args(int argc, char *argv[], NcdOptions *opts);
-
-/* Agent subcommand identifiers */
-#define AGENT_SUB_NONE     0
-#define AGENT_SUB_QUERY    1
-#define AGENT_SUB_LS       2
-#define AGENT_SUB_TREE     3
-#define AGENT_SUB_CHECK    4
-#define AGENT_SUB_COMPLETE 5
-#define AGENT_SUB_MKDIR    6
-#define AGENT_SUB_QUIT     7
 
 /* ================================================================ agent mode */
 
@@ -1246,9 +1247,23 @@ static int agent_mode_ls(const NcdOptions *opts)
     
     char path[NCD_MAX_PATH];
     platform_strncpy_s(path, sizeof(path), opts->search);
+    size_t len = strlen(path);
+#if NCD_PLATFORM_WINDOWS
+    /* Ensure drive letters have a trailing backslash (R: -> R:\) */
+    if (len == 2 && path[1] == ':') {
+        path[2] = '\\';
+        path[3] = '\0';
+        len = 3;
+    }
+    /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
+    if (len >= 2 && path[len - 1] == '.' && path[len - 2] == '\\') {
+        path[len - 1] = '\0';
+        len--;
+    }
+#endif
     
     /* Ensure trailing separator for consistent depth calculation */
-    size_t len = strlen(path);
+    len = strlen(path);
     if (len > 0 && path[len-1] != '\\' && path[len-1] != '/') {
         platform_strncat_s(path, sizeof(path), "/");
     }
@@ -1662,6 +1677,11 @@ typedef struct { int dir; int path_len_before_name; } PathMapStackItem;
 
 static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter)
 {
+#if !NCD_PLATFORM_WINDOWS
+    (void)drive_letter; /* Unused on Linux - mount point comes from drv->label */
+#else
+    (void)drive_letter; /* Mark as used to avoid warning */
+#endif
     /* Stack needs to handle worst case: all dirs are root-level and have children.
      * Allocate 2x dir_count for safety (root dirs + their children on stack).
      */
@@ -1676,7 +1696,15 @@ static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter
     
     /* Initialize with drive root - ensure it ends with separator */
 #if NCD_PLATFORM_WINDOWS
-    root_len = snprintf(path, sizeof(path), "%c:%c", drive_letter, NCD_PATH_SEP[0]);
+    if (drv->label[0] && strstr(drv->label, ":\\")) {
+        root_len = snprintf(path, sizeof(path), "%s", drv->label);
+        if (root_len > 0 && path[root_len-1] != NCD_PATH_SEP[0]) {
+            path[root_len] = NCD_PATH_SEP[0];
+            path[++root_len] = '\0';
+        }
+    } else {
+        root_len = snprintf(path, sizeof(path), "%c:%c", drive_letter, NCD_PATH_SEP[0]);
+    }
 #else
     root_len = snprintf(path, sizeof(path), "%s", drv->label);
     if (root_len > 0 && path[root_len-1] != NCD_PATH_SEP[0]) {
@@ -1696,7 +1724,7 @@ static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter
             int name_len = (int)strlen(name);
             
             /* Build path: root already ends with separator, just add name */
-            if (root_len + name_len >= sizeof(path))
+            if (root_len + name_len >= (int)sizeof(path))
                 continue;
             
             memcpy(path + root_len, name, name_len + 1);
@@ -1729,7 +1757,7 @@ static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter
         
         /* Build path: parent + separator + name */
         int path_len = cur.path_len_before_name;
-        if (path_len + 1 + name_len >= sizeof(path))
+        if (path_len + 1 + name_len >= (int)sizeof(path))
             continue;
         
         path[path_len] = NCD_PATH_SEP[0];
@@ -1774,6 +1802,19 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     for (char *p = search_path; *p; p++) {
         if (*p == '/') *p = '\\';
     }
+#if NCD_PLATFORM_WINDOWS
+    /* Ensure drive letters have a trailing backslash (R: -> R:\) */
+    size_t sp_len = strlen(search_path);
+    if (sp_len == 2 && search_path[1] == ':') {
+        search_path[2] = '\\';
+        search_path[3] = '\0';
+        sp_len = 3;
+    }
+    /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
+    if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == '\\') {
+        search_path[sp_len - 1] = '\0';
+    }
+#endif
     
     /* Build path-to-index map for O(1) lookup - much faster than scanning */
     PathMap path_map;
@@ -1794,7 +1835,11 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         DriveData *drive = &db->drives[d];
         char drive_root[NCD_MAX_PATH];
 #if NCD_PLATFORM_WINDOWS
-        snprintf(drive_root, sizeof(drive_root), "%c:%c", drive->letter, NCD_PATH_SEP[0]);
+        if (drive->label[0] && strstr(drive->label, ":\\")) {
+            snprintf(drive_root, sizeof(drive_root), "%s", drive->label);
+        } else {
+            snprintf(drive_root, sizeof(drive_root), "%c:%c", drive->letter, NCD_PATH_SEP[0]);
+        }
 #else
         snprintf(drive_root, sizeof(drive_root), "%s", drive->label);
 #endif
@@ -1802,14 +1847,18 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         if (_strnicmp(search_path, drive_root, strlen(drive_root)) == 0) {
             found_drive_idx = d;
             found_dir_idx = path_map_get(&path_map, search_path);
-            if (found_dir_idx >= 0)
+            /* If search path is exactly the drive root, use sentinel */
+            if (found_dir_idx < 0 && _stricmp(search_path, drive_root) == 0) {
+                found_dir_idx = -2;
+            }
+            if (found_dir_idx >= 0 || found_dir_idx == -2)
                 break;
         }
     }
     
     path_map_free(&path_map);
     
-    if (found_dir_idx < 0) {
+    if (found_dir_idx < 0 && found_dir_idx != -2) {
         if (opts->agent_json) {
             agent_print("{\"error\":\"path not found in database\"}\r\n");
         } else {
@@ -1822,6 +1871,25 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     
     /* Build children index once for O(1) child access */
     DirChildren *children_idx = build_children_index(&db->drives[found_drive_idx]);
+    
+    /* For drive root searches, build a virtual root children list */
+    DriveData *drive = &db->drives[found_drive_idx];
+    int *root_children = NULL;
+    int root_child_count = 0;
+    if (found_dir_idx == -2) {
+        for (int i = 0; i < drive->dir_count; i++) {
+            if (drive->dirs[i].parent == -1)
+                root_child_count++;
+        }
+        if (root_child_count > 0) {
+            root_children = (int *)malloc(root_child_count * sizeof(int));
+            int j = 0;
+            for (int i = 0; i < drive->dir_count; i++) {
+                if (drive->dirs[i].parent == -1)
+                    root_children[j++] = i;
+            }
+        }
+    }
     
     /* Collect entries */
     typedef struct {
@@ -1845,11 +1913,15 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     int qhead = 0, qtail = 0;
     queue[qtail++] = (QueueItem){found_dir_idx, 0, -1};
     
-    DriveData *drive = &db->drives[found_drive_idx];
-    
     while (qhead < qtail) {
         QueueItem cur = queue[qhead++];
-        DirChildren *dc = &children_idx[cur.dir];
+        DirChildren *dc;
+        if (cur.dir == -2) {
+            DirChildren virtual_root = { root_children, root_child_count };
+            dc = &virtual_root;
+        } else {
+            dc = &children_idx[cur.dir];
+        }
         
         /* Iterate children directly using index - O(child_count) instead of O(n) */
         for (int i = 0; i < dc->child_count; i++) {
@@ -1879,7 +1951,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
                 }
                 
                 int name_len = (int)strlen(name);
-                if (len + name_len < sizeof(e->full_path) - 1) {
+                if (len + name_len < (int)sizeof(e->full_path) - 1) {
                     memcpy(e->full_path + len, name, name_len + 1);
                 }
             } else {
@@ -1895,7 +1967,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
                 }
                 
                 int name_len = (int)strlen(name);
-                if (len + name_len < sizeof(e->full_path) - 1) {
+                if (len + name_len < (int)sizeof(e->full_path) - 1) {
                     memcpy(e->full_path + len, name, name_len + 1);
                 }
             }
@@ -1910,6 +1982,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     
     free(queue);
     free_children_index(children_idx, drive->dir_count);
+    free(root_children);
     
     if (opts->agent_json) {
         agent_print("{\"v\":1,\"tree\":");
@@ -1999,6 +2072,19 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             platform_strncpy_s(search_path, sizeof(search_path), opts->search);
             for (char *p = search_path; *p; p++)
                 if (*p == '/') *p = '\\';
+#if NCD_PLATFORM_WINDOWS
+            /* Ensure drive letters have a trailing backslash (R: -> R:\) */
+            size_t sp_len = strlen(search_path);
+            if (sp_len == 2 && search_path[1] == ':') {
+                search_path[2] = '\\';
+                search_path[3] = '\0';
+                sp_len = 3;
+            }
+            /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
+            if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == '\\') {
+                search_path[sp_len - 1] = '\0';
+            }
+#endif
             
             /* Build path map once for O(1) lookup instead of O(n²) scan */
             PathMap path_map;
@@ -2071,9 +2157,15 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
     
     
     if (opts->agent_check_service_status) {
-        /* Check service status */
+        /* Check service status with retry — on Windows the named pipe may
+         * briefly not exist between server accept cycles. */
         bool service_running = ipc_service_exists();
-        
+        if (!service_running) {
+            /* Retry once after a short delay to ride out the accept gap */
+            platform_sleep_ms(50);
+            service_running = ipc_service_exists();
+        }
+
         if (!service_running) {
             /* Service not running */
             if (opts->agent_json) {
@@ -2084,7 +2176,7 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             return 0;
         }
         
-        /* Service is running - check if it has loaded databases */
+        /* Service is running - get detailed status */
         NcdIpcClient *client = ipc_client_connect();
         if (!client) {
             /* Could not connect despite service existing */
@@ -2096,12 +2188,12 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             return 0;
         }
         
-        NcdIpcStateInfo info;
-        NcdIpcResult result = ipc_client_get_state_info(client, &info);
+        NcdIpcDetailedStatus info;
+        NcdIpcResult result = ipc_client_get_detailed_status(client, &info);
         ipc_client_disconnect(client);
         
-        if (result != NCD_IPC_OK || info.db_generation == 0) {
-            /* Service running but database not loaded yet */
+        if (result != NCD_IPC_OK) {
+            /* Could not get detailed status */
             if (opts->agent_json) {
                 agent_print("{\"v\":1,\"status\":\"starting\",\"message\":\"Service running but not loaded\"}\r\n");
             } else {
@@ -2110,13 +2202,78 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             return 0;
         }
         
-        /* Service ready - running and has loaded databases */
+        const char *state_str = "UNKNOWN";
+        switch (info.runtime_state) {
+            case 0: state_str = "STOPPED"; break;
+            case 1: state_str = "STARTING"; break;
+            case 2: state_str = "LOADING"; break;
+            case 3: state_str = "READY"; break;
+            case 4: state_str = "SCANNING"; break;
+        }
+        
         if (opts->agent_json) {
-            agent_printf("{\"v\":1,\"status\":\"ready\",\"message\":\"Service ready\",\"meta_generation\":%llu,\"db_generation\":%llu}\r\n",
-                (unsigned long long)info.meta_generation,
-                (unsigned long long)info.db_generation);
+            agent_printf("{\"v\":1,\"status\":\"%s\",\"state\":%u,\"log_level\":%d,\"pending_count\":%u,\"dirty_flags\":%u,",
+                         state_str, info.runtime_state, info.log_level,
+                         info.pending_count, info.dirty_flags);
+            agent_printf("\"version\":\"%s\",\"build\":\"%s\",",
+                         info.app_version, info.build_stamp);
+            agent_printf("\"meta_generation\":%llu,\"db_generation\":%llu,",
+                         (unsigned long long)info.meta_generation,
+                         (unsigned long long)info.db_generation);
+            agent_printf("\"meta_path\":\"%s\",\"log_path\":\"%s\",",
+                         info.meta_path, info.log_path);
+            agent_printf("\"drives\":[");
+            for (uint32_t i = 0; i < info.drive_count; i++) {
+                if (i > 0) agent_print(",");
+                agent_printf("{\"letter\":\"%c\",\"dir_count\":%u,\"db_path\":\"%s\"}",
+                             info.drives[i].letter,
+                             info.drives[i].dir_count,
+                             info.drives[i].db_path);
+            }
+            agent_print("]}\r\n");
         } else {
-            agent_print("READY\r\n");
+            agent_printf("State: %s\r\n", state_str);
+            if (info.status_message[0]) {
+                agent_printf("Message: %s\r\n", info.status_message);
+            }
+            if (info.app_version[0]) {
+                agent_printf("Version: %s\r\n", info.app_version);
+            }
+            if (info.build_stamp[0]) {
+                agent_printf("Build: %s\r\n", info.build_stamp);
+            }
+            agent_printf("Log level: %d\r\n", info.log_level);
+            if (info.pending_count > 0) {
+                agent_printf("Pending requests: %u\r\n", info.pending_count);
+            }
+            if (info.dirty_flags != 0) {
+                agent_printf("Dirty flags: 0x%08X\r\n", info.dirty_flags);
+            }
+            agent_printf("Meta generation: %llu\r\n", (unsigned long long)info.meta_generation);
+            agent_printf("DB generation: %llu\r\n", (unsigned long long)info.db_generation);
+            if (info.meta_path[0]) {
+                agent_printf("Metadata file: %s\r\n", info.meta_path);
+            }
+            if (info.log_path[0]) {
+                agent_printf("Log file: %s\r\n", info.log_path);
+            }
+            if (info.drive_count > 0) {
+                agent_printf("Cached drives (%u):\r\n", info.drive_count);
+                for (uint32_t i = 0; i < info.drive_count; i++) {
+                    if (info.drives[i].db_path[0]) {
+                        agent_printf("  %c: (%u dirs) -> %s\r\n",
+                                     info.drives[i].letter,
+                                     info.drives[i].dir_count,
+                                     info.drives[i].db_path);
+                    } else {
+                        agent_printf("  %c: (%u dirs)\r\n",
+                                     info.drives[i].letter,
+                                     info.drives[i].dir_count);
+                    }
+                }
+            } else {
+                agent_print("Cached drives: none\r\n");
+            }
         }
         return 0;
     }
@@ -2234,6 +2391,19 @@ static bool add_path_to_database(const char *path)
     return true;
 }
 
+/* Helper: create all parent directories for a path */
+static bool mkdir_create_parents(const char *path)
+{
+    char parent[NCD_MAX_PATH];
+    if (!path_parent(path, parent, sizeof(parent)))
+        return false;
+    if (platform_dir_exists(parent))
+        return true;
+    if (!mkdir_create_parents(parent))
+        return false;
+    return platform_create_dir(parent);
+}
+
 /* Agent mode: mkdir - Create a directory and add to database */
 static int agent_mode_mkdir(const NcdOptions *opts)
 {
@@ -2261,37 +2431,42 @@ static int agent_mode_mkdir(const NcdOptions *opts)
             result = AGENT_MKDIR_ERROR_PATH;
             platform_strncpy_s(result_msg, sizeof(result_msg), "Invalid path");
         } else if (!platform_dir_exists(parent_path)) {
-            result = AGENT_MKDIR_ERROR_PARENT;
-            platform_strncpy_s(result_msg, sizeof(result_msg), "Parent directory does not exist");
-        } else {
-            /* Try to create the directory */
-            if (platform_create_dir(path)) {
-                result = AGENT_MKDIR_OK;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created successfully");
+            if (mkdir_create_parents(parent_path)) {
+                /* Parents created, proceed to create target */
             } else {
-                /* Determine specific error based on errno or GetLastError */
-#if NCD_PLATFORM_WINDOWS
-                DWORD err = GetLastError();
-                if (err == ERROR_ACCESS_DENIED) {
-                    result = AGENT_MKDIR_ERROR_PERMS;
-                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-                } else {
-                    result = AGENT_MKDIR_ERROR_OTHER;
-                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-                }
-#else
-                if (errno == EACCES || errno == EPERM) {
-                    result = AGENT_MKDIR_ERROR_PERMS;
-                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-                } else {
-                    result = AGENT_MKDIR_ERROR_OTHER;
-                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-                }
-#endif
+                result = AGENT_MKDIR_ERROR_PARENT;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Parent directory does not exist");
+                goto mkdir_done;
             }
+        }
+        /* Try to create the directory */
+        if (platform_create_dir(path)) {
+            result = AGENT_MKDIR_OK;
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created successfully");
+        } else {
+            /* Determine specific error based on errno or GetLastError */
+#if NCD_PLATFORM_WINDOWS
+            DWORD err = GetLastError();
+            if (err == ERROR_ACCESS_DENIED) {
+                result = AGENT_MKDIR_ERROR_PERMS;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+            } else {
+                result = AGENT_MKDIR_ERROR_OTHER;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+            }
+#else
+            if (errno == EACCES || errno == EPERM) {
+                result = AGENT_MKDIR_ERROR_PERMS;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+            } else {
+                result = AGENT_MKDIR_ERROR_OTHER;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
+            }
+#endif
         }
     }
     
+mkdir_done:
     /* If successful, add to database */
     if (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) {
         add_path_to_database(path);
@@ -2502,7 +2677,7 @@ static bool parse_flat_format(const char *content, MkdirsNode *root)
         
         /* Read one line */
         int line_len = 0;
-        while (*p && *p != '\n' && line_len < sizeof(line) - 1) {
+        while (*p && *p != '\n' && line_len < (int)sizeof(line) - 1) {
             line[line_len++] = *p++;
         }
         line[line_len] = '\0';
@@ -2691,7 +2866,6 @@ static char* read_file_contents(const char *path)
 /* Agent mode: mkdirs - Create directory tree from JSON or flat file */
 static int agent_mode_mkdirs(const NcdOptions *opts)
 {
-    const char *base_path = NULL;
     const char *content = NULL;
     char *file_content = NULL;
     bool is_json = false;
@@ -2774,7 +2948,7 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     
     if (opts->agent_json) {
         /* JSON output - mkdirs_create_recursive outputs as it goes */
-        int created = mkdirs_create_recursive("", &root, results, &result_count, 256, true, true);
+        (void)mkdirs_create_recursive("", &root, results, &result_count, 256, true, true);
         if (result_count > 0) {
             agent_print("]}\r\n");
         } else {
@@ -2785,10 +2959,10 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     } else {
         /* Plain text output */
         agent_print("Creating directory tree...\r\n\r\n");
-        int created = mkdirs_create_recursive("", &root, results, &result_count, 256, false, true);
+        (void)mkdirs_create_recursive("", &root, results, &result_count, 256, false, true);
         mkdirs_free_tree(&root);
         
-        agent_printf("\r\nCreated %d directories\r\n", created);
+        agent_printf("\r\nCreated %d directories\r\n", result_count);
         return 0;
     }
 }
@@ -2903,6 +3077,12 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
                                 const NcdExclusionList *exclusions)
 {
+    /* In test mode, only subdirectory rescans are permitted. */
+    if (ncd_test_mode_active() && !opts->scan_subdirectory[0]) {
+        ncd_printf("NCD: Test mode active, skipping non-subdirectory rescan.\r\n");
+        return 0;
+    }
+
     /* Handle subdirectory rescan: /r. */
     if (opts->scan_subdirectory[0]) {
         char drive = platform_get_drive_letter(opts->scan_subdirectory);
@@ -3303,10 +3483,25 @@ int main(int argc, char *argv[])
                 }
             }
             
-            /* Send update via IPC */
-            const char *args[2] = { opts.group_name, cwd };
+            /* Send update via IPC
+             * Data format: [name_len (4 bytes)][path_len (4 bytes)][name string][path string]
+             * We send the actual string bytes, not pointers! */
+            size_t name_len = strlen(opts.group_name) + 1;  /* Include null terminator */
+            size_t path_len = strlen(cwd) + 1;
+            size_t data_len = 8 + name_len + path_len;  /* 2 x uint32_t + both strings */
+            char *data = (char *)malloc(data_len);
+            if (!data) {
+                ncd_println("Failed to set group (out of memory?).");
+                con_close();
+                return 1;
+            }
+            *(uint32_t *)data = (uint32_t)name_len;
+            *(uint32_t *)(data + 4) = (uint32_t)path_len;
+            memcpy(data + 8, opts.group_name, name_len);
+            memcpy(data + 8 + name_len, cwd, path_len);
             int result = state_backend_submit_metadata_update(g_state_view,
-                NCD_META_UPDATE_GROUP_ADD, args, sizeof(args));
+                NCD_META_UPDATE_GROUP_ADD, data, data_len);
+            free(data);
             
             if (result == 0) {
                 if (already_in_group) {
@@ -3723,16 +3918,21 @@ int main(int argc, char *argv[])
                 /* Load database and search */
                 NcdDatabase *db = NULL;
                 char target_db[NCD_MAX_PATH] = {0};
-                char cwd[MAX_PATH] = {0};
-                platform_get_current_dir(cwd, sizeof(cwd));
-                char target_drive = (char)toupper((unsigned char)cwd[0]);
-                
-                if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                    target_drive = (char)toupper((unsigned char)opts.search[0]);
-                }
-                
-                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                if (opts.db_override[0]) {
+                    platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
                     db = db_load_auto(target_db);
+                } else {
+                    char cwd[MAX_PATH] = {0};
+                    platform_get_current_dir(cwd, sizeof(cwd));
+                    char target_drive = platform_get_drive_letter(cwd);
+                    
+                    if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                        target_drive = (char)toupper((unsigned char)opts.search[0]);
+                    }
+                    
+                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                        db = db_load_auto(target_db);
+                    }
                 }
                 
                 int count = agent_mode_query(db, &opts);
@@ -3746,24 +3946,36 @@ int main(int argc, char *argv[])
                 break;
             }
             case AGENT_SUB_TREE: {
-                /* Load database for tree */
+                /* Prefer service-backed state when available for consistency */
                 NcdDatabase *db = NULL;
-                char target_db[NCD_MAX_PATH] = {0};
-                char cwd[MAX_PATH] = {0};
-                platform_get_current_dir(cwd, sizeof(cwd));
-                char target_drive = (char)toupper((unsigned char)cwd[0]);
-                
-                if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                    target_drive = (char)toupper((unsigned char)opts.search[0]);
-                }
-                
-                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-                    db = db_load_auto(target_db);
+                bool owns_db = false;
+                const NcdDatabase *state_db = get_state_database();
+                if (state_db && is_service_backend()) {
+                    db = (NcdDatabase *)state_db;
+                } else {
+                    char target_db[NCD_MAX_PATH] = {0};
+                    if (opts.db_override[0]) {
+                        platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
+                        db = db_load_auto(target_db);
+                    } else {
+                        char cwd[MAX_PATH] = {0};
+                        platform_get_current_dir(cwd, sizeof(cwd));
+                        char target_drive = platform_get_drive_letter(cwd);
+                        
+                        if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                            target_drive = (char)toupper((unsigned char)opts.search[0]);
+                        }
+                        
+                        if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                            db = db_load_auto(target_db);
+                        }
+                    }
+                    owns_db = true;
                 }
                 
                 int count = agent_mode_tree(db, &opts);
                 result = (count > 0) ? 0 : 1;
-                if (db) db_free(db);
+                if (db && owns_db) db_free(db);
                 break;
             }
             case AGENT_SUB_CHECK: {
@@ -3771,16 +3983,21 @@ int main(int argc, char *argv[])
                 NcdDatabase *db = NULL;
                 if (opts.agent_check_db_age || opts.agent_check_stats || opts.has_search) {
                     char target_db[NCD_MAX_PATH] = {0};
-                    char cwd[MAX_PATH] = {0};
-                    platform_get_current_dir(cwd, sizeof(cwd));
-                    char target_drive = (char)toupper((unsigned char)cwd[0]);
-                    
-                    if (opts.has_search && isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                        target_drive = (char)toupper((unsigned char)opts.search[0]);
-                    }
-                    
-                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                    if (opts.db_override[0]) {
+                        platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
                         db = db_load_auto(target_db);
+                    } else {
+                        char cwd[MAX_PATH] = {0};
+                        platform_get_current_dir(cwd, sizeof(cwd));
+                        char target_drive = platform_get_drive_letter(cwd);
+                        
+                        if (opts.has_search && isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
+                            target_drive = (char)toupper((unsigned char)opts.search[0]);
+                        }
+                        
+                        if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                            db = db_load_auto(target_db);
+                        }
                     }
                 }
                 
@@ -3791,13 +4008,18 @@ int main(int argc, char *argv[])
             case AGENT_SUB_COMPLETE: {
                 /* Complete doesn't need database, but can use it if available */
                 NcdDatabase *db = NULL;
-                char cwd[MAX_PATH] = {0};
-                platform_get_current_dir(cwd, sizeof(cwd));
-                char target_drive = (char)toupper((unsigned char)cwd[0]);
                 char target_db[NCD_MAX_PATH] = {0};
-                
-                if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                if (opts.db_override[0]) {
+                    platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
                     db = db_load_auto(target_db);
+                } else {
+                    char cwd[MAX_PATH] = {0};
+                    platform_get_current_dir(cwd, sizeof(cwd));
+                    char target_drive = platform_get_drive_letter(cwd);
+                    
+                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+                        db = db_load_auto(target_db);
+                    }
                 }
                 
                 result = agent_mode_complete(db, &opts);
@@ -3932,7 +4154,12 @@ int main(int argc, char *argv[])
         if (opts.scan_subdirectory[0]) {
             char drive = platform_get_drive_letter(opts.scan_subdirectory);
             char drv_path[NCD_MAX_PATH];
-            if (db_drive_path(drive, drv_path, sizeof(drv_path))) {
+            if (opts.db_override[0]) {
+                platform_strncpy_s(drv_path, sizeof(drv_path), opts.db_override);
+            } else if (!db_drive_path(drive, drv_path, sizeof(drv_path))) {
+                drv_path[0] = '\0';
+            }
+            if (drv_path[0]) {
                 int vstatus = db_check_file_version(drv_path);
                 if (vstatus == DB_VERSION_MISMATCH || vstatus == DB_VERSION_SKIPPED) {
                     ncd_printf("NCD: Database for %c: needs a full rescan "
@@ -3964,7 +4191,10 @@ int main(int argc, char *argv[])
         /* Save each drive to its own per-drive database file. */
         for (int i = 0; i < db->drive_count; i++) {
             char drv_path[NCD_MAX_PATH];
-            if (!db_drive_path(db->drives[i].letter, drv_path, sizeof(drv_path))) {
+            if (opts.db_override[0]) {
+                /* Use custom database path from -d flag */
+                platform_strncpy_s(drv_path, sizeof(drv_path), opts.db_override);
+            } else if (!db_drive_path(db->drives[i].letter, drv_path, sizeof(drv_path))) {
                 ncd_printf("NCD: Warning -- could not build path for drive %c:\r\n",
                            db->drives[i].letter);
                 continue;
@@ -4041,7 +4271,7 @@ int main(int argc, char *argv[])
 
     /* -------------------------------------- tag lookup (@tagname)        */
     if (opts.search[0] == '@') {
-        const char *group_name = opts.search;  /* Includes the @ prefix */
+        const char *group_name = opts.search + 1;  /* Skip the @ prefix */
         
         NcdMetadata *meta = db_metadata_load();
         if (!meta) {
@@ -4127,7 +4357,10 @@ int main(int argc, char *argv[])
 
     /* ----------------------- resolve target drive's per-drive db path    */
     char target_db[NCD_MAX_PATH] = {0};
-    if (!db_drive_path(target_drive, target_db, sizeof(target_db))) {
+    if (opts.db_override[0]) {
+        /* Use custom database path from -d flag */
+        platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
+    } else if (!db_drive_path(target_drive, target_db, sizeof(target_db))) {
         result_error("Cannot determine database path for drive %c:",
                      target_drive);
         con_close();
@@ -4153,56 +4386,77 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (opts.force_rescan && opts.scan_drive_count > 0) {
-            ncd_printf("NCD: Forced rescan -- scanning requested drives...\r\n");
-        } else if (opts.force_rescan) {
-            ncd_printf("NCD: Forced rescan -- scanning all drives...\r\n");
-        } else {
-            ncd_printf("NCD: %s -- scanning drive %c:...\r\n",
-                       db_exists ? "Forced rescan" : "No database found",
+        bool allow_implicit_rebuild = true;
+        if (ncd_test_mode_active() && !opts.force_rescan && !opts.scan_subdirectory[0]) {
+            /* Never trigger an implicit full-drive scan in test mode. */
+            allow_implicit_rebuild = false;
+            ncd_printf("NCD: Test mode active -- skipping implicit rebuild for drive %c:.\r\n",
                        target_drive);
+            ncd_println("     Run 'ncd /r.' from your isolated test directory first.");
         }
 
-        NcdDatabase *scan_db = db_create();
-        scan_db->default_show_hidden = opts.show_hidden;
-        scan_db->default_show_system = opts.show_system;
-        scan_db->last_scan = time(NULL);
-
-        /* For subdirectory rescan, load existing database so we merge
-         * rather than replace the drive data. */
-        if (opts.scan_subdirectory[0] && db_exists) {
-            NcdDatabase *existing = db_load_auto(target_db);
-            if (existing) {
-                db_free(scan_db);
-                scan_db = existing;
+        if (allow_implicit_rebuild) {
+            if (opts.force_rescan && opts.scan_drive_count > 0) {
+                ncd_printf("NCD: Forced rescan -- scanning requested drives...\r\n");
+            } else if (opts.force_rescan) {
+                ncd_printf("NCD: Forced rescan -- scanning all drives...\r\n");
+            } else {
+                ncd_printf("NCD: %s -- scanning drive %c:...\r\n",
+                           db_exists ? "Forced rescan" : "No database found",
+                           target_drive);
             }
-        }
 
-        int n;
-        if (opts.force_rescan) {
-            n = run_requested_rescan(scan_db, &opts, NULL);
-        } else {
-            /* Scan ONLY the target drive, not all drives */
-            char mount_path[MAX_PATH];
-            platform_build_mount_path(target_drive, mount_path, sizeof(mount_path));
-            const char *mounts[1] = { mount_path };
-            n = scan_mounts(scan_db, mounts, 1, opts.show_hidden, opts.show_system, opts.timeout_seconds, NULL);
-        }
-        ncd_printf("  Scan complete: %d directories found.\r\n", n);
+            NcdDatabase *scan_db = db_create();
+            scan_db->default_show_hidden = opts.show_hidden;
+            scan_db->default_show_system = opts.show_system;
+            scan_db->last_scan = time(NULL);
 
-        for (int i = 0; i < scan_db->drive_count; i++) {
-            char drv_path[NCD_MAX_PATH];
-            if (!db_drive_path(scan_db->drives[i].letter, drv_path,
-                               sizeof(drv_path)))
-                continue;
-            db_save_binary_single(scan_db, i, drv_path);
-        }
-        db_free(scan_db);
+            /* For subdirectory rescan, load existing database so we merge
+             * rather than replace the drive data. */
+            if (opts.scan_subdirectory[0] && db_exists) {
+                NcdDatabase *existing = db_load_auto(target_db);
+                if (existing) {
+                    db_free(scan_db);
+                    scan_db = existing;
+                }
+            }
 
-        /* If database didn't exist, return special exit code 3 to indicate rebuild */
-        if (!db_exists) {
-            con_close();
-            return 3;
+            int n;
+            if (opts.force_rescan) {
+                n = run_requested_rescan(scan_db, &opts, NULL);
+            } else {
+                /* Scan ONLY the target drive, not all drives */
+                char mount_path[MAX_PATH];
+                if (!platform_build_mount_path(target_drive, mount_path, sizeof(mount_path))) {
+                    platform_get_current_dir(mount_path, sizeof(mount_path));
+                }
+                /* For drive 0 (native Linux), ensure we use CWD if platform_build_mount_path
+                 * returns a generic path like "/mnt/" that doesn't match the actual location */
+                if (target_drive == 0 && strncmp(mount_path, "/mnt/", 5) == 0) {
+                    platform_get_current_dir(mount_path, sizeof(mount_path));
+                }
+                const char *mounts[1] = { mount_path };
+                n = scan_mounts(scan_db, mounts, 1, opts.show_hidden, opts.show_system, opts.timeout_seconds, NULL);
+            }
+            ncd_printf("  Scan complete: %d directories found.\r\n", n);
+
+            for (int i = 0; i < scan_db->drive_count; i++) {
+                char drv_path[NCD_MAX_PATH];
+                if (opts.db_override[0]) {
+                    /* Use custom database path from -d flag */
+                    platform_strncpy_s(drv_path, sizeof(drv_path), opts.db_override);
+                } else if (!db_drive_path(scan_db->drives[i].letter, drv_path,
+                                   sizeof(drv_path)))
+                    continue;
+                db_save_binary_single(scan_db, i, drv_path);
+            }
+            db_free(scan_db);
+
+            /* If database didn't exist, return special exit code 3 to indicate rebuild */
+            if (!db_exists) {
+                con_close();
+                return 3;
+            }
         }
     }
 
@@ -4345,6 +4599,10 @@ int main(int argc, char *argv[])
      * 2. Target drive's database file is corrupt (even if other drives loaded) */
     bool target_db_corrupt = (target_version_status == DB_VERSION_ERROR);
     if ((!primary_db || target_db_corrupt) && target_version_status != DB_VERSION_SKIPPED) {
+        if (ncd_test_mode_active() && !opts.force_rescan && !opts.scan_subdirectory[0]) {
+            ncd_printf("NCD: Test mode active -- refusing automatic rebuild scan for drive %c:.\r\n",
+                       target_drive);
+        } else {
         /* Corrupt target DB (not just wrong version) -- rebuild that file */
         ncd_printf("NCD: Database for %c: is corrupt -- rebuilding...\r\n",
                    target_drive);
@@ -4354,7 +4612,13 @@ int main(int argc, char *argv[])
         scan_db->last_scan = time(NULL);
         /* Scan ONLY the target drive, not all drives */
         char mount_path[MAX_PATH];
-        platform_build_mount_path(target_drive, mount_path, sizeof(mount_path));
+        if (!platform_build_mount_path(target_drive, mount_path, sizeof(mount_path))) {
+            platform_get_current_dir(mount_path, sizeof(mount_path));
+        }
+        /* For drive 0 (native Linux), ensure we use CWD */
+        if (target_drive == 0 && strncmp(mount_path, "/mnt/", 5) == 0) {
+            platform_get_current_dir(mount_path, sizeof(mount_path));
+        }
         const char *mounts[1] = { mount_path };
         int n = scan_mounts(scan_db, mounts, 1, opts.show_hidden, opts.show_system, opts.timeout_seconds, NULL);
         ncd_printf("  Rebuild complete: %d directories found.\r\n", n);
@@ -4373,6 +4637,16 @@ int main(int argc, char *argv[])
             con_close();
             return 3;
         }
+        }
+    }
+
+    /* Override with custom database if /d was specified (standalone mode only).
+     * Do NOT free the state-backend database here -- it is owned by the backend
+     * and will be cleaned up on exit. Just shadow the local variable. */
+    if (opts.db_override[0] && !is_service_backend()) {
+        primary_db = db_load_auto(target_db);
+    } else if (!primary_db && !database_was_rebuilt && target_version_status != DB_VERSION_SKIPPED) {
+        primary_db = db_load_auto(target_db);
     }
 
     /* Load metadata to get exclusion list for filtering search results */
@@ -4386,9 +4660,10 @@ int main(int argc, char *argv[])
     /* 
      * Filter excluded directories from the loaded database.
      * Note: When using the service, filtering is already done by the service
-     * during database loading, so we skip it here.
+     * during database loading, so we skip it here. Local backend still needs
+     * filtering because it loads the raw database from disk.
      */
-    if (primary_db && search_meta && search_meta->exclusions.count > 0 && !using_service_db) {
+    if (primary_db && search_meta && search_meta->exclusions.count > 0 && !is_service_backend()) {
         int removed = db_filter_excluded(primary_db, search_meta);
         if (removed > 0) {
             NCD_DEBUG_LOG("Filtered %d excluded directories from database\n", removed);
@@ -4415,8 +4690,16 @@ int main(int argc, char *argv[])
     }
 
     /* -------------------- fallback: search all other drive databases     */
-    if (!matches || match_count == 0) {
+    if ((!matches || match_count == 0) && !is_service_backend()) {
         if (primary_db && !using_service_db) { db_free(primary_db); primary_db = NULL; } else { primary_db = NULL; }
+
+        /* In test mode, do not fall back to scanning user drive databases.
+         * Tests use isolated databases via /d override and should not leak
+         * into the user's real data. */
+        const char *test_mode = getenv("NCD_TEST_MODE");
+        if (test_mode && test_mode[0]) {
+            /* Skip fallback search in test mode */
+        } else {
 
         /* 
          * Phase 1: Collect all available drive letters first, then load all
@@ -4431,8 +4714,11 @@ int main(int argc, char *argv[])
             char letter = (char)('A' + i);
             if (letter == target_drive) continue;   /* already searched    */
 #else
-        for (int i = 1; i <= 26 && drive_count < 26; i++) {
-            char letter = (char)i;
+        /* On Linux, include drive 0 (native filesystem) and drives 1-26 (/mnt/X) */
+        char all_drives[27];
+        int all_count = platform_get_available_drives(all_drives, 27);
+        for (int i = 0; i < all_count && drive_count < 26; i++) {
+            char letter = all_drives[i];
             if (letter == target_drive) continue;   /* already searched    */
 #endif
             char drv_path[NCD_MAX_PATH];
@@ -4494,10 +4780,11 @@ int main(int argc, char *argv[])
         for (int i = 0; i < loaded_count; i++) {
             db_free(loaded_dbs[i]);
         }
+        } /* end of non-test-mode fallback block */
     }
 
     /* Filter matches based on exclusion list */
-    if (search_meta && match_count > 0) {
+    if (!is_service_backend() && search_meta && match_count > 0) {
         int filtered_count = filter_matches_by_exclusions(matches, match_count, &search_meta->exclusions);
         if (filtered_count != match_count) {
             match_count = filtered_count;

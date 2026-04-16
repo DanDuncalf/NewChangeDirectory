@@ -4,6 +4,7 @@
 
 #include "shm_types.h"
 #include "database.h"
+#include <stdlib.h>
 #include <string.h>
 
 /* --------------------------------------------------------- metadata layout  */

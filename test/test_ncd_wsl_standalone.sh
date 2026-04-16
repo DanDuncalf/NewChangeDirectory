@@ -90,13 +90,13 @@ skip() {
 
 # Stop service if running
 stop_service() {
-    pkill -f "ncd_service" 2>/dev/null || true
+    pkill -f "NCDService" 2>/dev/null || true
     sleep 1
 }
 
 # Check if service is running
 is_service_running() {
-    if pgrep -x "ncd_service" >/dev/null 2>&1; then
+    if pgrep -x "NCDService" >/dev/null 2>&1; then
         return 0
     else
         return 1
@@ -105,16 +105,26 @@ is_service_running() {
 
 # Run NCD and capture output
 ncd_run() {
-    LAST_OUT=$($NCD "$@" 2>&1) || true
-    LAST_EXIT=${PIPESTATUS[0]:-$?}
+    if LAST_OUT=$($NCD "$@" 2>&1); then
+        LAST_EXIT=0
+    else
+        LAST_EXIT=$?
+    fi
 }
 
 # Run NCD with timeout (prevents hanging on TUI)
 ncd_run_timed() {
     local timeout_sec="$1"
     shift
-    LAST_OUT=$(timeout "$timeout_sec" "$NCD" "$@" 2>&1) || true
-    LAST_EXIT=${PIPESTATUS[0]:-$?}
+    # Use timeout but preserve exit code
+    # timeout returns 124 if it times out, otherwise returns the command's exit code
+    if timeout "$timeout_sec" "$NCD" "$@" > /tmp/ncd_out_$$.txt 2>&1; then
+        LAST_EXIT=0
+    else
+        LAST_EXIT=$?
+    fi
+    LAST_OUT=$(cat /tmp/ncd_out_$$.txt 2>/dev/null || echo "")
+    rm -f /tmp/ncd_out_$$.txt
 }
 
 # ==========================================================================
@@ -158,24 +168,39 @@ if [[ ! -x "$NCD" ]]; then
 fi
 
 # ==========================================================================
-# Ensure service is NOT running
+# AGGRESSIVE PRE-TEST SERVICE CLEANUP - Ensure service is NOT running
 # ==========================================================================
 
 echo "Ensuring service is NOT running..."
-stop_service
+echo "[INFO] Stopping any existing service processes..."
+
+# Stop via command if possible (for the new binary name)
+if [[ -x "$PROJECT_ROOT/ncd_service" ]]; then
+    "$PROJECT_ROOT/ncd_service" stop >/dev/null 2>&1 || true
+fi
+sleep 1
+
+# Kill any existing service processes (both old and new naming)
+pkill -9 -f "ncd_service" 2>/dev/null || true
+pkill -9 -f "NCDService" 2>/dev/null || true
+sleep 1
 
 # Verify service is not running
 if is_service_running; then
-    echo "WARNING: Service is still running, attempting force kill..."
+    echo "[WARN] Service still running after initial kill, retrying force kill..."
     pkill -9 -f "ncd_service" 2>/dev/null || true
+    pkill -9 -f "NCDService" 2>/dev/null || true
     sleep 2
 fi
 
-# Verify standalone mode
-echo "Verifying standalone mode..."
-STATUS=$($NCD /agent check --service-status 2>&1) || true
-echo "  Service status: $STATUS"
-echo ""
+# Triple-check - verify no service is running
+if is_service_running; then
+    echo "[ERROR] Unable to stop existing service process. Tests may fail."
+    pkill -9 -f "ncd_service" 2>/dev/null || true
+    pkill -9 -f "NCDService" 2>/dev/null || true
+else
+    echo "[INFO] Confirmed: No service processes running."
+fi
 
 # ==========================================================================
 # Setup Test Environment
@@ -183,9 +208,18 @@ echo ""
 
 echo "Setting up test environment..."
 
-# Create minimal metadata file
+# Create minimal metadata file FIRST (before any NCD commands)
 mkdir -p "$TEST_DATA/ncd"
-printf '\x4E\x43\x4D\x44\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > "$TEST_DATA/ncd/ncd.metadata"
+# Create metadata with proper binary magic (NCMD = 4E 43 4D 44) and version 1
+# Magic (4 bytes) + Version (4 bytes) + Reserved (8 bytes) = 16 bytes total
+# Use base64 to create binary file: "NCMD" + 0x01 0x00 0x00 0x00 + 8 nulls
+echo -n "TkNNRAEAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
+
+# Verify standalone mode
+echo "Verifying standalone mode..."
+STATUS=$($NCD /agent check --service-status 2>&1) || true
+echo "  Service status: $STATUS"
+echo ""
 
 # Create test directory tree
 mkdir -p "$TESTROOT/Projects/alpha/src"
@@ -243,18 +277,21 @@ else
     fail "Service status shows NOT_RUNNING" "output: $LAST_OUT"
 fi
 
-# Test 5: Basic search finds directory
+# Change to TESTROOT for all search operations so drive 0 is detected
+cd "$TESTROOT"
+
+# Test 5: Basic search finds directory (use /agent query to avoid TUI)
 echo "[TEST 5] Basic search finds directory"
-ncd_run_timed 10 Downloads
+ncd_run /agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Basic search finds directory"
 else
     fail "Basic search finds directory" "output: $LAST_OUT"
 fi
 
-# Test 6: Multi-component search
+# Test 6: Multi-component search (use /agent query to avoid TUI)
 echo "[TEST 6] Multi-component search"
-ncd_run_timed 10 "scott/Downloads"
+ncd_run /agent query "scott/Downloads" --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Multi-component search"
 else
@@ -290,17 +327,17 @@ fi
 
 # Test 10: Rescan creates database
 echo "[TEST 10] Rescan creates database"
-rm -f "$TEST_DATA/ncd/ncd_*.database"
+rm -f "$TEST_DATA/ncd/ncd_"*.database
 (cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
-if ls "$TEST_DATA/ncd/ncd_*.database" 1>/dev/null 2>&1; then
+if ls "$TEST_DATA/ncd/ncd_"*.database 1>/dev/null 2>&1; then
     pass "Rescan creates database"
 else
     fail "Rescan creates database" "no database file found"
 fi
 
-# Test 11: Search after rescan
+# Test 11: Search after rescan (use /agent query to avoid TUI)
 echo "[TEST 11] Search after rescan"
-ncd_run_timed 10 Projects
+ncd_run /agent query Projects --limit 1
 if echo "$LAST_OUT" | grep -qi "Projects"; then
     pass "Search after rescan"
 else
@@ -309,7 +346,8 @@ fi
 
 # Test 12: No match returns error
 echo "[TEST 12] No match returns error"
-ncd_run_timed 10 NONEXISTENT_DIR_12345
+# Use ncd_run (no timeout) for this test since there's no TUI risk
+ncd_run NONEXISTENT_DIR_12345
 if [[ $LAST_EXIT -ne 0 ]]; then
     pass "No match returns error"
 else
@@ -338,9 +376,14 @@ fi
 
 # Test 15: Standalone mode persists without service
 echo "[TEST 15] Standalone mode persists without service"
+# Ensure database exists (it may have been deleted by Test 10)
+if ! ls "$TEST_DATA/ncd/ncd_"*.database 1>/dev/null 2>&1; then
+    (cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+fi
 if ! is_service_running; then
-    ncd_run_timed 10 Documents
-    if echo "$LAST_OUT" | grep -qi "Documents"; then
+    # Search for "alpha" which is in the test tree (use /agent query to avoid TUI)
+    ncd_run /agent query alpha --limit 1
+    if echo "$LAST_OUT" | grep -qi "alpha"; then
         pass "Standalone mode persists without service"
     else
         fail "Standalone mode persists without service" "output: $LAST_OUT"

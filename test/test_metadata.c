@@ -228,18 +228,6 @@ TEST(metadata_preserves_history_section) {
     return 0;
 }
 
-TEST(metadata_cleanup_legacy_returns_0_with_none) {
-    /* Clean up any existing legacy files first */
-    char path[MAX_PATH];
-    
-    /* This test assumes no legacy files exist - cleanup should return 0 */
-    int deleted = db_metadata_cleanup_legacy();
-    /* Just verify the function doesn't crash - return value depends on environment */
-    (void)deleted;
-    
-    return 0;
-}
-
 TEST(metadata_free_handles_null) {
     /* Should not crash */
     db_metadata_free(NULL);
@@ -280,7 +268,6 @@ void suite_metadata(void) {
     RUN_TEST(metadata_preserves_exclusions_section);
     RUN_TEST(metadata_preserves_heuristics_section);
     RUN_TEST(metadata_preserves_history_section);
-    RUN_TEST(metadata_cleanup_legacy_returns_0_with_none);
     RUN_TEST(metadata_free_handles_null);
     RUN_TEST(metadata_group_remove_path);
 }

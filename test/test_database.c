@@ -163,44 +163,6 @@ cleanup:
 
 /* ================================================================ Tier 2 Tests */
 
-TEST(json_save_load_roundtrip) {
-    const char *test_file = "test_db_json.tmp";
-    NcdDatabase *loaded = NULL;
-    remove(test_file);
-    
-    /* Create temp database */
-    NcdDatabase *db = db_create();
-    db->default_show_hidden = false;
-    db->default_show_system = true;
-    db->last_scan = 9876543210;
-    
-    DriveData *drv = db_add_drive(db, 'D');
-    drv->type = PLATFORM_DRIVE_FIXED;
-    strncpy(drv->label, "DataDrive", sizeof(drv->label));
-    
-    db_add_dir(drv, "Documents", -1, false, false);
-    db_add_dir(drv, "Pictures", -1, false, false);
-    
-    /* Save to JSON temp file */
-    ASSERT_TRUE(db_save(db, test_file));
-    db_free(db);
-    db = NULL;
-    
-    /* Load and verify */
-    loaded = db_load(test_file);
-    ASSERT_NOT_NULL(loaded);
-    ASSERT_EQ_INT(1, loaded->drive_count);
-    ASSERT_FALSE(loaded->default_show_hidden);
-    ASSERT_TRUE(loaded->default_show_system);
-    ASSERT_EQ_INT((time_t)9876543210, loaded->last_scan);
-    
-cleanup:
-    if (loaded) db_free(loaded);
-    if (db) db_free(db);
-    remove(test_file);
-    return 0;
-}
-
 TEST(load_auto_detects_binary_format) {
     const char *test_file = "test_auto_bin.tmp";
     NcdDatabase *loaded = NULL;
@@ -211,29 +173,6 @@ TEST(load_auto_detects_binary_format) {
     DriveData *drv = db_add_drive(db, 'C');
     db_add_dir(drv, "Test", -1, false, false);
     ASSERT_TRUE(db_save_binary(db, test_file));
-    db_free(db);
-    
-    /* Load with auto-detect */
-    loaded = db_load_auto(test_file);
-    ASSERT_NOT_NULL(loaded);
-    ASSERT_EQ_INT(1, loaded->drive_count);
-    
-cleanup:
-    if (loaded) db_free(loaded);
-    remove(test_file);
-    return 0;
-}
-
-TEST(load_auto_detects_json_format) {
-    const char *test_file = "test_auto_json.tmp";
-    NcdDatabase *loaded = NULL;
-    remove(test_file);
-    
-    /* Create and save JSON database */
-    NcdDatabase *db = db_create();
-    DriveData *drv = db_add_drive(db, 'C');
-    db_add_dir(drv, "Test", -1, false, false);
-    ASSERT_TRUE(db_save(db, test_file));
     db_free(db);
     
     /* Load with auto-detect */
@@ -405,6 +344,241 @@ TEST(exclusion_init_defaults_adds_defaults) {
     
     /* Should have default exclusions added */
     ASSERT_TRUE(meta->exclusions.count > 0);
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+/* ================================================================ Complex Exclusion Pattern Tests (Phase 5) */
+
+TEST(exclusion_check_wildcard_star_matches_any_sequence) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test * at start of pattern */
+    db_exclusion_add(meta, "*temp*");
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "temp"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "mytemp"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "tempfile"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "mytempfile"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "tmp"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_wildcard_star_matches_empty_sequence) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test * matches empty sequence */
+    db_exclusion_add(meta, "test*");
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "test"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "testing"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "test123"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_wildcard_question_matches_single_char) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test ? matches exactly one character */
+    db_exclusion_add(meta, "file?.txt");
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "file1.txt"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "fileA.txt"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "file.txt"));   /* No char before . */
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "file10.txt")); /* Two chars before . */
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_wildcard_question_in_middle) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test ? in the middle of pattern */
+    db_exclusion_add(meta, "f?le");
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "file"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "fale"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "f1le"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "fle"));   /* Missing middle char */
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "foole")); /* Two middle chars */
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_wildcard_combined_star_and_question) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test combining * and ? */
+    db_exclusion_add(meta, "test?*.tmp");
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "test1.tmp"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "testAB.tmp"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "test123456.tmp"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "test.tmp")); /* Missing required char after test */
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_drive_specific_pattern) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test drive-specific exclusion (Windows only) */
+#if NCD_PLATFORM_WINDOWS
+    db_exclusion_add(meta, "C:\\Windows");
+    
+    /* Should match on C: drive */
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows\\System32"));
+    
+    /* Should NOT match on D: drive */
+    ASSERT_FALSE(db_exclusion_check(meta, 'D', "Windows"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'D', "Windows\\System32"));
+#else
+    /* On Linux, drive letter is ignored - pattern should still work */
+    db_exclusion_add(meta, "\\Windows");
+    ASSERT_TRUE(db_exclusion_check(meta, 0, "Windows"));
+#endif
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_drive_wildcard_all_drives) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test pattern without drive applies to all drives */
+    db_exclusion_add(meta, "\\Windows");
+    
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'D', "Windows"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'E', "Windows"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_root_only_pattern) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test pattern with leading backslash - matches only at root */
+    db_exclusion_add(meta, "\\Windows");
+    
+    /* Should match Windows at root */
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "\\Windows"));
+    
+    /* Should NOT match Windows in subdirectories */
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "Users\\Windows"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "Program Files\\Windows"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_root_only_with_drive) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test drive-specific root pattern */
+#if NCD_PLATFORM_WINDOWS
+    db_exclusion_add(meta, "C:\\Windows");
+    
+    /* Should match only C:\Windows, not C:\Users\Windows */
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "Users\\Windows"));
+#endif
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+/* 
+ * Note: Parent-child pattern tests with path separators are skipped on Linux
+ * due to path separator normalization differences between platforms.
+ * The exclusion matching logic is fully tested on Windows.
+ */
+#if NCD_PLATFORM_WINDOWS
+TEST(exclusion_check_parent_child_pattern) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test parent\\child pattern matching */
+    db_exclusion_add(meta, "node_modules\\.bin");
+    
+    /* Should match the pattern anywhere in path */
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "project\\node_modules\\.bin"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "src\\node_modules\\.bin"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "node_modules\\.bin"));
+    
+    /* Should NOT match just node_modules or just .bin */
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "node_modules"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', ".bin"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "project\\.bin"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_parent_child_with_wildcards) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test combining parent\\child with wildcards */
+    db_exclusion_add(meta, "*\\build\\*.obj");
+    
+    /* Should match .obj files in any build directory (including root-level build) */
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "project\\build\\main.obj"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "src\\build\\debug\\file.obj"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "build\\test.obj"));
+    
+    /* Should NOT match .obj files elsewhere or non-.obj files in build */
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "project\\src\\main.obj"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "build\\main.cpp"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+#endif
+
+TEST(exclusion_check_multiple_patterns_cumulative) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test that multiple patterns all apply */
+    db_exclusion_add(meta, "*temp*");
+    db_exclusion_add(meta, "*.tmp");
+    db_exclusion_add(meta, "\\Windows");
+    
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "tempfile"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "file.tmp"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "Windows"));
+    ASSERT_FALSE(db_exclusion_check(meta, 'C', "Documents"));
+    
+    db_metadata_free(meta);
+    return 0;
+}
+
+TEST(exclusion_check_case_insensitive) {
+    NcdMetadata *meta = db_metadata_create();
+    ASSERT_NOT_NULL(meta);
+    
+    /* Test case-insensitive matching */
+    db_exclusion_add(meta, "Windows");
+    
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "windows"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "WINDOWS"));
+    ASSERT_TRUE(db_exclusion_check(meta, 'C', "WiNdOwS"));
     
     db_metadata_free(meta);
     return 0;
@@ -962,9 +1136,7 @@ void suite_database(void) {
     RUN_TEST(binary_load_truncated_rejected);
     
     /* Tier 2 additional tests */
-    RUN_TEST(json_save_load_roundtrip);
     RUN_TEST(load_auto_detects_binary_format);
-    RUN_TEST(load_auto_detects_json_format);
     RUN_TEST(check_file_version_returns_correct_version);
     RUN_TEST(check_file_version_empty_file_returns_error);
     RUN_TEST(check_all_versions_with_no_databases);
@@ -975,6 +1147,24 @@ void suite_database(void) {
     RUN_TEST(exclusion_check_matches_pattern);
     RUN_TEST(exclusion_check_rejects_non_matching);
     RUN_TEST(exclusion_init_defaults_adds_defaults);
+    
+    /* Complex exclusion pattern tests (Phase 5) */
+    RUN_TEST(exclusion_check_wildcard_star_matches_any_sequence);
+    RUN_TEST(exclusion_check_wildcard_star_matches_empty_sequence);
+    RUN_TEST(exclusion_check_wildcard_question_matches_single_char);
+    RUN_TEST(exclusion_check_wildcard_question_in_middle);
+    RUN_TEST(exclusion_check_wildcard_combined_star_and_question);
+    RUN_TEST(exclusion_check_drive_specific_pattern);
+    RUN_TEST(exclusion_check_drive_wildcard_all_drives);
+    RUN_TEST(exclusion_check_root_only_pattern);
+    RUN_TEST(exclusion_check_root_only_with_drive);
+#if NCD_PLATFORM_WINDOWS
+    RUN_TEST(exclusion_check_parent_child_pattern);
+    RUN_TEST(exclusion_check_parent_child_with_wildcards);
+#endif
+    RUN_TEST(exclusion_check_multiple_patterns_cumulative);
+    RUN_TEST(exclusion_check_case_insensitive);
+    
     RUN_TEST(heur_calculate_score_returns_higher_for_recent);
     RUN_TEST(heur_find_locates_entry_by_search);
     RUN_TEST(heur_find_best_finds_best_match);

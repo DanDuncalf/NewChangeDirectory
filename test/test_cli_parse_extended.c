@@ -82,7 +82,7 @@ TEST(history_clear_flag) {
     return 0;
 }
 
-TEST(history_remove_by_index) {
+TEST(cli_parse_history_remove_by_index) {
     NcdOptions opts;
     init_options(&opts);
     
@@ -301,12 +301,12 @@ TEST(retry_count_dash_variant) {
 
 /* ================================================================ Combined Flag Tests */
 
-TEST(combined_flags_iz) {
+TEST(separate_flags_i_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/iz"};
-    bool result = parse_args_wrapper(2, argv, &opts);
+    const char *argv[] = {"ncd", "/i", "/z"};
+    bool result = parse_args_wrapper(3, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_hidden);
@@ -315,12 +315,12 @@ TEST(combined_flags_iz) {
     return 0;
 }
 
-TEST(combined_flags_sz) {
+TEST(separate_flags_s_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/sz"};
-    bool result = parse_args_wrapper(2, argv, &opts);
+    const char *argv[] = {"ncd", "/s", "/z"};
+    bool result = parse_args_wrapper(3, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_system);
@@ -329,12 +329,12 @@ TEST(combined_flags_sz) {
     return 0;
 }
 
-TEST(combined_flags_isz) {
+TEST(separate_flags_i_s_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/isz"};
-    bool result = parse_args_wrapper(2, argv, &opts);
+    const char *argv[] = {"ncd", "/i", "/s", "/z"};
+    bool result = parse_args_wrapper(4, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_hidden);
@@ -344,12 +344,12 @@ TEST(combined_flags_isz) {
     return 0;
 }
 
-TEST(combined_flags_all_four) {
+TEST(separate_flags_i_s_z_v) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/iszv"};
-    bool result = parse_args_wrapper(2, argv, &opts);
+    const char *argv[] = {"ncd", "/i", "/s", "/z", "/v"};
+    bool result = parse_args_wrapper(5, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_hidden);
@@ -533,7 +533,7 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(history_index_1_to_9);
     RUN_TEST(history_list_flag);
     RUN_TEST(history_clear_flag);
-    RUN_TEST(history_remove_by_index);
+    RUN_TEST(cli_parse_history_remove_by_index);
     RUN_TEST(history_remove_invalid_index_rejected);
     
     /* Group tests */
@@ -556,10 +556,10 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(retry_count_dash_variant);
     
     /* Combined flags tests */
-    RUN_TEST(combined_flags_iz);
-    RUN_TEST(combined_flags_sz);
-    RUN_TEST(combined_flags_isz);
-    RUN_TEST(combined_flags_all_four);
+    RUN_TEST(separate_flags_i_z);
+    RUN_TEST(separate_flags_s_z);
+    RUN_TEST(separate_flags_i_s_z);
+    RUN_TEST(separate_flags_i_s_z_v);
     
     /* Edge cases */
     RUN_TEST(empty_string_arg_rejected);

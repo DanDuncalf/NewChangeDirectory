@@ -131,15 +131,15 @@ print_section() {
 }
 
 print_success() {
-    printf "${C_GREEN}✓ %s${C_RESET}\n" "$1"
+    printf "${C_GREEN}âœ“ %s${C_RESET}\n" "$1"
 }
 
 print_failure() {
-    printf "${C_RED}✗ %s${C_RESET}\n" "$1"
+    printf "${C_RED}âœ— %s${C_RESET}\n" "$1"
 }
 
 print_warning() {
-    printf "${C_YELLOW}⚠ %s${C_RESET}\n" "$1"
+    printf "${C_YELLOW}âš  %s${C_RESET}\n" "$1"
 }
 
 check_windows_binaries() {
@@ -170,14 +170,14 @@ check_wsl_binaries() {
     return 0
 }
 
-stop_ncd_service() {
+stop_NCDService() {
     local platform=$1  # "windows" or "wsl"
     
     if [[ "$platform" == "wsl" ]]; then
-        pkill -f "ncd_service" 2>/dev/null || true
+        pkill -f "NCDService" 2>/dev/null || true
     else
         # Windows - use cmd.exe (suppress all errors since service may not be running)
-        local service_bat="$PROJECT_ROOT/ncd_service.bat"
+        local service_bat="$PROJECT_ROOT/NCDService.bat"
         if [[ -f "$service_bat" ]]; then
             cmd.exe /c "\"$(wslpath -w "$service_bat")\" stop 2>nul" >/dev/null 2>&1 || true
         fi
@@ -188,14 +188,14 @@ stop_ncd_service() {
     sleep 0.5
 }
 
-start_ncd_service() {
+start_NCDService() {
     local platform=$1  # "windows" or "wsl"
     
     if [[ "$platform" == "wsl" ]]; then
-        cd "$PROJECT_ROOT" && ./ncd_service start 2>/dev/null &
+        cd "$PROJECT_ROOT" && ./NCDService start 2>/dev/null &
     else
         # Windows
-        local service_bat="$PROJECT_ROOT/ncd_service.bat"
+        local service_bat="$PROJECT_ROOT/NCDService.bat"
         if [[ -f "$service_bat" ]]; then
             local win_path
             win_path=$(wslpath -w "$service_bat")
@@ -275,10 +275,10 @@ run_test_environment() {
     start_time=$(date +%s)
     
     # Ensure service is stopped first
-    stop_ncd_service "$platform"
+    stop_NCDService "$platform"
     
     if [[ "$with_service" == "true" ]]; then
-        start_ncd_service "$platform"
+        start_NCDService "$platform"
         sleep 1
         
         if ! test_service_status "$platform" true; then
@@ -394,7 +394,7 @@ run_test_environment() {
     fi
     
     # Always stop service after tests
-    stop_ncd_service "$platform"
+    stop_NCDService "$platform"
 }
 
 show_summary() {

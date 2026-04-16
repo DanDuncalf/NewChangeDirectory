@@ -70,6 +70,11 @@ static NcdIpcResult win_error_to_ipc(DWORD err) {
         case ERROR_INVALID_PARAMETER:
         case ERROR_BAD_FORMAT:
             return NCD_IPC_ERROR_INVALID;
+        case ERROR_BROKEN_PIPE:
+        case ERROR_PIPE_NOT_CONNECTED:
+        case ERROR_NO_DATA:
+            /* Pipe was closed by remote side - service may have shutdown */
+            return NCD_IPC_ERROR_NOT_FOUND;
         default:
             return NCD_IPC_ERROR_GENERIC;
     }
@@ -213,7 +218,7 @@ static int g_ipc_debug_mode = 0;
 void ipc_set_debug_mode(int enable) { g_ipc_debug_mode = enable; }
 #define IPC_DBG(...) do { if (g_ipc_debug_mode) fprintf(stderr, __VA_ARGS__); } while(0)
 
-/* Helper: Send message and wait for response */
+/* Helper: Send message and wait for response with timeout */
 static NcdIpcResult send_receive(NcdIpcClient *client,
                                   NcdMessageType type,
                                   const void *payload,
@@ -262,12 +267,52 @@ static NcdIpcResult send_receive(NcdIpcClient *client,
     
     IPC_DBG("IPC: Message sent, waiting for response...\n");
     
-    /* Read response */
+    /* Read response with timeout to handle service shutdown scenario */
     uint8_t resp_buf[NCD_IPC_MAX_MSG_SIZE];
-    DWORD read;
-    if (!ReadFile(client->hPipe, resp_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
+    DWORD read = 0;
+    BOOL read_result;
+    
+    /* Use PeekNamedPipe first to check if data is available without blocking */
+    DWORD bytes_available = 0;
+    DWORD total_bytes = 0;
+    DWORD bytes_left = 0;
+    
+    /* Wait up to 5 seconds for response (prevents indefinite hang on service shutdown) */
+    int timeout_ms = 5000;
+    int waited_ms = 0;
+    
+    while (waited_ms < timeout_ms) {
+        if (PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
+            if (bytes_available >= sizeof(NcdIpcHeader)) {
+                /* Data is available, read it */
+                break;
+            }
+        } else {
+            DWORD err = GetLastError();
+            if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
+                IPC_DBG("IPC: Pipe broken, service may have shutdown\n");
+                return NCD_IPC_OK;  /* Service shutdown is expected for REQUEST_SHUTDOWN */
+            }
+        }
+        Sleep(10);
+        waited_ms += 10;
+    }
+    
+    if (waited_ms >= timeout_ms) {
+        IPC_DBG("IPC: Read timeout waiting for response\n");
+        return NCD_IPC_ERROR_GENERIC;
+    }
+    
+    read_result = ReadFile(client->hPipe, resp_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL);
+    if (!read_result) {
         DWORD err = GetLastError();
         IPC_DBG("IPC: ReadFile failed, error=%lu\n", err);
+        if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
+            /* Service closed pipe - this is expected after REQUEST_SHUTDOWN */
+            if (type == NCD_MSG_REQUEST_SHUTDOWN) {
+                return NCD_IPC_OK;
+            }
+        }
         return win_error_to_ipc(err);
     }
     
@@ -426,6 +471,114 @@ NcdIpcResult ipc_client_get_state_info(NcdIpcClient *client, NcdIpcStateInfo *in
     return NCD_IPC_OK;
 }
 
+NcdIpcResult ipc_client_get_detailed_status(NcdIpcClient *client, NcdIpcDetailedStatus *info) {
+    if (!info) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    void *response = NULL;
+    size_t response_len = 0;
+    
+    NcdIpcResult result = send_receive(client, NCD_MSG_GET_DETAILED_STATUS,
+                                        NULL, 0, &response, &response_len);
+    
+    if (result != NCD_IPC_OK) {
+        return result;
+    }
+    
+    if (!response || response_len < sizeof(NcdDetailedStatusPayload)) {
+        free(response);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    NcdDetailedStatusPayload *payload = (NcdDetailedStatusPayload *)response;
+    
+    info->protocol_version = payload->protocol_version;
+    info->runtime_state = payload->runtime_state;
+    info->log_level = payload->log_level;
+    info->pending_count = payload->pending_count;
+    info->dirty_flags = payload->dirty_flags;
+    info->meta_generation = payload->meta_generation;
+    info->db_generation = payload->db_generation;
+    info->drive_count = payload->drive_count;
+    if (info->drive_count > NCD_IPC_MAX_DETAILED_DRIVES) {
+        info->drive_count = NCD_IPC_MAX_DETAILED_DRIVES;
+    }
+    
+    memcpy(info->app_version, payload->app_version, sizeof(info->app_version));
+    info->app_version[sizeof(info->app_version) - 1] = '\0';
+    memcpy(info->build_stamp, payload->build_stamp, sizeof(info->build_stamp));
+    info->build_stamp[sizeof(info->build_stamp) - 1] = '\0';
+    
+    info->status_message[0] = '\0';
+    info->meta_path[0] = '\0';
+    info->log_path[0] = '\0';
+    for (uint32_t i = 0; i < NCD_IPC_MAX_DETAILED_DRIVES; i++) {
+        info->drives[i].letter = 0;
+        info->drives[i].dir_count = 0;
+        info->drives[i].db_path[0] = '\0';
+    }
+    
+    char *data = (char *)response + sizeof(NcdDetailedStatusPayload);
+    size_t remaining = response_len - sizeof(NcdDetailedStatusPayload);
+    
+    /* Parse status message */
+    if (payload->status_msg_len > 0 && payload->status_msg_len <= remaining) {
+        if (payload->status_msg_len <= sizeof(info->status_message)) {
+            memcpy(info->status_message, data, payload->status_msg_len);
+            info->status_message[payload->status_msg_len - 1] = '\0';
+        }
+        data += payload->status_msg_len;
+        remaining -= payload->status_msg_len;
+    }
+    
+    /* Parse metadata path */
+    if (payload->meta_path_len > 0 && payload->meta_path_len <= remaining) {
+        if (payload->meta_path_len <= sizeof(info->meta_path)) {
+            memcpy(info->meta_path, data, payload->meta_path_len);
+            info->meta_path[payload->meta_path_len - 1] = '\0';
+        }
+        data += payload->meta_path_len;
+        remaining -= payload->meta_path_len;
+    }
+    
+    /* Parse log path */
+    if (payload->log_path_len > 0 && payload->log_path_len <= remaining) {
+        if (payload->log_path_len <= sizeof(info->log_path)) {
+            memcpy(info->log_path, data, payload->log_path_len);
+            info->log_path[payload->log_path_len - 1] = '\0';
+        }
+        data += payload->log_path_len;
+        remaining -= payload->log_path_len;
+    }
+    
+    /* Parse drive infos */
+    for (uint32_t i = 0; i < info->drive_count; i++) {
+        if (remaining < sizeof(NcdDetailedStatusDriveHeader)) {
+            break;
+        }
+        NcdDetailedStatusDriveHeader *drv = (NcdDetailedStatusDriveHeader *)data;
+        info->drives[i].letter = drv->letter;
+        info->drives[i].dir_count = drv->dir_count;
+        data += sizeof(NcdDetailedStatusDriveHeader);
+        remaining -= sizeof(NcdDetailedStatusDriveHeader);
+        
+        if (drv->db_path_len > 0 && drv->db_path_len <= remaining &&
+            drv->db_path_len <= sizeof(info->drives[i].db_path)) {
+            memcpy(info->drives[i].db_path, data, drv->db_path_len);
+            info->drives[i].db_path[drv->db_path_len - 1] = '\0';
+            data += drv->db_path_len;
+            remaining -= drv->db_path_len;
+        } else if (drv->db_path_len > 0 && drv->db_path_len <= remaining) {
+            data += drv->db_path_len;
+            remaining -= drv->db_path_len;
+        }
+    }
+    
+    free(response);
+    return NCD_IPC_OK;
+}
+
 NcdIpcResult ipc_client_submit_heuristic(NcdIpcClient *client,
                                           const char *search,
                                           const char *target) {
@@ -571,8 +724,17 @@ NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
     /* Versions don't match - request service shutdown */
     result->versions_match = false;
     
+    /* 
+     * Send shutdown request - pipe may be closed by service after response.
+     * This is expected behavior: service sends response then exits immediately.
+     */
     ipc_result = ipc_client_request_shutdown(client);
-    if (ipc_result == NCD_IPC_OK) {
+    
+    /* 
+     * Consider shutdown successful if we got OK or if pipe was closed (service exited).
+     * ERROR_PIPE_NOT_CONNECTED or ERROR_BROKEN_PIPE means service shut down.
+     */
+    if (ipc_result == NCD_IPC_OK || ipc_result == NCD_IPC_ERROR_NOT_FOUND) {
         result->service_was_stopped = true;
         snprintf(result->message, sizeof(result->message),
                  "Version mismatch detected. Client: %s (%s), Service: %s (%s). "

@@ -198,17 +198,14 @@ TEST(search_with_service_empty_db_produces_result) {
     return 0;
 }
 
-/* Main test runner */
-int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-    
-    printf("=== service_empty_db ===\n");
-    
+void suite_service_empty_db(void) {
     RUN_TEST(service_empty_db_returns_null);
     RUN_TEST(write_result_creates_file_on_error);
     RUN_TEST(ipc_connection_has_timeout);
     RUN_TEST(search_with_service_empty_db_produces_result);
-    
-    TEST_MAIN_END();
 }
+
+TEST_MAIN(
+    printf("=== service_empty_db ===\n");
+    suite_service_empty_db();
+)

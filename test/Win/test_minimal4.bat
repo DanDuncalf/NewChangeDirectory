@@ -1,4 +1,47 @@
 @echo off
+:: ==========================================================================
+:: test_minimal4.bat - Minimal NCD test script #4
+:: ==========================================================================
+::
+:: WARNING: This script has hardcoded paths and is for development only.
+:: It should NOT be run directly - use the test harness instead.
+::
+:: Run through the test harness:
+::   Run-Tests-Safe.bat windows
+::
+:: DO NOT RUN THIS SCRIPT DIRECTLY!
+:: ==========================================================================
+
+:: ==========================================================================
+:: ENVIRONMENT CHECK - ENSURE RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo ENVIRONMENT ERROR - TEST HARNESS REQUIRED
+    echo ==========================================
+    echo.
+    echo This test script has HARDCODED PATHS and is NOT meant to be run directly!
+    echo.
+    echo This is a DEVELOPMENT-ONLY script that:
+    echo   - Uses hardcoded paths ^(E:\llama\NewChangeDirectory^)
+    echo   - May not work on your system
+    echo   - Can corrupt your NCD configuration
+    echo.
+    echo CORRECT USAGE - Run from the project root:
+    echo   Run-Tests-Safe.bat windows           ^(all Windows tests^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\Win\test_minimal4.bat
+    echo.
+    echo If your environment is already corrupted, repair it with:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo ==========================================
+    exit /b 1
+)
+
 setlocal enabledelayedexpansion
 set "NCD=E:\llama\NewChangeDirectory\NewChangeDirectory.exe"
 set "LOG=%TEMP%\ncd_minimal_test4.log"
@@ -15,13 +58,15 @@ mkdir "%TEST_DATA%\NCD" 2>nul
 set "TEST_TREE=%TEMP%\ncd_min_tree4"
 mkdir "%TEST_TREE%\testdir456\sub" 2>nul
 
-:: Copy user's existing database and metadata (for testing with existing data)
-echo [1] Copying existing database... > "%LOG%"
-copy "%REAL_LOCALAPPDATA%\NCD\*.database" "%TEST_DATA%\NCD\" >> "%LOG%" 2>&1
-copy "%REAL_LOCALAPPDATA%\NCD\ncd.metadata" "%TEST_DATA%\NCD\" >> "%LOG%" 2>&1
+:: Create isolated metadata and keep all test data local to TEST_DATA.
+echo [1] Creating isolated test metadata... > "%LOG%"
+powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%TEST_DATA%\\NCD\\ncd.metadata', [byte[]]@(0x4E,0x43,0x4D,0x44,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00))" >> "%LOG%" 2>&1
 
 :: CRITICAL: Disable auto-rescan in copied metadata to prevent full system scan
-"%NCD%" -conf "%TEST_DATA%\NCD\ncd.metadata" /c rescan_interval_hours=-1 >nul 2>&1
+:: Use keystroke injection to automate the config editor (navigate to item 6, enter -1, save)
+set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
+"%NCD%" -conf "%TEST_DATA%\NCD\ncd.metadata" /c >nul 2>&1
+set "NCD_UI_KEYS="
 
 :: Now try /r. to add our test dirs to the existing database
 echo [2] Testing /r. with existing DB >> "%LOG%"

@@ -94,8 +94,13 @@ TEST(parse_drive_from_search_no_drive) {
     char expected_drive = (char)toupper((unsigned char)cwd[0]);
     ASSERT_EQ_INT(expected_drive, drive);
 #else
-    /* On Linux, returns 0x01 for first available mount when no drive specified */
-    ASSERT_TRUE(drive == 0 || drive == 1 || drive == '\x01');
+    /* On Linux/WSL: returns either:
+     * - Drive letter from CWD (e.g., 'C' if in /mnt/c/...)
+     * - First available mount's drive letter
+     * - 0x01 if no mounts available
+     */
+    bool is_valid_drive = (drive >= 'A' && drive <= 'Z') || drive == '\x01';
+    ASSERT_TRUE(is_valid_drive);
 #endif
     ASSERT_EQ_STR("downloads", clean);
     

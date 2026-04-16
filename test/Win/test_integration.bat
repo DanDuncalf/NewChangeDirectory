@@ -1,6 +1,51 @@
 @echo off
+:: ==========================================================================
 :: test_integration.bat - Integration tests for NCD on Windows
-:: This must be run from the project root directory
+:: ==========================================================================
+::
+:: This must be run from the project root directory through the test harness.
+::
+:: IMPORTANT: This script modifies LOCALAPPDATA and NCD_TEST_MODE.
+:: It MUST be run through the test harness for proper isolation.
+::
+:: CORRECT USAGE - Run from project root:
+::   Run-Tests-Safe.bat integration
+::   Run-Tests-Safe.bat windows
+::   Run-Tests-Safe.bat
+::
+:: DO NOT RUN THIS SCRIPT DIRECTLY!
+:: ==========================================================================
+
+:: ==========================================================================
+:: ENVIRONMENT CHECK - ENSURE RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo ENVIRONMENT ERROR - TEST HARNESS REQUIRED
+    echo ==========================================
+    echo.
+    echo This test script is NOT meant to be run directly!
+    echo.
+    echo Running this script directly will:
+    echo   - Modify your LOCALAPPDATA environment variable
+    echo   - Leave your NCD configuration in an inconsistent state
+    echo   - Potentially corrupt your NCD database
+    echo.
+    echo CORRECT USAGE - Run from the project root:
+    echo   Run-Tests-Safe.bat integration       ^(integration tests^)
+    echo   Run-Tests-Safe.bat windows           ^(all Windows tests^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\Win\test_integration.bat
+    echo.
+    echo If your environment is already corrupted, repair it with:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo ==========================================
+    exit /b 1
+)
 
 setlocal enabledelayedexpansion
 

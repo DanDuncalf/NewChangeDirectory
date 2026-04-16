@@ -35,6 +35,9 @@ extern "C" {
 /* Maximum message size */
 #define NCD_IPC_MAX_MSG_SIZE 4096
 
+/* Maximum path length for IPC status payloads (kept independent of NCD_MAX_PATH) */
+#define NCD_IPC_MAX_PATH 512
+
 /* Default timeout for operations (milliseconds) */
 #define NCD_IPC_TIMEOUT_MS  5000
 
@@ -50,6 +53,7 @@ typedef enum {
     NCD_MSG_REQUEST_RESCAN,         /* Request database rescan */
     NCD_MSG_REQUEST_FLUSH,          /* Request immediate persistence */
     NCD_MSG_REQUEST_SHUTDOWN,       /* Request graceful service shutdown */
+    NCD_MSG_GET_DETAILED_STATUS,    /* Request detailed service status */
     
     /* Server -> Client */
     NCD_MSG_RESPONSE = 0x80,        /* Response to client request */
@@ -156,6 +160,38 @@ typedef struct {
 } NcdStateInfoPayload;
 
 /*
+ * NcdDetailedStatusPayload  --  Response to GET_DETAILED_STATUS
+ */
+typedef struct {
+    uint16_t protocol_version;      /* Service protocol version */
+    uint16_t runtime_state;         /* ServiceRuntimeState value */
+    int16_t  log_level;             /* Current logging level */
+    uint8_t  reserved[2];           /* Padding for alignment */
+    uint32_t pending_count;         /* Number of pending requests */
+    uint32_t dirty_flags;           /* Current dirty flags */
+    uint64_t meta_generation;       /* Metadata snapshot generation */
+    uint64_t db_generation;         /* Database snapshot generation */
+    uint32_t drive_count;           /* Number of drives in cache */
+    uint32_t status_msg_len;        /* Length of status message string */
+    uint32_t meta_path_len;         /* Length of metadata file path */
+    uint32_t log_path_len;          /* Length of log file path */
+    char     app_version[16];       /* Application version string */
+    char     build_stamp[32];       /* Build timestamp */
+    /* Followed by: status_msg \0 meta_path \0 log_path \0 drive_entries... */
+} NcdDetailedStatusPayload;
+
+/*
+ * NcdDetailedStatusDriveHeader  --  Per-drive info in detailed status
+ */
+typedef struct {
+    char     letter;                /* Drive letter */
+    uint8_t  pad[3];                /* Padding for alignment */
+    uint32_t dir_count;             /* Number of directories */
+    uint32_t db_path_len;           /* Length of database file path */
+    /* Followed by: db_path \0 */
+} NcdDetailedStatusDriveHeader;
+
+/*
  * NcdVersionInfoPayload  --  Response to GET_VERSION
  */
 typedef struct {
@@ -240,6 +276,37 @@ typedef struct {
 } NcdIpcStateInfo;
 
 NcdIpcResult ipc_client_get_state_info(NcdIpcClient *client, NcdIpcStateInfo *info);
+
+/*
+ * ipc_client_get_detailed_status  --  Get detailed service status
+ *
+ * Fills info structure with runtime state, log level, cache contents,
+ * file paths, and other diagnostic information.
+ */
+#define NCD_IPC_MAX_DETAILED_DRIVES 16
+
+typedef struct {
+    uint16_t protocol_version;
+    uint16_t runtime_state;
+    int16_t  log_level;
+    uint32_t pending_count;
+    uint32_t dirty_flags;
+    uint64_t meta_generation;
+    uint64_t db_generation;
+    uint32_t drive_count;
+    char     status_message[256];
+    char     meta_path[NCD_IPC_MAX_PATH];
+    char     log_path[NCD_IPC_MAX_PATH];
+    char     app_version[16];
+    char     build_stamp[32];
+    struct {
+        char     letter;
+        uint32_t dir_count;
+        char     db_path[NCD_IPC_MAX_PATH];
+    } drives[NCD_IPC_MAX_DETAILED_DRIVES];
+} NcdIpcDetailedStatus;
+
+NcdIpcResult ipc_client_get_detailed_status(NcdIpcClient *client, NcdIpcDetailedStatus *info);
 
 /*
  * ipc_client_submit_heuristic  --  Submit heuristic update

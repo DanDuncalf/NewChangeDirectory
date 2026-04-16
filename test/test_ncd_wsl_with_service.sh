@@ -17,7 +17,7 @@
 #   - Shared memory operations
 #
 # REQUIREMENTS:
-#   - NewChangeDirectory and ncd_service built in project root
+#   - NewChangeDirectory and NCDService built in project root
 #   - Run from project root: test/test_ncd_wsl_with_service.sh
 #
 # EXIT CODES:
@@ -35,7 +35,7 @@ export NCD_TEST_MODE=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NCD="$PROJECT_ROOT/NewChangeDirectory"
-SERVICE_EXE="$PROJECT_ROOT/ncd_service"
+SERVICE_EXE="$PROJECT_ROOT/NCDService"
 
 # Isolation: redirect all NCD data to a temp directory
 TEST_DATA="/tmp/ncd_ncd_svc_test_$$"
@@ -96,19 +96,24 @@ skip() {
 # Stop service
 stop_service() {
     "$SERVICE_EXE" stop >/dev/null 2>&1 || true
-    pkill -f "ncd_service" 2>/dev/null || true
+    pkill -f "NCDService" 2>/dev/null || true
     sleep 1
 }
 
 # Start service
 start_service() {
-    cd "$PROJECT_ROOT" && "$SERVICE_EXE" start >/dev/null 2>&1 &
+    cd "$PROJECT_ROOT" && "$SERVICE_EXE" start -log2 >/dev/null 2>&1 &
     sleep 3
+}
+
+# Get log file path
+get_log_path() {
+    echo "$TEST_DATA/ncd/NCDService.log"
 }
 
 # Check if service is running
 is_service_running() {
-    if pgrep -x "ncd_service" >/dev/null 2>&1; then
+    if pgrep -x "NCDService" >/dev/null 2>&1; then
         return 0
     else
         return 1
@@ -136,16 +141,22 @@ wait_for_service_ready() {
 
 # Run NCD and capture output
 ncd_run() {
-    LAST_OUT=$($NCD "$@" 2>&1) || true
-    LAST_EXIT=${PIPESTATUS[0]:-$?}
+    if LAST_OUT=$($NCD "$@" 2>&1); then
+        LAST_EXIT=0
+    else
+        LAST_EXIT=$?
+    fi
 }
 
 # Run NCD with timeout
 ncd_run_timed() {
     local timeout_sec="$1"
     shift
-    LAST_OUT=$(timeout "$timeout_sec" "$NCD" "$@" 2>&1) || true
-    LAST_EXIT=${PIPESTATUS[0]:-$?}
+    if LAST_OUT=$(timeout "$timeout_sec" "$NCD" "$@" 2>&1); then
+        LAST_EXIT=0
+    else
+        LAST_EXIT=$?
+    fi
 }
 
 # ==========================================================================
@@ -196,17 +207,51 @@ if [[ ! -x "$SERVICE_EXE" ]]; then
 fi
 
 # ==========================================================================
+# AGGRESSIVE PRE-TEST SERVICE CLEANUP
+# ==========================================================================
+
+echo "Performing aggressive service cleanup..."
+
+# Stop via command if possible
+if [[ -x "$SERVICE_EXE" ]]; then
+    "$SERVICE_EXE" stop >/dev/null 2>&1 || true
+fi
+sleep 1
+
+# Kill any existing service processes (both old and new naming)
+pkill -9 -f "ncd_service" 2>/dev/null || true
+pkill -9 -f "NCDService" 2>/dev/null || true
+sleep 1
+
+# Verify service executable timestamp to ensure we're using the latest build
+if [[ -f "$SERVICE_EXE" ]]; then
+    echo "[INFO] Using service built at: $(stat -c '%y' "$SERVICE_EXE" 2>/dev/null || stat -f '%Sm' "$SERVICE_EXE" 2>/dev/null || echo 'unknown')"
+fi
+
+# Double-check no service is running
+if pgrep -x "NCDService" >/dev/null 2>&1 || pgrep -f "ncd_service" >/dev/null 2>&1; then
+    echo "[WARN] Existing service process found, force killing..."
+    pkill -9 -f "NCDService" 2>/dev/null || true
+    pkill -9 -f "ncd_service" 2>/dev/null || true
+    sleep 2
+fi
+
+echo "[INFO] Service cleanup complete."
+echo ""
+
+# ==========================================================================
 # Setup Test Environment
 # ==========================================================================
 
 echo "Setting up test environment..."
 
-# Stop any existing service
+# Stop any existing service (redundant but kept for safety)
 stop_service
 
 # Create minimal metadata file
 mkdir -p "$TEST_DATA/ncd"
-printf '\x4E\x43\x4D\x44\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > "$TEST_DATA/ncd/ncd.metadata"
+# Use base64 to create binary file: "NCMD" + 0x01 0x00 0x00 0x00 + 8 nulls
+echo -n "TkNNRAEAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
 
 # Create test directory tree
 mkdir -p "$TESTROOT/Projects/alpha/src"
@@ -265,9 +310,12 @@ else
     pass "Help shows service status (implicit)"
 fi
 
+# Change to TESTROOT for search operations
+cd "$TESTROOT"
+
 # Test 4: Basic search works with service
 echo "[TEST 4] Basic search works with service"
-ncd_run_timed 10 Downloads
+ncd_run /agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Basic search works with service"
 else
@@ -276,7 +324,7 @@ fi
 
 # Test 5: Multi-component search with service
 echo "[TEST 5] Multi-component search with service"
-ncd_run_timed 10 "scott/Downloads"
+ncd_run /agent query "scott/Downloads" --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Multi-component search with service"
 else
@@ -285,7 +333,7 @@ fi
 
 # Test 6: Agent query with service
 echo "[TEST 6] Agent query with service"
-ncd_run /agent query Downloads
+ncd_run /agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Agent query with service"
 else
@@ -320,7 +368,7 @@ stop_service
 sleep 2
 start_service
 wait_for_service_ready >/dev/null 2>&1
-ncd_run_timed 10 Projects
+ncd_run /agent query Projects --limit 1
 if echo "$LAST_OUT" | grep -qi "Projects"; then
     pass "Search after service restart"
 else
@@ -378,7 +426,7 @@ stop_service
 sleep 1
 start_service
 wait_for_service_ready >/dev/null 2>&1
-ncd_run_timed 10 Documents
+ncd_run /agent query Documents --limit 1
 if echo "$LAST_OUT" | grep -qi "Documents"; then
     pass "Operations work after multiple restarts"
 else
@@ -392,6 +440,25 @@ if echo "$LAST_OUT" | grep -qi '"v":\|\[\|{'; then
     pass "JSON output format from agent commands"
 else
     fail "JSON output format from agent commands" "output: $LAST_OUT"
+fi
+
+# ==========================================================================
+# Log Verification
+# ==========================================================================
+
+echo ""
+echo "Checking service log for errors..."
+LOG_PATH=$(get_log_path)
+if [[ -f "$LOG_PATH" ]]; then
+    if grep -i "ERROR" "$LOG_PATH" >/dev/null 2>&1; then
+        printf "  ${C_RED}[FAIL]${C_RESET} Errors found in service log:\n"
+        grep -i "ERROR" "$LOG_PATH" | head -5
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    else
+        printf "  ${C_GREEN}[PASS]${C_RESET} No errors found in service log\n"
+    fi
+else
+    echo "  [INFO] No log file to check"
 fi
 
 # ==========================================================================

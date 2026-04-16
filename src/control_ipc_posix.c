@@ -361,6 +361,114 @@ NcdIpcResult ipc_client_get_state_info(NcdIpcClient *client, NcdIpcStateInfo *in
     return NCD_IPC_OK;
 }
 
+NcdIpcResult ipc_client_get_detailed_status(NcdIpcClient *client, NcdIpcDetailedStatus *info) {
+    if (!info) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    void *response = NULL;
+    size_t response_len = 0;
+    
+    NcdIpcResult result = send_receive(client, NCD_MSG_GET_DETAILED_STATUS,
+                                        NULL, 0, &response, &response_len);
+    
+    if (result != NCD_IPC_OK) {
+        return result;
+    }
+    
+    if (!response || response_len < sizeof(NcdDetailedStatusPayload)) {
+        free(response);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    NcdDetailedStatusPayload *payload = (NcdDetailedStatusPayload *)response;
+    
+    info->protocol_version = payload->protocol_version;
+    info->runtime_state = payload->runtime_state;
+    info->log_level = payload->log_level;
+    info->pending_count = payload->pending_count;
+    info->dirty_flags = payload->dirty_flags;
+    info->meta_generation = payload->meta_generation;
+    info->db_generation = payload->db_generation;
+    info->drive_count = payload->drive_count;
+    if (info->drive_count > NCD_IPC_MAX_DETAILED_DRIVES) {
+        info->drive_count = NCD_IPC_MAX_DETAILED_DRIVES;
+    }
+    
+    memcpy(info->app_version, payload->app_version, sizeof(info->app_version));
+    info->app_version[sizeof(info->app_version) - 1] = '\0';
+    memcpy(info->build_stamp, payload->build_stamp, sizeof(info->build_stamp));
+    info->build_stamp[sizeof(info->build_stamp) - 1] = '\0';
+    
+    info->status_message[0] = '\0';
+    info->meta_path[0] = '\0';
+    info->log_path[0] = '\0';
+    for (uint32_t i = 0; i < NCD_IPC_MAX_DETAILED_DRIVES; i++) {
+        info->drives[i].letter = 0;
+        info->drives[i].dir_count = 0;
+        info->drives[i].db_path[0] = '\0';
+    }
+    
+    char *data = (char *)response + sizeof(NcdDetailedStatusPayload);
+    size_t remaining = response_len - sizeof(NcdDetailedStatusPayload);
+    
+    /* Parse status message */
+    if (payload->status_msg_len > 0 && payload->status_msg_len <= remaining) {
+        if (payload->status_msg_len <= sizeof(info->status_message)) {
+            memcpy(info->status_message, data, payload->status_msg_len);
+            info->status_message[payload->status_msg_len - 1] = '\0';
+        }
+        data += payload->status_msg_len;
+        remaining -= payload->status_msg_len;
+    }
+    
+    /* Parse metadata path */
+    if (payload->meta_path_len > 0 && payload->meta_path_len <= remaining) {
+        if (payload->meta_path_len <= sizeof(info->meta_path)) {
+            memcpy(info->meta_path, data, payload->meta_path_len);
+            info->meta_path[payload->meta_path_len - 1] = '\0';
+        }
+        data += payload->meta_path_len;
+        remaining -= payload->meta_path_len;
+    }
+    
+    /* Parse log path */
+    if (payload->log_path_len > 0 && payload->log_path_len <= remaining) {
+        if (payload->log_path_len <= sizeof(info->log_path)) {
+            memcpy(info->log_path, data, payload->log_path_len);
+            info->log_path[payload->log_path_len - 1] = '\0';
+        }
+        data += payload->log_path_len;
+        remaining -= payload->log_path_len;
+    }
+    
+    /* Parse drive infos */
+    for (uint32_t i = 0; i < info->drive_count; i++) {
+        if (remaining < sizeof(NcdDetailedStatusDriveHeader)) {
+            break;
+        }
+        NcdDetailedStatusDriveHeader *drv = (NcdDetailedStatusDriveHeader *)data;
+        info->drives[i].letter = drv->letter;
+        info->drives[i].dir_count = drv->dir_count;
+        data += sizeof(NcdDetailedStatusDriveHeader);
+        remaining -= sizeof(NcdDetailedStatusDriveHeader);
+        
+        if (drv->db_path_len > 0 && drv->db_path_len <= remaining &&
+            drv->db_path_len <= sizeof(info->drives[i].db_path)) {
+            memcpy(info->drives[i].db_path, data, drv->db_path_len);
+            info->drives[i].db_path[drv->db_path_len - 1] = '\0';
+            data += drv->db_path_len;
+            remaining -= drv->db_path_len;
+        } else if (drv->db_path_len > 0 && drv->db_path_len <= remaining) {
+            data += drv->db_path_len;
+            remaining -= drv->db_path_len;
+        }
+    }
+    
+    free(response);
+    return NCD_IPC_OK;
+}
+
 NcdIpcResult ipc_client_submit_heuristic(NcdIpcClient *client,
                                           const char *search,
                                           const char *target) {

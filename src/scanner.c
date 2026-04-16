@@ -488,6 +488,14 @@ int scan_mounts(NcdDatabase *db,
     static char mount_bufs[26][MAX_PATH];
     static const char *mount_ptrs[26];
 
+    /* Prevent full system scans in test mode */
+    if (!mounts) {
+        const char *test_mode = getenv("NCD_TEST_MODE");
+        if (test_mode && test_mode[0]) {
+            return 0;
+        }
+    }
+
     /* If no mounts specified (NULL), enumerate them via platform code.
      * Note: count==0 with explicit mounts array means empty list, not auto-enumerate. */
     if (!mounts) {
@@ -734,29 +742,54 @@ int scan_subdirectory(NcdDatabase   *db,
         db_make_mutable(db);
     }
 
-    /* Find or create the drive */
-    DriveData *drv = NULL;
+    /* Remove stale data for this drive if re-scanning. */
     for (int i = 0; i < db->drive_count; i++) {
         if (db->drives[i].letter == drive_letter) {
-            drv = &db->drives[i];
+            if (!db->is_blob) {
+                free(db->drives[i].dirs);
+                free(db->drives[i].name_pool);
+            }
+            memmove(&db->drives[i], &db->drives[i + 1],
+                    (size_t)(db->drive_count - i - 1) * sizeof(DriveData));
+            db->drive_count--;
             break;
         }
     }
-    
-    if (!drv) {
-        drv = db_add_drive(db, drive_letter);
+
+    /* Always create a fresh drive */
+    DriveData *drv = db_add_drive(db, drive_letter);
 #if NCD_PLATFORM_WINDOWS
         drv->type = DRIVE_FIXED;
-        char mount_path[MAX_PATH];
-        snprintf(mount_path, sizeof(mount_path), "%c:\\", drive_letter);
-        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+        /* Use the PARENT of subdirectory path as the mount point.
+         * The subdirectory name itself becomes the root entry. This prevents path
+         * duplication when reconstructing full paths. */
+        char parent_path[MAX_PATH];
+        if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
+            platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
+        } else {
+            char mount_path[MAX_PATH];
+            snprintf(mount_path, sizeof(mount_path), "%c:\\", drive_letter);
+            platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+        }
 #else
         drv->type = 0;
-        char mount_path[MAX_PATH];
-        snprintf(mount_path, sizeof(mount_path), "/mnt/%c", tolower((unsigned char)drive_letter));
-        platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+        /* For drive 0 (native Linux), use the PARENT of subdirectory path as the mount point.
+         * The subdirectory name itself becomes the root entry. This prevents path duplication
+         * when reconstructing full paths (e.g., /tmp/parent/child vs /tmp/parent/child/child). */
+        if (drive_letter == 0) {
+            char parent_path[MAX_PATH];
+            if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
+                platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
+            } else {
+                /* Fallback to root if no parent */
+                platform_strncpy_s(drv->label, sizeof(drv->label), "/");
+            }
+        } else {
+            char mount_path[MAX_PATH];
+            snprintf(mount_path, sizeof(mount_path), "/mnt/%c", tolower((unsigned char)drive_letter));
+            platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+        }
 #endif
-    }
     
     /* Normalize path */
     char norm_path[MAX_PATH];
@@ -766,8 +799,13 @@ int scan_subdirectory(NcdDatabase   *db,
     /* Get the directory name */
     const char *subdir_name = path_leaf(norm_path);
     
-    /* Add the subdirectory entry */
-    int subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
+    /* For drive roots (e.g., C:\) or filesystem roots (/), don't add a
+     * synthetic backslash entry. Scan contents directly as root-level
+     * entries to avoid path duplication in build_path_map/agent tree. */
+    int subdir_id = -1;
+    if (!((subdir_name[0] == '\\' || subdir_name[0] == '/') && subdir_name[1] == '\0')) {
+        subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
+    }
     
     /* Create scan context with a local DriveStatus for progress tracking.
      * scan_mounts() provides DriveStatus arrays for each mount, but

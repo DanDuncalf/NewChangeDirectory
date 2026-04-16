@@ -25,7 +25,10 @@ const char *db_get_last_error(void);
 /* Allocate an empty database. */
 NcdDatabase *db_create(void);
 
-/* Release all memory owned by db (including the db struct itself). */
+/* Increment reference count. Returns db for convenience. */
+NcdDatabase *db_retain(NcdDatabase *db);
+
+/* Decrement reference count and free if it reaches zero. */
 void db_free(NcdDatabase *db);
 
 /*
@@ -38,12 +41,6 @@ void db_make_mutable(NcdDatabase *db);
 /* --------------------------------------------------------- persistence    */
 
 /*
- * Load database from path (JSON format, legacy).
- * Returns NULL on I/O or parse error.
- */
-NcdDatabase *db_load(const char *path);
-
-/*
  * Load database from path (binary format).
  * Returns NULL on I/O or format error.
  * On success, all directory data is mapped from a single heap buffer;
@@ -52,18 +49,10 @@ NcdDatabase *db_load(const char *path);
 NcdDatabase *db_load_binary(const char *path);
 
 /*
- * Auto-detecting load: inspects the first 4 bytes of path to decide
- * between binary and JSON format.  If the file is JSON, it is loaded
- * and then silently resaved in binary format for faster subsequent loads.
- * Returns NULL on I/O or parse error.
+ * Auto-detecting load: inspects the first 4 bytes of path to verify
+ * binary format and version. Returns NULL on I/O or format error.
  */
 NcdDatabase *db_load_auto(const char *path);
-
-/*
- * Save database to path (JSON format, atomic rename).
- * Returns true on success.
- */
-bool db_save(const NcdDatabase *db, const char *path);
 
 /*
  * Save database to path (binary format, atomic rename).
@@ -211,34 +200,14 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta);
 #define NCD_MAX_GROUPS     256
 
 /*
- * Get the path to the group database file.
- * DEPRECATED: Groups are now stored in metadata. Kept for migration.
- */
-char *db_group_path(char *buf, size_t buf_size);
-
-/*
- * Legacy: Create a new empty group database.
- * DEPRECATED: Groups are now stored in metadata.
+ * Create a new empty group database.
  */
 NcdGroupDb *db_group_create(void);
 
 /*
- * Legacy: Free a group database and all its entries.
- * DEPRECATED: Groups are now stored in metadata.
+ * Free a group database and all its entries.
  */
 void db_group_free(NcdGroupDb *gdb);
-
-/*
- * Legacy: Load group database from disk (for migration).
- * Returns NULL if file doesn't exist or is corrupt.
- */
-NcdGroupDb *db_group_load(void);
-
-/*
- * Legacy: Save group database to disk.
- * DEPRECATED: Groups are now stored in metadata.
- */
-bool db_group_save(const NcdGroupDb *gdb);
 
 /*
  * Add or update a group in metadata.
@@ -345,6 +314,13 @@ void db_metadata_set_override(const char *path);
 bool db_metadata_exists(void);
 
 /*
+ * Get the path to the NCD database directory (where logs are stored).
+ * Creates the directory if it doesn't exist.
+ * Returns path in buf (e.g., %LOCALAPPDATA%\NCD), or NULL on failure.
+ */
+char *db_logs_path(char *buf, size_t buf_size);
+
+/*
  * Create a new empty metadata container.
  * Call db_metadata_free() when done.
  */
@@ -357,8 +333,6 @@ void db_metadata_free(NcdMetadata *meta);
 
 /*
  * Load metadata from disk.
- * Tries ncd.metadata first. If not found, migrates from legacy files
- * (ncd.config, ncd.groups, ncd.history) and creates ncd.metadata.
  * 
  * Returns metadata container on success, or NULL on failure.
  * On failure, you can still use the returned container with default values.
@@ -371,18 +345,7 @@ NcdMetadata *db_metadata_load(void);
  */
 bool db_metadata_save(NcdMetadata *meta);
 
-/*
- * Migrate from legacy files to consolidated metadata.
- * Called automatically by db_metadata_load() if ncd.metadata doesn't exist.
- * Returns true on success, false if no legacy files found or migration failed.
- */
 
-
-/*
- * Delete legacy files after successful migration.
- * Returns number of files deleted.
- */
-int db_metadata_cleanup_legacy(void);
 
 /* --------------------------------------------------------- enhanced heuristics  */
 
@@ -498,14 +461,14 @@ bool db_dir_history_add(NcdMetadata *meta, const char *path, char drive);
  * Index 0 is the most recent, index count-1 is the oldest.
  * Returns pointer to entry, or NULL if index is out of range.
  */
-const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index);
+const NcdDirHistoryEntry *db_dir_history_get(const NcdMetadata *meta, int index);
 
 /*
  * Get a directory from history by display index (1-based, FIFO order).
  * Display index 1 is the oldest, display index count is the most recent.
  * Returns pointer to entry, or NULL if index is out of range (1 to count).
  */
-const NcdDirHistoryEntry *db_dir_history_get_by_display_index(NcdMetadata *meta, int display_index);
+const NcdDirHistoryEntry *db_dir_history_get_by_display_index(const NcdMetadata *meta, int display_index);
 
 /*
  * Swap the first two entries in the history list (ping-pong).
@@ -516,7 +479,7 @@ void db_dir_history_swap_first_two(NcdMetadata *meta);
 /*
  * Get the number of entries in the history list.
  */
-int db_dir_history_count(NcdMetadata *meta);
+int db_dir_history_count(const NcdMetadata *meta);
 
 /*
  * Clear all history entries.

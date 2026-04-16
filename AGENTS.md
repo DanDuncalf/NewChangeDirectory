@@ -66,10 +66,10 @@ NewChangeDirectory/
 │   ├── _ncd                  # Zsh completion
 │   └── ncd.ps1               # PowerShell completion
 ├── test/                     # Test suite
-│   ├── test_service_win.bat       # [NEW] Windows Service tests (isolated)
+│   ├── Test-Service-Windows.bat   # Windows Service tests (isolated)
 │   ├── test_service_wsl.sh        # [NEW] WSL Service tests (isolated)
-│   ├── test_ncd_win_standalone.bat   # [NEW] NCD Windows - standalone
-│   ├── test_ncd_win_with_service.bat # [NEW] NCD Windows - with service
+│   ├── Test-NCD-Windows-Standalone.bat # NCD Windows - standalone
+│   ├── Test-NCD-Windows-With-Service.bat # NCD Windows - with service
 │   ├── test_ncd_wsl_standalone.sh    # [NEW] NCD WSL - standalone
 │   ├── test_ncd_wsl_with_service.sh  # [NEW] NCD WSL - with service
 │   ├── test_framework.h/.c   # Minimal unit testing framework
@@ -169,6 +169,182 @@ Open `src/ncd.sln` in Visual Studio 2019/2022 and build from IDE.
 
 ## Testing
 
+> **📋 For AI Agents:** See [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) for comprehensive agent-specific testing instructions.
+
+### Quick Start (Recommended Test Runners)
+
+NCD provides **three safe test runners** that all use PowerShell internally for guaranteed cleanup. Even if you press Ctrl+C during tests, your environment will be restored.
+
+**Why PowerShell?** Pure batch files cannot trap Ctrl+C interrupts, which can leave your environment corrupted. These runners delegate to PowerShell which uses `try/finally` blocks that CAN trap Ctrl+C.
+
+#### Option 1: Build and Run All Tests (Recommended for CI/Full Validation)
+
+```batch
+:: Full build + test cycle - builds everything then runs all tests
+Build-And-Run-All-Tests.bat
+
+:: Options
+Build-And-Run-All-Tests.bat --windows-only    :: Windows only
+Build-And-Run-All-Tests.bat --quick           :: Skip fuzz/benchmarks
+Build-And-Run-All-Tests.bat --no-service      :: Skip service tests
+```
+
+#### Option 2: Run All Tests (Pre-built Binaries)
+
+```batch
+:: Run all tests WITHOUT building (binaries must already exist)
+Run-All-Tests.bat
+
+:: Options
+Run-All-Tests.bat --windows-only    :: Windows only
+Run-All-Tests.bat --quick           :: Skip fuzz/benchmarks
+Run-All-Tests.bat --skip-unit-tests :: Skip unit tests
+```
+
+#### Option 3: Run Specific Test Suites (Development)
+
+```batch
+:: Run specific test suites
+Run-Tests-Safe.bat unit              :: Unit tests only
+Run-Tests-Safe.bat integration       :: Integration tests (6 suites)
+Run-Tests-Safe.bat service           :: Service tests only
+Run-Tests-Safe.bat ncd               :: NCD standalone tests
+Run-Tests-Safe.bat windows           :: All Windows tests
+Run-Tests-Safe.bat wsl               :: All WSL tests
+
+:: Environment management
+Run-Tests-Safe.bat --check           :: Check if environment is clean
+Run-Tests-Safe.bat --repair          :: Repair corrupted environment
+```
+
+**All three runners are Ctrl+C safe and restore your environment.**
+
+### Complete Build and Test Process
+
+This section describes the complete process to build NCD and run all tests on all platforms.
+
+#### Step 1: Build NCD
+
+**Windows (MSVC):**
+```batch
+:: From project root - auto-detects Visual Studio
+build.bat
+
+:: Verify binaries exist
+dir NewChangeDirectory.exe
+dir NCDService.exe
+```
+
+**Windows (MinGW):**
+```batch
+make
+dir NewChangeDirectory.exe
+dir NCDService.exe
+```
+
+**Linux/WSL:**
+```bash
+chmod +x build.sh
+./build.sh
+ls -la NewChangeDirectory
+ls -la ncd_service
+```
+
+#### Step 2: Build Test Executables
+
+**Windows:**
+```batch
+cd test
+build-tests.bat
+```
+
+**Linux/WSL:**
+```bash
+cd test
+make all
+```
+
+#### Step 3: Run Tests
+
+**Option A: Run All Tests (Complete Test Suite)**
+
+Runs both unit tests and integration tests across all platforms:
+
+```batch
+:: From project root - Run all tests (pre-built binaries)
+Run-All-Tests.bat
+
+:: From project root - Build then run all tests
+Build-And-Run-All-Tests.bat
+
+:: Windows only
+Run-All-Tests.bat --windows-only
+Build-And-Run-All-Tests.bat --windows-only
+
+:: Quick mode (skip fuzz/benchmarks)
+Run-All-Tests.bat --quick
+Build-And-Run-All-Tests.bat --quick
+```
+
+**Option B: Run Only Unit Tests**
+
+```batch
+:: Windows - from test directory
+cd test
+Run-All-Unit-Tests.bat
+
+:: Skip fuzz tests (faster)
+Run-All-Unit-Tests.bat --skip-fuzz
+
+:: Linux/WSL
+cd test
+make test
+```
+
+**Option C: Run Only Integration Tests (6 Test Suites)**
+
+```batch
+:: All 6 test suites (use the main runners for safety)
+Run-All-Tests.bat --skip-unit-tests
+Build-And-Run-All-Tests.bat --skip-unit-tests
+
+:: Individual suites (for development only)
+Test-Service-Windows.bat              :: Service isolated (Windows)
+Test-NCD-Windows-Standalone.bat       :: NCD standalone (Windows)
+Test-NCD-Windows-With-Service.bat     :: NCD with service (Windows)
+
+:: WSL (from project root)
+bash test/Test-Service-WSL.sh
+bash test/Test-NCD-WSL-Standalone.sh
+bash test/Test-NCD-WSL-With-Service.sh
+```
+
+**Note:** The individual test scripts should only be used during development when working on specific test scenarios. For normal testing, always use `Run-All-Tests.bat` or `Build-And-Run-All-Tests.bat`.
+
+### Test Runner Reference
+
+#### Primary Runners (Safe - Use These)
+
+| Script | Purpose | When to Use |
+|--------|---------|-------------|
+| `Build-And-Run-All-Tests.bat` | **Build + test all** - Full build and test cycle, Ctrl+C safe | **RECOMMENDED** - CI builds, full validation |
+| `Run-All-Tests.bat` | **Run all tests** - Run pre-built tests, Ctrl+C safe | **RECOMMENDED** - When binaries already built |
+| `Run-Tests-Safe.bat` | **Specific suites** - Run individual test suites, Ctrl+C safe | Development work on specific areas |
+| `Run-NcdTests.ps1` | PowerShell native with full control | When you need maximum flexibility |
+
+#### Development Helpers (Use with Caution)
+
+| Script | Purpose | When to Use |
+|--------|---------|-------------|
+| `test\Run-All-Unit-Tests.bat` | Runs unit tests only | Quick validation during development |
+| `test\build-and-run-tests.bat` | Builds and runs unit tests | Unit test development |
+| `Check-Environment.ps1` | Environment diagnostics and repair | When tests leave environment corrupted |
+| `test\Test-Service-Windows.bat` | Single integration test suite | **Development only** - Working on service tests |
+| `test\Test-NCD-Windows-Standalone.bat` | Single integration test suite | **Development only** - Working on NCD tests |
+| `test\Test-NCD-Windows-With-Service.bat` | Single integration test suite | **Development only** - Working on integration |
+
+**IMPORTANT:** For normal testing, always use the three primary runners at the project root. The individual test scripts in the `test\` directory should only be used when actively developing or debugging specific test scenarios, as they require proper environment setup that the primary runners handle automatically.
+
 ### Test Isolation (CRITICAL)
 
 All tests must be **completely isolated** from the user's real data:
@@ -186,80 +362,60 @@ All tests must be **completely isolated** from the user's real data:
 4. **Clean up after tests** - Remove all test files and databases
 5. **Use `NCD_TEST_MODE=1`** - Set this environment variable to disable background rescans during testing
 
-### Comprehensive Test Runner (6 Test Suites)
+**Important:** The `NCD_TEST_MODE` environment variable must be set for BOTH the NCD client AND the service. When starting the service in tests, ensure the environment variable is passed to the service process. The service checks this variable to prevent automatic background rescans that could scan user drives.
 
-The comprehensive test runner executes **six test suites** organized by platform and whether testing the service in isolation or the NCD client with/without service:
+### Test Environment Variables
 
-| # | Test Script | Platform | Description |
-|---|-------------|----------|-------------|
-| 1 | `test_service_win.bat` | Windows | Service tests without client (isolated) |
-| 2 | `test_service_wsl.sh` | WSL | Service tests without client (isolated) |
-| 3 | `test_ncd_win_standalone.bat` | Windows | NCD client tests - standalone mode |
-| 4 | `test_ncd_win_with_service.bat` | Windows | NCD client tests - with service |
-| 5 | `test_ncd_wsl_standalone.sh` | WSL | NCD client tests - standalone mode |
-| 6 | `test_ncd_wsl_with_service.sh` | WSL | NCD client tests - with service |
+The test runners automatically handle these environment variables:
 
-**Quick Run (All Tests from Root):**
+| Variable | Purpose | Set By |
+|----------|---------|--------|
+| `NCD_TEST_MODE=1` | Disables automatic background rescans | All test runners |
+| `LOCALAPPDATA` | Isolates metadata from user data (set to temp dir) | Windows test runners |
+| `XDG_DATA_HOME` | Isolates metadata on Linux/WSL (set to temp dir) | WSL test runners |
+| `NCD_UI_KEYS` | Comma-separated keys to inject into TUI | Manual testing/CI |
+| `NCD_UI_KEYS_FILE` | File containing keys to inject | Manual testing/CI |
+| `NCD_UI_KEYS_STRICT=1` | Exit TUI with ESC when keys exhausted | Automated testing |
+| `NCD_UI_KEY_TIMEOUT_MS` | Timeout for key injection (milliseconds) | Automated testing |
+| `NCD_TUI_TEST=1` | Enable headless TUI mode (stdout output) | Automated testing |
+| `NCD_TUI_COLS` | Terminal width for headless mode (default: 80) | Automated testing |
+| `NCD_TUI_ROWS` | Terminal height for headless mode (default: 25) | Automated testing |
+
+**Environment Isolation Mechanism:**
+
+The primary test runners implement multiple layers of isolation:
+
+1. **PowerShell Wrapper Layer:**
+   - Creates isolated temp directory: `%TEMP%\ncd_test_YYYYMMDD_HHMMSS_RAND\`
+   - Sets `LOCALAPPDATA` (Windows) and `XDG_DATA_HOME` (WSL) to this temp directory
+   - Sets `NCD_TEST_MODE=1` to prevent background rescans
+
+2. **Individual Test Script Layer:**
+   - Each test script creates its own sub-directory within the temp location
+   - Uses `-conf` option to specify custom metadata paths
+   - Uses `/d` option to specify database locations
+   - Only scans test VHDs/ramdisks, never user drives
+
+3. **Cleanup on ALL Exit Paths:**
+   - Services stopped via `Stop-NcdProcesses`
+   - Temp directories removed via `Remove-TestTempDirs`
+   - TUI variables cleared (`NCD_UI*`, `NCD_TUI*`) via `Clear-TuiEnvironmentVariables`
+   - Environment restored via `Restore-EnvironmentState`
+
+**Important:** All `NCD_UI*` and `NCD_TUI*` environment variables are automatically cleared after tests complete. This ensures that headless mode, key injection, or TUI display settings from tests do not affect subsequent NCD usage in your shell.
+
+| Runner | Save Method | Restore Method | Ctrl+C Safe | Isolated Temp Dir |
+|--------|-------------|----------------|-------------|-------------------|
+| `Build-And-Run-All-Tests.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
+| `Run-All-Tests.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
+| `Run-Tests-Safe.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
+| `Run-NcdTests.ps1` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
+| Individual `test\*.bat` files | Various | Various | ❌ No | ⚠️ Partial |
+
+**If your environment gets corrupted**, run:
 ```batch
-:: Builds and runs all 6 test suites
-build_and_run_alltests.bat
+Run-Tests-Safe.bat --repair
 ```
-
-**Run Individual Test Suites:**
-```batch
-:: Windows Service tests (isolated)
-test\test_service_win.bat
-
-:: Windows NCD without service
-test\test_ncd_win_standalone.bat
-
-:: Windows NCD with service
-test\test_ncd_win_with_service.bat
-```
-
-```bash
-# WSL Service tests (isolated)
-bash test/test_service_wsl.sh
-
-# WSL NCD without service
-bash test/test_ncd_wsl_standalone.sh
-
-# WSL NCD with service
-bash test/test_ncd_wsl_with_service.sh
-```
-
-**Alternative Runners:**
-
-*PowerShell (Windows or WSL):*
-```powershell
-cd test
-powershell -ExecutionPolicy Bypass -File run_all_tests.ps1
-```
-
-*Bash (WSL):*
-```bash
-cd test
-./run_all_tests.sh
-```
-
-*Makefile (WSL):*
-```bash
-cd test
-make all-environments          # All environments
-make all-environments-standalone # Standalone only (no service)
-```
-
-**Options:**
-```bash
---windows-only       # Run only Windows tests
---wsl-only           # Run only WSL tests
---no-service         # Skip tests with service running
---skip-unit-tests    # Skip unit tests
---skip-feature-tests # Skip feature tests
---verbose            # Show detailed test output
-```
-
-This ensures all functionality works correctly regardless of platform or whether the optional resident service is running.
 
 ### Running Unit Tests
 
@@ -317,21 +473,33 @@ cd test && make service-parity
 
 ### Test Coverage
 
-The NCD test suite contains **325+ unit tests** across multiple test files. See `test/README.md` for comprehensive documentation.
+The NCD test suite contains **880+ unit tests** across multiple test files following a parallel expansion effort. See `test/README.md` and `test/COVERAGE_REPORT.md` for comprehensive documentation.
 
 **Coverage by Category:**
 
 | Category | Tests | Coverage % | Notes |
 |----------|-------|------------|-------|
-| Database operations | 52 | 90% | Excellent |
-| Search/matching | 23 | 85% | Very good |
-| CLI parsing | 62 | 90% | Good (extended tests added) |
+| Database operations | 110 | 95% | Excellent (extended tests added) |
+| Search/matching | 53 | 97% | Excellent (extended tests added) |
+| CLI parsing | 91 | 98% | Excellent (edge cases covered) |
 | Agent mode args | 47 | 75% | Good (parsing + integration) |
-| Platform abstraction | 46 | 70% | Good (extended tests added) |
-| Shared library | 61 | 80% | Good (string builder + memory) |
-| Service lifecycle | 46 | 80% | Good |
+| Platform abstraction | 61 | 90% | Excellent (extended tests added) |
+| Shared library | 61 | 95% | Excellent |
+| Service lifecycle | 96 | 95% | Excellent (stress tests added) |
+| UI/Interaction | 103 | 92% | Excellent (extended tests added) |
+| Scanner/Input | 44 | 92% | Excellent (extended tests added) |
+| Stress/Fuzz | 42 | N/A | Comprehensive robustness testing |
 | Integration/feature | 119+ | 85% | Good (exit codes + behavior) |
-| **Overall** | **325+** | **~85%** | **Very good for C project** |
+| **Overall** | **880+** | **~95%** | **Excellent coverage** |
+
+**Parallel Expansion (430 new tests):**
+Following the `PARALLEL_TEST_COVERAGE_PLAN.md`, 4 agents worked in parallel to add comprehensive test coverage:
+- **Agent 1 (Data Core):** 90 tests - Database extended, odd cases, fuzzing
+- **Agent 2 (Service IPC):** 100 tests - Service stress, IPC extended, SHM stress
+- **Agent 3 (UI & Main):** 100 tests - UI extended, exclusions, main flow
+- **Agent 4 (Input Processing):** 140 tests - CLI edge cases, scanner/matcher extended, stress
+
+See `test/PARALLEL_INTEGRATION_REPORT.md` for detailed breakdown.
 
 **Database Tests (test_database.c - 34 tests):**
 - **Basic:** `create_and_free`, `add_drive`, `add_directory`, `full_path_reconstruction`
@@ -432,6 +600,89 @@ NCD automatically detects when stdout is redirected (e.g., in tests or when pipi
 
 The detection uses `GetConsoleMode()` on Windows and `isatty()` on Linux. When redirected, output goes through `fputs(stdout)`; when in a console, output uses `WriteConsoleA()` for better TUI performance.
 
+### Keystroke Injection for TUI Testing
+
+NCD supports automated keystroke injection for testing and scripting the interactive TUI (config editor, selector, navigator, etc.). This allows batch files and scripts to programmatically drive the UI without human interaction.
+
+**Environment Variables:**
+
+| Variable | Purpose |
+|----------|---------|
+| `NCD_UI_KEYS` | Comma-separated list of keys to inject (e.g., `DOWN,ENTER,TEXT:hello`) |
+| `NCD_UI_KEYS_FILE` | Path to a file containing keys to inject |
+| `NCD_UI_KEYS_STRICT` | If set to `1`, returns ESC when injected keys are exhausted (deterministic failure) |
+| `NCD_UI_KEY_TIMEOUT_MS` | Timeout in milliseconds to wait for next key (default: waits indefinitely) |
+| `NCD_TUI_TEST` | Set to `1` to enable stdio backend for headless testing (dumps TUI to stdout) |
+| `NCD_TUI_COLS` | Number of columns for TUI display (headless mode, default: 80) |
+| `NCD_TUI_ROWS` | Number of rows for TUI display (headless mode, default: 25) |
+
+**Key Tokens:**
+
+| Token | Description |
+|-------|-------------|
+| `UP`, `DOWN`, `LEFT`, `RIGHT` | Arrow keys |
+| `PGUP`, `PGDN` | Page Up/Down |
+| `HOME`, `END` | Home/End keys |
+| `ENTER` | Enter/Return key |
+| `ESC` | Escape key |
+| `TAB` | Tab key |
+| `BACKSPACE` | Backspace key |
+| `DELETE` | Delete key |
+| `SPACE` | Space bar |
+| `TEXT:abc` | Type literal text (e.g., `TEXT:-1` types "-1") |
+
+**Example - Disable Auto-Rescan via Config Editor:**
+
+```batch
+:: Navigate to rescan_interval field (6th item), enter -1, save
+set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
+ncd /c
+set "NCD_UI_KEYS="
+```
+
+**Key Sequence Explanation:**
+1. `DOWN,DOWN,DOWN,DOWN,DOWN` - Navigate to "Auto-rescan hours" (6th config item)
+2. `ENTER` - Enter input mode for the numeric field
+3. `TEXT:-1` - Type "-1" (never auto-rescan)
+4. `ENTER` - Confirm the value
+5. `ENTER` - Save configuration and exit
+
+**Headless TUI Testing Mode:**
+
+For automated testing without a real console, enable the stdio backend:
+
+```batch
+:: Enable headless mode, set terminal size, inject keystrokes
+set "NCD_TUI_TEST=1"
+set "NCD_TUI_COLS=80"
+set "NCD_TUI_ROWS=25"
+set "NCD_UI_KEYS=DOWN,ENTER,TEXT:mydir,ENTER"
+set "NCD_UI_KEYS_STRICT=1"
+
+:: Run NCD - output goes to stdout instead of console
+ncd /c > tui_output.txt 2>&1
+
+:: Clean up
+set "NCD_TUI_TEST="
+set "NCD_TUI_COLS="
+set "NCD_TUI_ROWS="
+set "NCD_UI_KEYS="
+set "NCD_UI_KEYS_STRICT="
+```
+
+In headless mode (`NCD_TUI_TEST=1`):
+- TUI output is written to stdout as text instead of console control codes
+- Keystrokes are injected from `NCD_UI_KEYS` or `NCD_UI_KEYS_FILE`
+- Display size is controlled by `NCD_TUI_COLS`/`NCD_TUI_ROWS`
+- Useful for CI/CD pipelines and automated testing
+
+**Notes:**
+- Key names are case-insensitive (`enter`, `ENTER`, `Enter` all work)
+- Keys are consumed from the queue in order
+- Once the queue is empty, normal console input resumes (unless `NCD_UI_KEYS_STRICT=1`)
+- Use `NCD_UI_KEYS_STRICT=1` to make the TUI exit with ESC when keys are exhausted (deterministic failure)
+- Use `NCD_UI_KEY_TIMEOUT_MS=5000` to set a 5-second timeout waiting for keys
+
 ## Code Style Guidelines
 
 ### Naming Conventions
@@ -521,6 +772,76 @@ typedef struct {
 } NcdMetadata;
 ```
 
+### Troubleshooting Test Issues
+
+#### "LOCALAPPDATA points to test temp directory"
+
+**Symptoms:**
+- NCD reports "No database found"
+- `ncd /agent check --db-age` shows wrong location
+- Environment check reports corruption
+
+**Cause:** Previous test was interrupted with Ctrl+C (batch file limitation)
+
+**Fix:**
+```batch
+:: Quick repair
+Run-Tests-Safe.bat --repair
+
+:: Or manually
+set LOCALAPPDATA=%USERPROFILE%\AppData\Local
+set NCD_TEST_MODE=
+```
+
+#### "Tests interrupted and environment not cleaned up"
+
+**Cause:** Batch files cannot trap Ctrl+C
+
+**Prevention:**
+```batch
+:: Use PowerShell runner (Ctrl+C safe!)
+Run-Tests-Safe.bat
+
+:: Or use isolated mode (runs in subprocess)
+test\Run-Isolated.bat test\Test-Service-Windows.bat
+```
+
+**Repair:**
+```powershell
+# Comprehensive repair
+.\Check-Environment.ps1 -Repair
+
+# Or use the batch wrapper
+Run-Tests-Safe.bat --repair
+```
+
+#### "Cannot run PowerShell scripts"
+
+**Error:** "Execution of scripts is disabled on this system"
+
+**Fix:**
+```powershell
+# Run as Administrator
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Or use the batch wrapper (bypasses policy)
+Run-Tests-Safe.bat
+```
+
+#### "Service tests timeout or hang"
+
+**Cause:** Previous service instance still running
+
+**Fix:**
+```batch
+:: Kill all NCD processes
+taskkill /F /IM NCDService.exe
+taskkill /F /IM NewChangeDirectory.exe
+
+:: Or use PowerShell module
+powershell -Command "Import-Module .\test\PowerShell\NcdTestUtils.psm1; Stop-NcdService"
+```
+
 ## Usage
 
 ### Command Line
@@ -584,8 +905,19 @@ ncd /agent mkdirs [--file <path>] [--json] <content>  # Create directory tree
 
 # Service management
 ncd_service start         # Start resident service (faster startup)
-ncd_service stop          # Stop resident service
+ncd_service stop          # Stop resident service (waits up to 5s, returns 0 on success, 1 on error)
+ncd_service stop block N  # Stop service and wait N seconds (-1 if timeout)
 ncd /agent check --service-status  # Check if service is running
+
+# Service Logging (for debugging crashes)
+# Log file location: %LOCALAPPDATA%\NCD\ncd_service.log (Windows)
+#                    ~/.local/share/ncd/ncd_service.log (Linux)
+ncd_service start -log0   # Log service start, rescan requests, client requests
+ncd_service start -log1   # Level 0 + responses sent to clients  
+ncd_service start -log2   # Level 1 + detailed startup/shutdown (crash diagnosis)
+ncd_service start -log3   # Reserved for future debugging
+ncd_service start -log4   # Reserved for future debugging
+ncd_service start -log5   # Reserved for future debugging
 
 # Configuration Override
 ncd -conf <path>          # Use custom metadata file path
@@ -668,11 +1000,13 @@ autoload -U compinit && compinit
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
 - Metadata: `%LOCALAPPDATA%\NCD\ncd.metadata`
+- Service log: `%LOCALAPPDATA%\NCD\ncd_service.log`
 - Legacy (migrated to metadata): `%LOCALAPPDATA%\NCD\ncd.config`, `ncd.groups`, `ncd.history`
 
 **Linux:**
 - Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
 - Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
+- Service log: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_service.log`
 
 ### Binary Format
 
@@ -776,6 +1110,306 @@ This mirrors Norton Commander's behavior for both search-driven and browse-drive
 - Eliminates disk I/O on client startup when service is running
 - Client falls back to standalone mode if service unavailable
 - Service handles persistence and snapshot publication
+
+### Service Shutdown Behavior
+
+When stopping the service, the following occurs:
+
+1. **Graceful shutdown is always attempted first**: The `stop` command sends an IPC `REQUEST_SHUTDOWN` message to the service, which sets the shutdown flag. The service then exits its main loop and performs cleanup.
+
+2. **Automatic flush on exit**: During cleanup, the service checks if there are any dirty (unsaved) changes:
+   - Metadata changes (config, groups, heuristics, exclusions, directory history)
+   - Database changes (from rescans)
+   - All dirty data is flushed to disk before the process exits
+
+3. **Blocking with timeout**: The `stop` command blocks and waits for the service to stop:
+   - Default wait: 5 seconds
+   - `stop block N`: Wait N seconds (1-300)
+   - Returns `0` if stopped successfully
+   - Returns `-1` if timeout exceeded (service may still be stopping)
+   - Returns `1` if service not running or IPC error
+
+4. **Force termination only as last resort**: Tests and scripts should always try graceful stop first. Force kill (e.g., `TerminateProcess` on Windows, `kill -9` on Linux) should only be used if graceful shutdown times out.
+
+**Example - Graceful shutdown with custom timeout:**
+```bash
+# Stop with default 5-second timeout
+ncd_service stop
+
+# Stop with 10-second timeout (good for systems with large databases)
+ncd_service stop block 10
+
+# Check exit code to determine if force kill is needed
+if [ $? -eq -1 ]; then
+    echo "Service did not stop in time, may need force kill"
+fi
+```
+
+### Service Version Compatibility
+
+NCD maintains version compatibility between the client (`NewChangeDirectory.exe`/`ncd`) and the service (`NCDService.exe`/`ncd_service`). The IPC protocol includes version negotiation to ensure compatibility.
+
+**Version Check Behavior:**
+- When a client starts and detects a running service, it performs a version check via IPC
+- If the service version is older than the minimum required by the client:
+  1. The client attempts to gracefully stop the old service
+  2. The client informs the user that a new service version is needed
+  3. The user must manually start the new service version
+- If version check fails (IPC error), the client falls back to standalone mode
+
+**Compatibility Matrix:**
+
+| Client Version | Min Service Version | Compatible Service Versions |
+|----------------|---------------------|----------------------------|
+| 1.3.x | 1.3.0 | 1.3.0 - 1.3.x |
+| 1.2.x | 1.2.0 | 1.2.0 - 1.3.x (forward compatible) |
+
+**Upgrade/Downgrade Procedures:**
+
+**Upgrading (Client + Service):**
+```bash
+# 1. Stop the old service
+ncd_service stop
+
+# 2. Replace both binaries (ncd and ncd_service)
+#    - Windows: Copy NewChangeDirectory.exe and NCDService.exe
+#    - Linux: Copy ncd and ncd_service
+
+# 3. Start the new service
+ncd_service start
+
+# 4. Verify version
+ncd /v
+```
+
+**Downgrading (if needed):**
+```bash
+# 1. Stop the current service
+ncd_service stop
+
+# 2. Restore previous version binaries
+
+# 3. Start the previous service version
+ncd_service start
+```
+
+**Force Override:**
+Use `--force` flag to bypass version check (not recommended):
+```bash
+ncd --force <search_term>
+```
+
+### Service Logging System
+
+The NCD Service includes a comprehensive logging system for debugging crashes and monitoring service behavior. The logging system is **thread-safe** and writes to a log file with proper locking.
+
+**Log File Location:**
+- **Windows:** `%LOCALAPPDATA%\NCD\ncd_service.log` (e.g., `C:\Users\<username>\AppData\Local\NCD\ncd_service.log`)
+- **Linux:** `~/.local/share/ncd/ncd_service.log` (or `$XDG_DATA_HOME/ncd/ncd_service.log`)
+
+The log file is created in the same directory as the database files and is opened in append mode.
+
+**Log Levels:**
+
+| Level | Flag | Description |
+|-------|------|-------------|
+| -1 | (none) | Logging disabled (default) |
+| 0 | `-log0` | Service start/stop, rescan requests, all client requests |
+| 1 | `-log1` | Level 0 + all responses sent to clients |
+| 2 | `-log2` | Level 1 + detailed startup/shutdown steps, intermediate operations |
+| 3-5 | `-log3` to `-log5` | Reserved for future debugging use |
+
+**Usage Examples:**
+
+```bash
+# Start service with basic logging (high-level events only)
+ncd_service start -log0
+
+# Start service with detailed logging (recommended for crash diagnosis)
+ncd_service start -log2
+
+# Combine with other options
+ncd_service start -log2 -conf C:\NCD\custom.metadata
+```
+
+**Log Format:**
+```
+[HH:MM:SS] [thread_id] [L<level>] message
+```
+
+Example log output:
+```
+[14:32:15] [1234] [L0] === Service Starting at 2026-04-07 14:32:15 ===
+[14:32:15] [1234] [L0] Version: 1.3 (Build: Apr 7 2026 14:30:00)
+[14:32:15] [1234] [L0] Log Level: 2 (+ detailed operations)
+[14:32:15] [1234] [L2] Initializing service state...
+[14:32:15] [1234] [L2] Service state initialized successfully
+[14:32:15] [1234] [L0] Metadata snapshot published
+[14:32:15] [1234] [L2] Starting background loader thread...
+[14:32:16] [5678] [L2] Background loader thread started
+[14:32:16] [5678] [L2] About to load databases...
+[14:32:18] [5678] [L0] Service state changed to READY
+```
+
+**For Crash Diagnosis:**
+- Use `-log2` to capture detailed startup/shutdown sequences
+- The log file is flushed after each write to ensure data is preserved on crash
+- Thread IDs help track which thread was active during a crash
+- Each log entry is timestamped with millisecond precision
+
+**Testing with Logging:**
+
+When testing the service, logging should be enabled at level 2 (`-log2`) to verify correct operation:
+
+```bash
+# Start service with level 2 logging for testing
+ncd_service start -log2
+
+# Or in debug mode (automatically enables -log2)
+ncd_service /agdb
+```
+
+**Log Verification:**
+- **Level 1 (Error Logging):** All error conditions in the service must be logged at level 1 or higher. Any log entry containing "ERROR" indicates a failure.
+- **Level 2 (Success Logging):** When a potential error is checked and the operation succeeds, a success message is logged at level 2.
+- **Test Verification:** Tests should verify that no "ERROR" entries appear in the log file after service operations.
+
+Example error-check logging pattern:
+```
+[L1] ERROR - Failed to initialize snapshot publisher    # Error occurred
+[L2] Snapshot publisher initialized successfully         # Success path (no error)
+```
+
+To verify no errors in automated tests:
+```bash
+# After running service tests, check log for errors
+if grep -i "ERROR" ~/.local/share/ncd/ncd_service.log; then
+    echo "Test FAILED: Errors found in service log"
+    exit 1
+fi
+```
+
+### Service-Side Rescan
+
+When the NCD service is running, `/r` (rescan) requests are handled by the service rather than the client. This provides several benefits:
+
+- **Non-blocking operation**: The service continues serving queries from the old snapshot while building a new database
+- **Atomic updates**: The new database is published atomically once scanning completes
+- **Consistent state**: All clients see the same database generation after rescan completes
+
+**How It Works:**
+
+1. Client sends `REQUEST_RESCAN` IPC message to the service
+2. Service transitions to `SCANNING` state (logged at level 0)
+3. Service builds new `NcdDatabase` in memory (old snapshot remains available)
+4. On completion, service atomically publishes new snapshot and bumps generation
+5. Service returns to `READY` state
+
+**IPC Protocol:**
+
+| Message | Direction | Purpose |
+|---------|-----------|---------|
+| `NCD_MSG_REQUEST_RESCAN` | Client → Service | Request filesystem rescan |
+| `NCD_REQUEST_RESCAN_OK` | Service → Client | Rescan accepted/started |
+| `NCD_REQUEST_RESCAN_BUSY` | Service → Client | Service already scanning |
+
+**Log Events:**
+
+With `-log0` or higher, the service logs rescan operations:
+```
+[L0] REQUEST_RESCAN received (seq=42, drive_mask=0xFFFFFFFF, partial=0)
+[L0] Service state changed to SCANNING
+[L0] Starting filesystem rescan...
+[L0] Service state changed back to READY after rescan
+[L0] Database snapshot published after rescan
+```
+
+**Test Mode:**
+
+When `NCD_TEST_MODE=1` is set, the service skips rescans to prevent scanning user drives during testing:
+```
+[L0] Rescan skipped: NCD_TEST_MODE is set
+```
+
+### IPC Diagnostic Tools
+
+The NCD distribution includes standalone command-line tools for testing and debugging the service IPC protocol. These tools do not require the full NCD client and can be used for diagnostics, load testing, and protocol validation.
+
+**Available Tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `ipc_ping_test` | Test service liveness and measure latency |
+| `ipc_state_test` | Query service state and version info |
+| `ipc_metadata_test` | Submit metadata updates (groups, exclusions, config) |
+| `ipc_heuristic_test` | Submit heuristic search mappings |
+| `ipc_rescan_test` | Request filesystem rescans |
+| `ipc_flush_test` | Request immediate persistence to disk |
+| `ipc_shutdown_test` | Request graceful service shutdown |
+| `ipc_fuzzer` | Fuzz test the IPC protocol |
+| `ipc_stress_test` | Load test with concurrent connections |
+| `ipc_cli` | Interactive CLI for manual testing |
+
+**Usage Examples:**
+
+```bash
+# Check if service is reachable
+ipc_ping_test --once
+
+# Continuous ping with latency stats
+ipc_ping_test --continuous --interval 1000
+
+# Get service state information
+ipc_state_test --info
+
+# Get JSON-formatted state
+ipc_state_test --info --json
+
+# Add a group via IPC
+ipc_metadata_test --group-add @projects /home/user/projects
+
+# Submit a heuristic mapping
+ipc_heuristic_test --search "downloads" --path "/home/user/Downloads"
+
+# Request full rescan
+ipc_rescan_test --full
+
+# Request rescan and wait for completion
+ipc_rescan_test --full --wait --timeout 60
+
+# Force immediate flush to disk
+ipc_flush_test --verify
+
+# Graceful shutdown
+ipc_shutdown_test --timeout 10 --verify
+
+# Fuzz test with bit flipping
+ipc_fuzzer --bitflip --count 10000
+
+# Stress test with 100 concurrent connections
+ipc_stress_test --connections 100 --duration 60 --operation ping
+
+# Interactive CLI
+ipc_cli
+> ping
+> state
+> version
+> quit
+```
+
+**Exit Codes:**
+
+All IPC tools use consistent exit codes:
+- `0` - Success / Service running / Operation completed
+- `1` - Service not running / Connection failed
+- `2` - Timeout / Service busy
+- `3` - Invalid parameter / Invalid response
+
+**Build Location:**
+
+The tools are built in the `test/` directory:
+- Windows: `test\ipc_ping_test.exe`, etc.
+- Linux: `test/ipc_ping_test`, etc.
 
 ## Shared Memory Architecture
 

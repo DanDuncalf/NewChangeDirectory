@@ -33,7 +33,7 @@ export NCD_TEST_MODE=1
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVICE_EXE="$PROJECT_ROOT/ncd_service"
+SERVICE_EXE="$PROJECT_ROOT/NCDService"
 
 # Isolation: use temp directory for all service data
 TEST_DATA="/tmp/ncd_service_test_$$"
@@ -90,13 +90,34 @@ skip() {
 # Stop service
 stop_service() {
     "$SERVICE_EXE" stop >/dev/null 2>&1 || true
-    pkill -f "ncd_service" 2>/dev/null || true
+    pkill -f "NCDService" 2>/dev/null || true
     sleep 1
+}
+
+# Get log file path
+get_log_path() {
+    echo "$TEST_DATA/ncd/ncd_service.log"
+}
+
+# Check log file for errors
+check_log_errors() {
+    local log_path
+    log_path=$(get_log_path)
+    if [[ -f "$log_path" ]]; then
+        if grep -i "ERROR" "$log_path" >/dev/null 2>&1; then
+            echo ""
+            echo "  [FAIL] Errors found in service log:"
+            grep -i "ERROR" "$log_path" | head -5
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    fi
+    return 0
 }
 
 # Check if service is running
 is_service_running() {
-    if pgrep -x "ncd_service" >/dev/null 2>&1; then
+    if pgrep -x "NCDService" >/dev/null 2>&1; then
         return 0
     else
         return 1
@@ -158,6 +179,40 @@ if [[ ! -x "$SERVICE_EXE" ]]; then
     exit 1
 fi
 
+# ==========================================================================
+# AGGRESSIVE PRE-TEST SERVICE CLEANUP
+# ==========================================================================
+echo "[INFO] Performing aggressive service cleanup..."
+
+# Stop via command if possible
+"$SERVICE_EXE" stop >/dev/null 2>&1 || true
+
+# Kill any existing service processes (both old and new naming)
+pkill -9 -f "ncd_service" 2>/dev/null || true
+pkill -9 -f "NCDService" 2>/dev/null || true
+sleep 1
+
+# Verify service executable timestamp to ensure we're using the latest build
+if [[ -f "$SERVICE_EXE" ]]; then
+    echo "[INFO] Using service built at: $(stat -c '%y' "$SERVICE_EXE" 2>/dev/null || stat -f '%Sm' "$SERVICE_EXE" 2>/dev/null || echo 'unknown')"
+fi
+
+# Double-check no service is running
+if pgrep -x "NCDService" >/dev/null 2>&1 || pgrep -f "ncd_service" >/dev/null 2>&1; then
+    echo "[WARN] Existing service process found, force killing..."
+    pkill -9 -f "NCDService" 2>/dev/null || true
+    pkill -9 -f "ncd_service" 2>/dev/null || true
+    sleep 2
+fi
+
+# Verify cleanup
+if pgrep -x "NCDService" >/dev/null 2>&1 || pgrep -f "ncd_service" >/dev/null 2>&1; then
+    echo "[ERROR] Unable to stop existing service process. Tests may fail."
+else
+    echo "[INFO] Confirmed: No service processes running."
+fi
+echo ""
+
 # Ensure service is stopped before tests
 stop_service
 
@@ -175,7 +230,11 @@ fi
 echo "[TEST 2] Service start"
 stop_service
 sleep 1
-cd "$PROJECT_ROOT" && "$SERVICE_EXE" start >/dev/null 2>&1 &
+# Clear old log if exists
+LOG_PATH=$(get_log_path)
+rm -f "$LOG_PATH" 2>/dev/null
+# Start with logging level 2 for test verification
+cd "$PROJECT_ROOT" && "$SERVICE_EXE" start -log2 >/dev/null 2>&1 &
 sleep 2
 if wait_for_service_state running; then
     pass "Service start"
@@ -281,6 +340,28 @@ fi
 # ==========================================================================
 # Summary
 # ==========================================================================
+
+print_header "Test Summary"
+echo "  Total:   $TESTS_RUN"
+echo "  Passed:  $TESTS_PASSED"
+echo "  Failed:  $TESTS_FAILED"
+echo ""
+
+# Check log for errors before summary
+echo ""
+echo "Checking service log for errors..."
+LOG_PATH=$(get_log_path)
+if [[ -f "$LOG_PATH" ]]; then
+    if grep -i "ERROR" "$LOG_PATH" >/dev/null 2>&1; then
+        printf "  ${C_RED}[FAIL]${C_RESET} Errors found in service log:\n"
+        grep -i "ERROR" "$LOG_PATH" | head -5
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    else
+        printf "  ${C_GREEN}[PASS]${C_RESET} No errors found in service log\n"
+    fi
+else
+    echo "  [INFO] No log file to check"
+fi
 
 print_header "Test Summary"
 echo "  Total:   $TESTS_RUN"

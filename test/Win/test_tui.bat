@@ -8,12 +8,48 @@
 ::
 :: Prerequisites:
 ::   - Visual Studio (cl.exe) must be in PATH or auto-detected
-::   - Must be run from the test\ directory
+::   - MUST be run through the test harness for proper isolation
 ::
 :: Usage:
-::   test_tui.bat              -- run all TUI tests
-::   test_tui.bat generate     -- generate expected output (first run)
+::   Run-Tests-Safe.bat unit              -- run via harness ^(recommended^)
+::   test_tui.bat                         -- run directly ^(NOT recommended^)
+::   test_tui.bat generate                -- generate expected output
 ::
+:: IMPORTANT: This script is best run through the test harness for
+:: guaranteed cleanup. Running directly risks environment corruption
+:: if interrupted with Ctrl+C.
+::
+
+:: ==========================================================================
+:: ENVIRONMENT CHECK - WARN IF NOT RUNNING THROUGH TEST HARNESS
+:: ==========================================================================
+if "%NCD_TEST_MODE%"=="" (
+    echo.
+    echo ==========================================
+    echo WARNING: TEST HARNESS NOT DETECTED
+    echo ==========================================
+    echo.
+    echo This script is running WITHOUT the test harness protection.
+    echo.
+    echo This is NOT RECOMMENDED because:
+    echo   - If you press Ctrl+C, environment cleanup may not run
+    echo   - Your shell environment may be left in an inconsistent state
+    echo.
+    echo RECOMMENDED: Run through the test harness from project root:
+    echo   Run-Tests-Safe.bat unit              ^(unit tests including TUI^)
+    echo   Run-Tests-Safe.bat                   ^(all tests^)
+    echo.
+    echo For isolated execution without affecting your shell:
+    echo   test\Run-Isolated.bat test\Win\test_tui.bat
+    echo.
+    echo If you continue and interrupt with Ctrl+C, run:
+    echo   Run-Tests-Safe.bat --repair
+    echo.
+    echo Waiting 5 seconds before continuing...
+    echo ==========================================
+    echo.
+    ping -n 6 127.0.0.1 >nul 2>&1
+)
 
 setlocal enabledelayedexpansion
 
@@ -169,7 +205,7 @@ goto :cleanup
 
 :: ========================================
 :: Subroutine: run a single TUI test
-::   %1 = test name (matches input/*.keys and expected/*.txt)
+::   %1 = test name (matches input/*.ioinp and expected/*.out)
 ::   %2 = driver mode (selector, selector5, history, etc.)
 ::   %3 = description
 :: ========================================
@@ -179,20 +215,20 @@ set TEST_MODE=%~2
 set TEST_DESC=%~3
 set /a TOTAL_COUNT+=1
 
-set NCD_UI_KEYS_FILE=tui\input\%TEST_NAME%.keys
+set NCD_UI_KEYS_FILE=tui\input\%TEST_NAME%.ioinp
 
 :: Run the test driver, capture stdout
-tui_test_driver.exe %TEST_MODE% > tui\actual\%TEST_NAME%.txt 2>nul
+tui_test_driver.exe %TEST_MODE% > tui\actual\%TEST_NAME%.out 2>nul
 
 if %GENERATE_MODE%==1 (
     :: Generate mode: copy actual to expected
-    copy /y tui\actual\%TEST_NAME%.txt tui\expected\%TEST_NAME%.txt >nul
+    copy /y tui\actual\%TEST_NAME%.out tui\expected\%TEST_NAME%.out >nul
     echo   GENERATED: %TEST_DESC%
     exit /b 0
 )
 
 :: Compare actual vs expected
-if not exist tui\expected\%TEST_NAME%.txt (
+if not exist tui\expected\%TEST_NAME%.out (
     echo   SKIP: %TEST_DESC% (no expected output - run with 'generate' first)
     exit /b 0
 )
@@ -201,7 +237,7 @@ fc /l tui\actual\%TEST_NAME%.txt tui\expected\%TEST_NAME%.txt >nul 2>&1
 if errorlevel 1 (
     echo   FAIL: %TEST_DESC%
     echo         Diff between actual and expected:
-    fc /l tui\actual\%TEST_NAME%.txt tui\expected\%TEST_NAME%.txt 2>nul | findstr /v "Comparing" | findstr /v "FC:"
+    fc /l tui\actual\%TEST_NAME%.out tui\expected\%TEST_NAME%.out 2>nul | findstr /v "Comparing" | findstr /v "FC:"
     set /a FAIL_COUNT+=1
 ) else (
     echo   PASS: %TEST_DESC%

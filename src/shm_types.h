@@ -110,7 +110,7 @@ typedef struct {
     uint8_t  service_retry_count;
     int16_t  rescan_interval_hours; /* 1-168 or -1=never */
     uint8_t  text_encoding;      /* NCD_TEXT_UTF8 or NCD_TEXT_UTF16LE */
-    uint8_t  pad[5];             /* Padding to 16 bytes */
+    uint8_t  pad;                /* padding to natural alignment */
 } ShmConfigSection;              /* 16 bytes */
 
 /* --------------------------------------------------------- groups section   */

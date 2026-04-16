@@ -44,7 +44,7 @@ goto :end
 
 :restart
 call :stop
-timeout /t 1 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 1" >nul 2>&1
 call :start
 goto :end
 

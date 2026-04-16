@@ -59,6 +59,7 @@
 #if NCD_PLATFORM_LINUX
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 /* Debug test flags (debug builds only) */
@@ -111,12 +112,27 @@ NcdDatabase *db_create(void)
     NcdDatabase *db = ncd_malloc(sizeof(NcdDatabase));
     memset(db, 0, sizeof(NcdDatabase));
     db->version = NCD_VERSION;
+    db->ref_count = 1;  /* Start with reference count of 1 */
+    return db;
+}
+
+NcdDatabase *db_retain(NcdDatabase *db)
+{
+    if (!db) return NULL;
+    db->ref_count++;
     return db;
 }
 
 void db_free(NcdDatabase *db)
 {
     if (!db) return;
+    
+    /* Decrement reference count - only free when it reaches zero */
+    db->ref_count--;
+    if (db->ref_count > 0) {
+        return;  /* Still has references, don't free yet */
+    }
+    
     /* Free cached name index if present */
     if (db->name_index) {
         name_index_free((NameIndex *)db->name_index);
@@ -238,10 +254,14 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
         
         /* Read magic after potential BOM */
         if (has_bom) {
-            fread(&magic, sizeof(magic), 1, existing);
+            if (fread(&magic, sizeof(magic), 1, existing) != 1) {
+                magic = 0; /* Failed to read, treat as invalid */
+            }
         } else {
             rewind(existing);
-            fread(&magic, sizeof(magic), 1, existing);
+            if (fread(&magic, sizeof(magic), 1, existing) != 1) {
+                magic = 0; /* Failed to read, treat as invalid */
+            }
         }
         
         if (magic == NCD_BIN_MAGIC) {
@@ -249,7 +269,11 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
             uint8_t skip_flag = 0;
             size_t skip_offset = has_bom ? NCD_UTF16LE_BOM_LEN + offsetof(BinFileHdr, skipped_rescan) 
                                           : offsetof(BinFileHdr, skipped_rescan);
-            if (fseek(existing, skip_offset, SEEK_SET) == 0) {
+#if NCD_PLATFORM_WINDOWS
+            if (_fseeki64(existing, (__int64)skip_offset, SEEK_SET) == 0) {
+#else
+            if (fseeko(existing, (off_t)skip_offset, SEEK_SET) == 0) {
+#endif
                 if (fread(&skip_flag, 1, 1, existing) == 1) {
                     hdr.skipped_rescan = skip_flag;
                 }
@@ -479,30 +503,6 @@ bool db_config_save(const NcdConfig *cfg)
 
 /* ================================================================ group database */
 
-char *db_group_path(char *buf, size_t buf_size)
-{
-    if (!buf || buf_size == 0) return NULL;
-    
-#if NCD_PLATFORM_WINDOWS
-    char local[MAX_PATH] = {0};
-    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
-    
-    size_t len = strlen(local);
-    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
-    snprintf(buf, buf_size, "%s%sNCD\\ncd.groups", local, has_sep ? "" : "\\");
-#else
-    char base[MAX_PATH] = {0};
-    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
-        char home[MAX_PATH] = {0};
-        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
-            return NULL;
-        snprintf(base, sizeof(base), "%s/.local/share", home);
-    }
-    snprintf(buf, buf_size, "%s/ncd/ncd.groups", base);
-#endif
-    return buf;
-}
-
 NcdGroupDb *db_group_create(void)
 {
     NcdGroupDb *gdb = ncd_malloc(sizeof(NcdGroupDb));
@@ -517,139 +517,6 @@ void db_group_free(NcdGroupDb *gdb)
     if (!gdb) return;
     free(gdb->groups);
     free(gdb);
-}
-
-NcdGroupDb *db_group_load(void)
-{
-    char path[MAX_PATH];
-    if (!db_group_path(path, sizeof(path))) return NULL;
-    
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    
-    /* Read and verify header */
-    uint32_t magic = 0;
-    uint32_t version = 0;
-    uint32_t count = 0;
-    
-    if (fread(&magic, sizeof(magic), 1, f) != 1 ||
-        fread(&version, sizeof(version), 1, f) != 1 ||
-        fread(&count, sizeof(count), 1, f) != 1) {
-        fclose(f);
-        return NULL;
-    }
-    
-    if (magic != NCD_GROUP_MAGIC || version != NCD_GROUP_VERSION) {
-        fclose(f);
-        return NULL;
-    }
-    
-    NcdGroupDb *gdb = db_group_create();
-    if (count == 0) {
-        fclose(f);
-        return gdb;
-    }
-    
-    /* Allocate space for groups */
-    gdb->capacity = (int)count;
-    gdb->groups = ncd_malloc(sizeof(NcdGroupEntry) * count);
-    
-    /* Read groups */
-    for (uint32_t i = 0; i < count; i++) {
-        NcdGroupEntry *entry = &gdb->groups[i];
-        
-        /* Read name length and name */
-        uint16_t name_len = 0;
-        if (fread(&name_len, sizeof(name_len), 1, f) != 1) goto error;
-        if (name_len >= NCD_MAX_GROUP_NAME) goto error;
-        if (fread(entry->name, 1, name_len, f) != name_len) goto error;
-        entry->name[name_len] = '\0';
-        
-        /* Read path length and path */
-        uint16_t path_len = 0;
-        if (fread(&path_len, sizeof(path_len), 1, f) != 1) goto error;
-        if (path_len >= NCD_MAX_PATH) goto error;
-        if (fread(entry->path, 1, path_len, f) != path_len) goto error;
-        entry->path[path_len] = '\0';
-        
-        /* Read creation time */
-        if (fread(&entry->created, sizeof(entry->created), 1, f) != 1) goto error;
-        
-        gdb->count++;
-    }
-    
-    fclose(f);
-    return gdb;
-    
-error:
-    db_group_free(gdb);
-    fclose(f);
-    return NULL;
-}
-
-bool db_group_save(const NcdGroupDb *gdb)
-{
-    if (!gdb) return false;
-    
-    char path[MAX_PATH];
-    if (!db_group_path(path, sizeof(path))) return false;
-    
-    /* Ensure directory exists */
-    char dir_path[MAX_PATH];
-    platform_strncpy_s(dir_path, sizeof(dir_path), path);
-    char *last_sep = strrchr(dir_path, '\\');
-    if (!last_sep) last_sep = strrchr(dir_path, '/');
-    if (last_sep) {
-        *last_sep = '\0';
-        platform_create_dir(dir_path);
-    }
-    
-    /* Write to temp file */
-    char tmp_path[MAX_PATH];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-    
-    FILE *f = fopen(tmp_path, "wb");
-    if (!f) return false;
-    
-    /* Write header */
-    uint32_t magic = NCD_GROUP_MAGIC;
-    uint32_t version = NCD_GROUP_VERSION;
-    uint32_t count = (uint32_t)gdb->count;
-    
-    if (fwrite(&magic, sizeof(magic), 1, f) != 1 ||
-        fwrite(&version, sizeof(version), 1, f) != 1 ||
-        fwrite(&count, sizeof(count), 1, f) != 1) {
-        fclose(f);
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    
-    /* Write groups */
-    for (int i = 0; i < gdb->count; i++) {
-        const NcdGroupEntry *entry = &gdb->groups[i];
-        
-        uint16_t name_len = (uint16_t)strlen(entry->name);
-        uint16_t path_len = (uint16_t)strlen(entry->path);
-        
-        if (fwrite(&name_len, sizeof(name_len), 1, f) != 1 ||
-            fwrite(entry->name, 1, name_len, f) != name_len ||
-            fwrite(&path_len, sizeof(path_len), 1, f) != 1 ||
-            fwrite(entry->path, 1, path_len, f) != path_len ||
-            fwrite(&entry->created, sizeof(entry->created), 1, f) != 1) {
-            fclose(f);
-            platform_delete_file(tmp_path);
-            return false;
-        }
-    }
-    
-    fclose(f);
-    
-    /* Atomic file replacement */
-    if (!platform_move_file_replace(tmp_path, path)) {
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    return true;
 }
 
 /*
@@ -669,24 +536,6 @@ static int db_group_find_exact(NcdMetadata *meta, const char *name, const char *
         }
     }
     return -1;
-}
-
-/*
- * Count entries for a given group name.
- */
-static int db_group_count_name(NcdMetadata *meta, const char *name)
-{
-    if (!meta || !name) return 0;
-    
-    NcdGroupDb *gdb = &meta->groups;
-    int count = 0;
-    
-    for (int i = 0; i < gdb->count; i++) {
-        if (_stricmp(gdb->groups[i].name, name) == 0) {
-            count++;
-        }
-    }
-    return count;
 }
 
 bool db_group_set(NcdMetadata *meta, const char *name, const char *path)
@@ -916,13 +765,13 @@ bool db_dir_history_add(NcdMetadata *meta, const char *path, char drive)
     return true;
 }
 
-const NcdDirHistoryEntry *db_dir_history_get(NcdMetadata *meta, int index)
+const NcdDirHistoryEntry *db_dir_history_get(const NcdMetadata *meta, int index)
 {
     if (!meta || index < 0 || index >= meta->dir_history.count) return NULL;
     return &meta->dir_history.entries[index];
 }
 
-const NcdDirHistoryEntry *db_dir_history_get_by_display_index(NcdMetadata *meta, int display_index)
+const NcdDirHistoryEntry *db_dir_history_get_by_display_index(const NcdMetadata *meta, int display_index)
 {
     if (!meta || display_index < 1 || display_index > meta->dir_history.count) return NULL;
     /* display_index 1 = oldest (entries[count-1]), display_index count = newest (entries[0]) */
@@ -942,7 +791,7 @@ void db_dir_history_swap_first_two(NcdMetadata *meta)
     meta->dir_history_dirty = true;
 }
 
-int db_dir_history_count(NcdMetadata *meta)
+int db_dir_history_count(const NcdMetadata *meta)
 {
     if (!meta) return 0;
     return meta->dir_history.count;
@@ -1066,7 +915,13 @@ char *db_full_path(const DriveData *drv, int dir_index,
     
 #if NCD_PLATFORM_WINDOWS
     if (dir_index < 0 || dir_index >= drv->dir_count) {
-        snprintf(buf, buf_size, "%c:\\", drv->letter);
+        /* If label looks like a path (contains ':\'), use it as mount point;
+         * otherwise fall back to drive root for volume labels. */
+        if (drv->label[0] && strstr(drv->label, ":\\")) {
+            snprintf(buf, buf_size, "%s", drv->label);
+        } else {
+            snprintf(buf, buf_size, "%c:\\", drv->letter);
+        }
         return buf;
     }
 #else
@@ -1159,9 +1014,20 @@ char *db_full_path(const DriveData *drv, int dir_index,
     /* Build the path string */
     size_t pos = 0;
 #if NCD_PLATFORM_WINDOWS
-    pos += (size_t)snprintf(buf + pos, buf_size - pos, "%c:\\", drv->letter);
+    /* If label looks like a path (contains ':\'), use it as mount point;
+     * otherwise fall back to drive root for volume labels. */
+    if (drv->label[0] && strstr(drv->label, ":\\")) {
+        pos += (size_t)snprintf(buf + pos, buf_size - pos, "%s", drv->label);
+    } else {
+        pos += (size_t)snprintf(buf + pos, buf_size - pos, "%c:\\", drv->letter);
+    }
     for (int i = depth - 1; i >= 0 && pos < buf_size - 1; i--) {
-        if (i < depth - 1) {
+        bool need_sep = (i < depth - 1);
+        if (!need_sep && pos > 0) {
+            char c = buf[pos - 1];
+            need_sep = (c != '\\' && c != '/');
+        }
+        if (need_sep) {
             buf[pos++] = '\\';
             buf[pos] = '\0';
         }
@@ -1203,6 +1069,8 @@ char *db_full_path(const DriveData *drv, int dir_index,
 int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
 {
     if (!db || !meta || meta->exclusions.count == 0) return 0;
+    
+    if (db->is_blob) db_make_mutable(db);
     
     int total_removed = 0;
     
@@ -1352,420 +1220,6 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
     return total_removed;
 }
 
-/* ================================================================== load  */
-
-static char *read_file(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return NULL;
-    }
-    long sz = ftell(f);
-    if (sz < 0 || (size_t)sz > NCD_MAX_FILE_SIZE) {
-        fclose(f);
-        return NULL;
-    }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return NULL;
-    }
-    if (sz == 0) { fclose(f); return NULL; }
-    char *buf = malloc((size_t)sz + 1);
-    if (!buf)  { fclose(f); return NULL; }
-    size_t rd = fread(buf, 1, (size_t)sz, f);
-    fclose(f);
-    buf[rd] = '\0';
-    return buf;
-}
-
-/* --------------------------------------------------------------- mini-Rdr
- *
- * A zero-allocation streaming JSON reader.  Walks the text forward-only,
- * filling our structs directly without building any intermediate tree.
- *
- * Design principles:
- *  - Fields may appear in any order (handles old "id" fields gracefully).
- *  - Unknown keys are skipped via rdr_skip_value.
- *  - r.err is set on any parse failure; callers check it.
- */
-
-typedef struct { 
-    const char *p;      /* current position */
-    const char *end;    /* end of buffer */
-    int err; 
-} Rdr;
-
-static bool rdr_eof(Rdr *r) {
-    return r->p >= r->end || *r->p == '\0';
-}
-
-static void rdr_skip_ws(Rdr *r)
-{
-    while (isspace((unsigned char)*r->p)) r->p++;
-}
-
-/* Consume expected character c (after optional whitespace). */
-static void rdr_eat(Rdr *r, char c)
-{
-    rdr_skip_ws(r);
-    if (*r->p == c) r->p++;
-    else r->err = 1;
-}
-
-/* Read a quoted JSON string into buf with full escape handling. */
-static bool rdr_read_str(Rdr *r, char *buf, size_t cap)
-{
-    rdr_skip_ws(r);
-    if (*r->p != '"') { r->err = 1; return false; }
-    r->p++;
-
-    char  *out = buf;
-    char  *lim = buf + cap - 1;
-
-    while (*r->p && *r->p != '"') {
-        char c;
-        if (*r->p == '\\') {
-            r->p++;
-            switch (*r->p) {
-                case '"':  c = '"';  break;
-                case '\\': c = '\\'; break;
-                case 'n':  c = '\n'; break;
-                case 'r':  c = '\r'; break;
-                case 't':  c = '\t'; break;
-                case 'b':  c = '\b'; break;
-                case 'f':  c = '\f'; break;
-                case 'u':  /* 4-hex Unicode: skip 4 hex digits, store '?' */
-                    { int i; for (i = 0; i < 4 && r->p[1]; i++) r->p++; }
-                    c = '?'; break;
-                default:   c = *r->p; break;
-            }
-        } else {
-            c = *r->p;
-        }
-        if (out < lim) *out++ = c;
-        r->p++;
-    }
-    *out = '\0';
-
-    if (*r->p == '"') r->p++;
-    else r->err = 1;
-    return !r->err;
-}
-
-/* Read a signed 64-bit integer. */
-static long long rdr_read_ll(Rdr *r)
-{
-    rdr_skip_ws(r);
-    char *end;
-    long long v = strtoll(r->p, &end, 10);
-    if (end == r->p) r->err = 1;
-    else r->p = end;
-    return v;
-}
-
-/* Read true/false boolean. */
-static bool rdr_read_bool(Rdr *r)
-{
-    rdr_skip_ws(r);
-    if (strncmp(r->p, "true",  4) == 0) { r->p += 4; return true;  }
-    if (strncmp(r->p, "false", 5) == 0) { r->p += 5; return false; }
-    r->err = 1;
-    return false;
-}
-
-/* Skip any JSON value at the current position (handles nesting). */
-static void rdr_skip_value(Rdr *r)
-{
-    rdr_skip_ws(r);
-    if (rdr_eof(r)) { r->err = 1; return; }
-    
-    char c = *r->p;
-    
-    if (c == '"') {                       /* string */
-        r->p++;
-        while (!rdr_eof(r) && *r->p != '"') {
-            if (*r->p == '\\' && !rdr_eof(r) && r->p[1]) r->p++;
-            r->p++;
-        }
-        if (*r->p == '"') r->p++;
-        else r->err = 1;  /* Unterminated string */
-        
-    } else if (c == '{' || c == '[') {    /* object or array */
-        int depth = 1;
-        r->p++;
-        while (!rdr_eof(r) && depth > 0) {
-            if (*r->p == '"') {           /* skip string to avoid brace confusion */
-                r->p++;
-                while (!rdr_eof(r) && *r->p != '"') {
-                    if (*r->p == '\\' && !rdr_eof(r) && r->p[1]) r->p++;
-                    r->p++;
-                }
-                if (*r->p == '"') r->p++;
-            } else if (*r->p == '{' || *r->p == '[') {
-                depth++; r->p++;
-            } else if (*r->p == '}' || *r->p == ']') {
-                depth--; r->p++;
-            } else {
-                r->p++;
-            }
-        }
-        if (depth != 0) r->err = 1;  /* Unterminated object/array */
-        
-    } else {                              /* number / bool / null */
-        while (!rdr_eof(r) && *r->p != ',' && *r->p != '}' && *r->p != ']')
-            r->p++;
-    }
-}
-
-/*
- * Try to read the next key from an object and consume ':'.
- * Call immediately after '{' or after consuming a comma.
- * Returns true if a key was read; false at '}' or on error.
- */
-static bool rdr_next_key(Rdr *r, char *key, size_t cap)
-{
-    rdr_skip_ws(r);
-    if (*r->p == '}' || r->err) return false;
-    if (!rdr_read_str(r, key, cap)) return false;
-    rdr_eat(r, ':');
-    return !r->err;
-}
-
-/*
- * After reading a value inside an object or array, consume ',' if present.
- * The caller is responsible for checking '}' / ']' when this returns false.
- */
-static bool rdr_eat_comma(Rdr *r)
-{
-    rdr_skip_ws(r);
-    if (*r->p == ',') { r->p++; return true; }
-    return false;
-}
-
-/* ---- shrink a drive's arrays to exact size after all entries are loaded  */
-static void drv_shrink_to_fit(DriveData *drv)
-{
-    if (drv->dir_count > 0 && drv->dir_count < drv->dir_capacity) {
-        drv->dirs = ncd_realloc(drv->dirs,
-                             sizeof(DirEntry) * (size_t)drv->dir_count);
-        drv->dir_capacity = drv->dir_count;
-    }
-    if (drv->name_pool_len > 0 && drv->name_pool_len < drv->name_pool_cap) {
-        drv->name_pool     = ncd_realloc(drv->name_pool, drv->name_pool_len);
-        drv->name_pool_cap = drv->name_pool_len;
-    }
-}
-
-NcdDatabase *db_load(const char *path)
-{
-    char *text = read_file(path);
-    if (!text) return NULL;
-
-    Rdr r = { text, text + strlen(text), 0 };
-    NcdDatabase *db = db_create();
-    platform_strncpy_s(db->db_path, NCD_MAX_PATH, path);
-
-    char key[128];
-
-    rdr_eat(&r, '{');
-
-    while (!r.err && rdr_next_key(&r, key, sizeof(key))) {
-
-        /* ------ top-level fields ------ */
-        if (strcmp(key, "version") == 0) {
-            db->version = (int)rdr_read_ll(&r);
-
-        } else if (strcmp(key, "lastScan") == 0) {
-            db->last_scan = (time_t)rdr_read_ll(&r);
-
-        } else if (strcmp(key, "options") == 0) {
-            rdr_eat(&r, '{');
-            while (!r.err && rdr_next_key(&r, key, sizeof(key))) {
-                if      (strcmp(key, "showHidden") == 0)
-                    db->default_show_hidden = rdr_read_bool(&r);
-                else if (strcmp(key, "showSystem") == 0)
-                    db->default_show_system = rdr_read_bool(&r);
-                else
-                    rdr_skip_value(&r);
-                rdr_eat_comma(&r);
-            }
-            rdr_eat(&r, '}');
-
-        } else if (strcmp(key, "drives") == 0) {
-            rdr_eat(&r, '[');
-            rdr_skip_ws(&r);
-
-            while (!r.err && *r.p == '{') {
-                DriveData *drv = NULL;
-
-                rdr_eat(&r, '{');
-                while (!r.err && rdr_next_key(&r, key, sizeof(key))) {
-
-                    if (strcmp(key, "letter") == 0) {
-                        char lbuf[8] = {0};
-                        rdr_read_str(&r, lbuf, sizeof(lbuf));
-                        if (lbuf[0]) drv = db_add_drive(db, lbuf[0]);
-
-                    } else if (strcmp(key, "label") == 0) {
-                        char lbuf[64] = {0};
-                        rdr_read_str(&r, lbuf, sizeof(lbuf));
-                        if (drv) snprintf(drv->label, sizeof(drv->label), "%s", lbuf);
-
-                    } else if (strcmp(key, "type") == 0) {
-                        UINT t = (UINT)rdr_read_ll(&r);
-                        if (drv) drv->type = t;
-
-                    } else if (strcmp(key, "dirs") == 0) {
-                        rdr_eat(&r, '[');
-                        rdr_skip_ws(&r);
-
-                        while (!r.err && drv && *r.p == '{') {
-                            int32_t parent   = -1;
-                            char    name[NCD_MAX_NAME];
-                            uint8_t h        = 0;
-                            uint8_t s        = 0;
-                            bool    got_name = false;
-                            name[0] = '\0';
-
-                            rdr_eat(&r, '{');
-                            while (!r.err && rdr_next_key(&r, key, sizeof(key))) {
-                                /* "id" is silently skipped (backward compat) */
-                                if      (strcmp(key, "parent") == 0)
-                                    parent = (int32_t)rdr_read_ll(&r);
-                                else if (strcmp(key, "name") == 0) {
-                                    rdr_read_str(&r, name, sizeof(name));
-                                    got_name = true;
-                                }
-                                else if (strcmp(key, "h") == 0)
-                                    h = (uint8_t)rdr_read_ll(&r);
-                                else if (strcmp(key, "s") == 0)
-                                    s = (uint8_t)rdr_read_ll(&r);
-                                else
-                                    rdr_skip_value(&r);
-                                rdr_eat_comma(&r);
-                            }
-                            rdr_eat(&r, '}');
-
-                            if (!r.err && got_name)
-                                db_add_dir(drv, name, parent, h, s);
-
-                            rdr_skip_ws(&r);
-                            if (*r.p == ',') { r.p++; rdr_skip_ws(&r); }
-                        }
-                        rdr_eat(&r, ']');
-
-                        /* Shrink to exact size -- no wasted capacity */
-                        if (drv) drv_shrink_to_fit(drv);
-
-                    } else {
-                        rdr_skip_value(&r);   /* unknown drive key */
-                    }
-
-                    rdr_eat_comma(&r);
-                }
-                rdr_eat(&r, '}');
-
-                rdr_skip_ws(&r);
-                if (*r.p == ',') { r.p++; rdr_skip_ws(&r); }
-            }
-            rdr_eat(&r, ']');
-
-        } else {
-            rdr_skip_value(&r);               /* unknown root key */
-        }
-
-        rdr_eat_comma(&r);
-    }
-    rdr_eat(&r, '}');
-
-    free(text);
-
-    if (r.err) {
-        db_free(db);
-        return NULL;
-    }
-    return db;
-}
-
-/* ================================================================== save  */
-
-bool db_save(const NcdDatabase *db, const char *path)
-{
-    StringBuilder sb;
-    sb_init(&sb);
-
-    /* root object open */
-    sb_appendf(&sb, "{\"version\":%d,\"lastScan\":%lld,",
-               NCD_VERSION, (long long)db->last_scan);
-
-    sb_appendf(&sb, "\"options\":{\"showHidden\":%s,\"showSystem\":%s},",
-               db->default_show_hidden ? "true" : "false",
-               db->default_show_system ? "true" : "false");
-
-    sb_append(&sb, "\"drives\":[");
-
-    for (int di = 0; di < db->drive_count; di++) {
-        const DriveData *drv = &db->drives[di];
-        if (di) sb_appendc(&sb, ',');
-
-        sb_appendf(&sb, "{\"letter\":\"%c\",\"label\":", drv->letter);
-        sb_append_json_str(&sb, drv->label);
-        sb_appendf(&sb, ",\"type\":%u,\"dirs\":[", drv->type);
-
-        for (int ei = 0; ei < drv->dir_count; ei++) {
-            const DirEntry *e    = &drv->dirs[ei];
-            const char     *name = drv->name_pool + e->name_off;
-            if (ei) sb_appendc(&sb, ',');
-            sb_appendf(&sb, "{\"parent\":%d,\"name\":", e->parent);
-            sb_append_json_str(&sb, name);
-            sb_appendf(&sb, ",\"h\":%d,\"s\":%d}", e->is_hidden, e->is_system);
-        }
-
-        sb_append(&sb, "]}");
-    }
-
-    sb_append(&sb, "]}");   /* close drives array and root object */
-
-    /* Write to .tmp first, then atomic rename */
-    char tmp_path[MAX_PATH];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-
-    FILE *f = fopen(tmp_path, "wb");
-    if (!f) { free(sb.buf); return false; }
-
-    size_t written = fwrite(sb.buf, 1, sb.len, f);
-    if (written != sb.len) {
-        db_set_error("Failed to write groups: incomplete write");
-        fflush(f);
-        fclose(f);
-        free(sb.buf);
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    if (fflush(f) != 0) {
-        db_set_error("Failed to flush groups to disk (disk full?): %s", strerror(errno));
-        fclose(f);
-        free(sb.buf);
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    fclose(f);
-    free(sb.buf);
-
-    /*
-     * Atomic file replacement - same safe pattern as db_metadata_save()
-     * Never delete the current file directly.
-     */
-    /* Atomic file replacement */
-    if (!platform_move_file_replace(tmp_path, path)) {
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    return true;
-}
-
 /* ============================================================ binary save */
 
 /*
@@ -1898,14 +1352,51 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
         platform_delete_file(tmp_path);
         return false;
     }
-    fclose(f);
-    free(buf);
-
-    /* Atomic file replacement */
-    if (!platform_move_file_replace(tmp_path, path)) {
+#if NCD_PLATFORM_LINUX
+    /* Ensure data is physically on disk before renaming (POSIX durability) */
+    if (fsync(fileno(f)) != 0) {
+        db_set_error("Failed to fsync database to disk: %s", strerror(errno));
+        fclose(f);
+        free(buf);
         platform_delete_file(tmp_path);
         return false;
     }
+#endif
+    fclose(f);
+    free(buf);
+
+    /* Atomic file replacement with backup:
+     * 1. If final file exists, move it to .old (backup)
+     * 2. Move .tmp to final name (atomic rename)
+     * 3. On success, delete .old; on failure, restore from .old
+     */
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    
+    /* Step 1: Backup existing file to .old if it exists */
+    if (platform_file_exists(path)) {
+        /* Remove any stale .old file first */
+        platform_delete_file(old_path);
+        if (!platform_move_file(path, old_path)) {
+            db_set_error("Failed to backup existing database to .old: %s", strerror(errno));
+            platform_delete_file(tmp_path);
+            return false;
+        }
+    }
+    
+    /* Step 2: Atomic rename .tmp to final */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        db_set_error("Failed to install database file: %s", strerror(errno));
+        /* Try to restore from backup on failure */
+        if (platform_file_exists(old_path)) {
+            platform_move_file_replace(old_path, path);
+        }
+        platform_delete_file(tmp_path);
+        return false;
+    }
+    
+    /* Step 3: Success - remove backup */
+    platform_delete_file(old_path);
     return true;
 }
 
@@ -2182,10 +1673,8 @@ NcdDatabase *db_load_binary(const char *path)
 /*
  * Inspect the first 4 bytes of path to determine the format:
  *   - Starts with NCD_BIN_MAGIC bytes ('N','C','D','B') → binary
- *   - Anything else (e.g. '{')                          → JSON (legacy)
+ *   - Anything else                                       → unsupported
  *
- * If a JSON file is found it is loaded and immediately resaved as binary
- * so that future loads use the faster path.
  * If a binary file with an old version is found, it is deleted to force a rebuild.
  */
 NcdDatabase *db_load_auto(const char *path)
@@ -2222,14 +1711,7 @@ NcdDatabase *db_load_auto(const char *path)
         return db_load_binary(path);
     }
     fclose(f);
-    if (rd < 1) return NULL;
-
-    /* JSON (legacy) -- load then silently convert for next run */
-    NcdDatabase *db = db_load(path);
-    if (db) {
-        db_save_binary(db, path);   /* best-effort; ignore failure */
-    }
-    return db;
+    return NULL;
 }
 
 /* ========================================================= version check  */
@@ -2502,90 +1984,6 @@ bool db_set_skipped_rescan_flag(const char *path)
     return true;
 }
 
-/* ============================================================= path helpers  */
-
-/*
- * Get the path to the legacy history file.
- * Used for migration from old format.
- */
-static char *db_history_path(char *buf, size_t buf_size)
-{
-    if (!buf || buf_size == 0) return NULL;
-    buf[0] = '\0';
-    
-#if NCD_PLATFORM_WINDOWS
-    char local[MAX_PATH] = {0};
-    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
-    
-    size_t len = strlen(local);
-    bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
-    snprintf(buf, buf_size, "%s%sncd.history", local, has_sep ? "" : "\\");
-#else
-    char base[MAX_PATH] = {0};
-    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
-        char home[MAX_PATH] = {0};
-        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
-            return NULL;
-        snprintf(base, sizeof(base), "%s/.local/share", home);
-    }
-    snprintf(buf, buf_size, "%s/ncd/ncd.history", base);
-#endif
-    return buf;
-}
-
-/*
- * Atomic file write helper.
- * Writes data to a temp file, then atomically renames to target.
- * Creates a .old backup of the previous file if it exists.
- * 
- * Pattern: write to .tmp -> backup existing to .old -> rename .tmp to final
- * 
- * Returns true on success, false on failure.
- */
-static bool db_file_write_atomic(const char *path, const void *data, size_t len)
-{
-    if (!path || !data || len == 0) return false;
-    
-    /* Ensure directory exists */
-    char dir_path[MAX_PATH];
-    platform_strncpy_s(dir_path, sizeof(dir_path), path);
-    char *last_sep = strrchr(dir_path, '\\');
-    if (!last_sep) last_sep = strrchr(dir_path, '/');
-    if (last_sep) {
-        *last_sep = '\0';
-        platform_create_dir(dir_path);
-    }
-    
-    /* Atomic write pattern: .tmp -> .old -> final */
-    char tmp_path[MAX_PATH];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-    
-    FILE *f = fopen(tmp_path, "wb");
-    if (!f) return false;
-    
-    size_t wr = fwrite(data, 1, len, f);
-    if (fflush(f) != 0) {
-        db_set_error("Failed to flush file to disk (disk full?): %s", strerror(errno));
-        fclose(f);
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    fclose(f);
-    
-    if (wr != len) {
-        db_set_error("Failed to write file: incomplete write");
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    
-    /* Atomic file replacement */
-    if (!platform_move_file_replace(tmp_path, path)) {
-        platform_delete_file(tmp_path);
-        return false;
-    }
-    return true;
-}
-
 /* ============================================================= metadata  */
 
 /* Global override path for metadata file (set by -conf option) */
@@ -2636,6 +2034,67 @@ bool db_metadata_exists(void)
     char path[MAX_PATH];
     if (!db_metadata_path(path, sizeof(path))) return false;
     return platform_file_exists(path);
+}
+
+char *db_logs_path(char *buf, size_t buf_size)
+{
+    if (!buf || buf_size == 0) return NULL;
+    buf[0] = '\0';
+    
+#if NCD_PLATFORM_WINDOWS
+    /* Check for override first - use the directory containing the override file */
+    if (g_metadata_override[0]) {
+        char override_copy[MAX_PATH];
+        platform_strncpy_s(override_copy, sizeof(override_copy), g_metadata_override);
+        char *last_sep = strrchr(override_copy, '\\');
+        if (!last_sep) last_sep = strrchr(override_copy, '/');
+        if (last_sep) {
+            *last_sep = '\0';
+            platform_strncpy_s(buf, buf_size, override_copy);
+            return buf;
+        }
+    }
+    
+    /* Default location: %LOCALAPPDATA%\NCD */
+    char local[MAX_PATH];
+    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
+    
+    int written = snprintf(buf, buf_size, "%s\\NCD", local);
+    if (written <= 0 || (size_t)written >= buf_size) return NULL;
+    
+    /* Create the NCD directory if it doesn't exist */
+    platform_create_dir(buf);
+    
+#else /* Linux */
+    /* Check for override first - use the directory containing the override file */
+    if (g_metadata_override[0]) {
+        char override_copy[MAX_PATH];
+        platform_strncpy_s(override_copy, sizeof(override_copy), g_metadata_override);
+        char *last_sep = strrchr(override_copy, '/');
+        if (last_sep) {
+            *last_sep = '\0';
+            platform_strncpy_s(buf, buf_size, override_copy);
+            return buf;
+        }
+    }
+    
+    /* Default location: $XDG_DATA_HOME/ncd or ~/.local/share/ncd */
+    char base[MAX_PATH];
+    if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
+        char home[MAX_PATH] = {0};
+        if (!platform_get_env("HOME", home, sizeof(home)) || !home[0])
+            return NULL;
+        int written = snprintf(base, sizeof(base), "%s/.local/share", home);
+        if (written <= 0 || (size_t)written >= sizeof(base)) return NULL;
+    }
+    
+    /* Create the ncd directory if it doesn't exist */
+    int written = snprintf(buf, buf_size, "%s/ncd", base);
+    if (written <= 0 || (size_t)written >= buf_size) return NULL;
+    platform_create_dir(buf);
+#endif
+    
+    return buf;
 }
 
 /* ============================================================= exclusion list  */
@@ -2805,6 +2264,8 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
         path_to_match++;
     }
     
+
+    
     for (int i = 0; i < meta->exclusions.count; i++) {
         NcdExclusionEntry *entry = &meta->exclusions.entries[i];
         
@@ -2813,28 +2274,25 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
             continue;
         }
         
-        /* Get the pattern path (skip drive letter if present) */
-        const char *pattern = entry->pattern;
-#if NCD_PLATFORM_WINDOWS
-        if (pattern[1] == ':') {
-            pattern += 2;
-        }
-        
-        /* Normalize pattern separators to backslashes on Windows */
+        /* Get the pattern path (skip drive letter if present) and normalize */
         char norm_pattern[NCD_MAX_PATH];
-        platform_strncpy_s(norm_pattern, sizeof(norm_pattern), pattern);
+        const char *pattern_start = entry->pattern;
+#if NCD_PLATFORM_WINDOWS
+        if (pattern_start[1] == ':') {
+            pattern_start += 2;  /* Skip "C:" */
+        }
+#endif
+        platform_strncpy_s(norm_pattern, sizeof(norm_pattern), pattern_start);
+#if NCD_PLATFORM_WINDOWS
+        /* Normalize forward slashes to backslashes on Windows */
         for (char *p = norm_pattern; *p; p++) {
             if (*p == '/') *p = '\\';
         }
-        pattern = norm_pattern;
 #endif
+        const char *pattern = norm_pattern;
         
         /* Handle root-only matches */
         if (entry->match_from_root) {
-            /* Pattern starts with \ or /, must match from root */
-            if (dir_path[0] != '\\' && dir_path[0] != '/') {
-                /* Current path is not from root, skip */
-            }
             /* Skip leading separator in pattern for matching */
             if (pattern[0] == '\\' || pattern[0] == '/') {
                 pattern++;
@@ -2843,11 +2301,34 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
             if (wildcard_match(pattern, path_to_match)) {
                 return true;
             }
+            
+            /* Check if pattern matches as a directory prefix (e.g., "Windows" matches "Windows\System32") */
+            size_t pattern_len = strlen(pattern);
+#if NCD_PLATFORM_WINDOWS
+            if (pattern_len > 0 && _strnicmp(path_to_match, pattern, pattern_len) == 0) {
+#else
+            if (pattern_len > 0 && strncasecmp(path_to_match, pattern, pattern_len) == 0) {
+#endif
+                /* Pattern matches the start of path - check if it's a directory boundary */
+                char next_char = path_to_match[pattern_len];
+                if (next_char == '\\' || next_char == '/' || next_char == '\0') {
+                    return true;
+                }
+            }
         } else {
             /* Check if pattern matches this path component or any parent */
             /* First try matching the full remaining path */
             if (wildcard_match(pattern, path_to_match)) {
                 return true;
+            }
+            
+            /* For patterns like "*\dir\*.ext", also try matching without the leading "*\"
+             * This handles root-level directories like "build\test.obj" matching "*\build\*.obj"
+             */
+            if (pattern[0] == '*' && (pattern[1] == '\\' || pattern[1] == '/')) {
+                if (wildcard_match(pattern + 2, path_to_match)) {
+                    return true;
+                }
             }
             
             /* For parent\child patterns, check if any path component matches */
@@ -3112,6 +2593,16 @@ bool db_metadata_save(NcdMetadata *meta)
         platform_delete_file(tmp_path);
         return false;
     }
+#if NCD_PLATFORM_LINUX
+    /* Ensure data is physically on disk before renaming (POSIX durability) */
+    if (fsync(fileno(f)) != 0) {
+        db_set_error("Failed to fsync metadata to disk: %s", strerror(errno));
+        fclose(f);
+        free(buf);
+        platform_delete_file(tmp_path);
+        return false;
+    }
+#endif
     fclose(f);
     free(buf);
     
@@ -3121,12 +2612,38 @@ bool db_metadata_save(NcdMetadata *meta)
         return false;
     }
     
-    /* Atomic file replacement (replaces destination if it exists) */
+    /* Atomic file replacement with backup:
+     * 1. If final file exists, move it to .old (backup)
+     * 2. Move .tmp to final name (atomic rename)
+     * 3. On success, delete .old; on failure, restore from .old
+     */
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    
+    /* Step 1: Backup existing file to .old if it exists */
+    if (platform_file_exists(path)) {
+        /* Remove any stale .old file first */
+        platform_delete_file(old_path);
+        if (!platform_move_file(path, old_path)) {
+            db_set_error("Failed to backup existing metadata to .old: %s", strerror(errno));
+            platform_delete_file(tmp_path);
+            return false;
+        }
+    }
+    
+    /* Step 2: Atomic rename .tmp to final */
     if (!platform_move_file_replace(tmp_path, path)) {
-        platform_delete_file(tmp_path);
         db_set_error("Failed to install metadata file: %s", strerror(errno));
+        /* Try to restore from backup on failure */
+        if (platform_file_exists(old_path)) {
+            platform_move_file_replace(old_path, path);
+        }
+        platform_delete_file(tmp_path);
         return false;
     }
+    
+    /* Step 3: Success - remove backup */
+    platform_delete_file(old_path);
     
     meta->config_dirty = false;
     meta->groups_dirty = false;
@@ -3151,8 +2668,6 @@ NcdMetadata *db_metadata_load(void)
     
     FILE *f = fopen(path, "rb");
     if (!f) {
-        /* Try to load from legacy config as fallback */
-        db_config_load(&meta->cfg);
         return meta;
     }
     
@@ -3160,32 +2675,31 @@ NcdMetadata *db_metadata_load(void)
     MetaFileHdr hdr;
     if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
         fclose(f);
-        db_config_load(&meta->cfg);
         return meta;
     }
 
     if (hdr.magic != NCD_META_MAGIC) {
         fclose(f);
-        fprintf(stderr, "NCD: Warning: Metadata file has invalid magic number (corrupted?).\n");
-        return meta;
+        fprintf(stderr, "NCD: Error: Metadata file has invalid magic number (corrupted?).\n");
+        db_metadata_free(meta);
+        return NULL;
     }
     if (hdr.version != NCD_META_VERSION) {
         fclose(f);
-        fprintf(stderr, "NCD: Warning: Metadata file version mismatch (expected %d, got %d).\n",
+        fprintf(stderr, "NCD: Error: Metadata file version mismatch (expected %d, got %d).\n",
                 NCD_META_VERSION, hdr.version);
-        return meta;
+        db_metadata_free(meta);
+        return NULL;
     }
     
     /* Get file size for CRC verification */
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
-        db_config_load(&meta->cfg);
         return meta;
     }
     long file_size = ftell(f);
     if (fseek(f, NCD_META_HEADER_SIZE, SEEK_SET) != 0) { /* Skip header */
         fclose(f);
-        db_config_load(&meta->cfg);
         return meta;
     }
     
@@ -3199,7 +2713,6 @@ NcdMetadata *db_metadata_load(void)
     if (fread(data, 1, data_size, f) != data_size) {
         free(data);
         fclose(f);
-        db_config_load(&meta->cfg);
         return meta;
     }
     fclose(f);
@@ -3208,10 +2721,11 @@ NcdMetadata *db_metadata_load(void)
     uint64_t computed_crc = platform_crc64(data, data_size);
     
     if (computed_crc != hdr.checksum) {
-        /* CRC mismatch */
+        /* CRC mismatch - fail hard like database files */
         free(data);
-        fprintf(stderr, "NCD: Warning: Metadata file CRC check failed (file corrupted?).\n");
-        return meta;
+        fprintf(stderr, "NCD: Error: Metadata file CRC check failed (file corrupted?).\n");
+        db_metadata_free(meta);
+        return NULL;
     }
     
     /* Parse sections */
@@ -3325,29 +2839,6 @@ NcdMetadata *db_metadata_load(void)
     
     free(data);
     return meta;
-}
-
-int db_metadata_cleanup_legacy(void)
-{
-    int count = 0;
-    
-    /* Delete ncd.config */
-    char path[MAX_PATH];
-    if (db_config_path(path, sizeof(path)) && platform_file_exists(path)) {
-        if (platform_delete_file(path)) count++;
-    }
-    
-    /* Delete ncd.history */
-    if (db_history_path(path, sizeof(path)) && platform_file_exists(path)) {
-        if (platform_delete_file(path)) count++;
-    }
-    
-    /* Delete ncd.groups */
-    if (db_group_path(path, sizeof(path)) && platform_file_exists(path)) {
-        if (platform_delete_file(path)) count++;
-    }
-    
-    return count;
 }
 
 /* ============================================================= enhanced heuristics  */

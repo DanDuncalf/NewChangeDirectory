@@ -103,10 +103,12 @@ COMMON_SOURCES=(
 )
 
 # Base compiler flags
+# -Wno-format-truncation: snprintf to fixed buffers is intentional design
+# -Wno-stringop-truncation: strncpy with proper null-termination is safe
 if [ $BUILD_DEBUG -eq 1 ]; then
-    BASE_CFLAGS="-std=c11 -Wall -Wextra -O0 -g3 -DDEBUG -D_GNU_SOURCE"
+    BASE_CFLAGS="-std=c11 -Wall -Wextra -Wno-format-truncation -Wno-stringop-truncation -O0 -g3 -DDEBUG -D_GNU_SOURCE"
 else
-    BASE_CFLAGS="-std=c11 -Wall -Wextra -O2 -DNDEBUG -D_GNU_SOURCE"
+    BASE_CFLAGS="-std=c11 -Wall -Wextra -Wno-format-truncation -Wno-stringop-truncation -O2 -DNDEBUG -D_GNU_SOURCE"
 fi
 
 # Architecture-specific flags

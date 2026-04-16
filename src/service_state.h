@@ -285,6 +285,28 @@ void service_state_set_status_message(ServiceState *state, const char *message);
  */
 const char *service_state_get_status_message(const ServiceState *state);
 
+/*
+ * service_state_request_shutdown  --  Request service shutdown
+ *
+ * Sets the shutdown flag so new operations are rejected.
+ * Returns true if shutdown was not already requested.
+ */
+bool service_state_request_shutdown(ServiceState *state);
+
+/*
+ * service_state_is_shutdown_requested  --  Check if shutdown has been requested
+ *
+ * Returns true if service is shutting down and should reject new operations.
+ */
+bool service_state_is_shutdown_requested(const ServiceState *state);
+
+/*
+ * service_state_is_available_for_operations  --  Check if service can accept operations
+ *
+ * Returns true if service is READY and not shutting down.
+ */
+bool service_state_is_available_for_operations(const ServiceState *state);
+
 /* --------------------------------------------------------- request queue        */
 
 /* Request types that can be queued */

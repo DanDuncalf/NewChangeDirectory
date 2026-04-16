@@ -14,6 +14,7 @@
 #include "test_framework.h"
 #include "../src/control_ipc.h"
 #include "../src/ncd.h"
+#include "../src/platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -22,7 +23,6 @@
 #include <windows.h>
 #include <process.h>
 #include <tlhelp32.h>
-#define sleep(x) Sleep((x) * 1000)
 #else
 #include <unistd.h>
 #include <signal.h>
@@ -120,18 +120,33 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
 #endif
 }
 
-/* Wait for service to reach expected state */
+/* Wait for service to reach expected state
+ * If service process exists but IPC isn't ready yet, keep retrying
+ * for up to timeout_seconds. Only fail if service exists but IPC
+ * never becomes ready within the timeout.
+ */
 static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
     for (int i = 0; i < timeout_seconds * 10; i++) {
         bool currently_running = ipc_service_exists();
         if (currently_running == expected_running) {
             return true;
         }
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
+    }
+    return false;
+}
+
+/* Wait for service IPC to be ready with extended retry logic.
+ * This handles the case where the service process starts but the
+ * IPC pipe isn't immediately available.
+ */
+static bool wait_for_service_ipc_ready(int timeout_seconds) {
+    int retries = timeout_seconds * 10;
+    while (retries-- > 0) {
+        if (ipc_service_exists()) {
+            return true;
+        }
+        platform_sleep_ms(100);
     }
     return false;
 }
@@ -159,38 +174,84 @@ static void force_terminate_service(void) {
         CloseHandle(hSnap);
     }
 #else
-    /* Try pkill first, then killall as fallback */
-    system("pkill -9 -f ncd_service 2>/dev/null || killall -9 ncd_service 2>/dev/null");
+    /* Kill both the shell wrapper (ncd_service) and the actual binary (NCDService) */
+    system("pkill -9 -f NCDService 2>/dev/null; pkill -9 -f ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null");
+    /* Clean up PID file so the shell wrapper doesn't think it's still running */
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
 #endif
     /* Wait for process to actually exit */
     for (int i = 0; i < 20; i++) {
         if (!ipc_service_exists()) break;
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
     }
+}
+
+/* Wait for the service process to fully exit (mutex released).
+ * The IPC pipe closes before the mutex during shutdown, so
+ * ipc_service_exists() alone is not sufficient. */
+static void wait_for_service_fully_exited(int timeout_seconds) {
+#if NCD_PLATFORM_WINDOWS
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+        if (!hMutex) return;  /* mutex gone - service fully exited */
+        CloseHandle(hMutex);
+        platform_sleep_ms(100);
+    }
+#else
+    /* On Linux, check if the process from PID file is still running.
+     * The PID file is at ${XDG_RUNTIME_DIR}/ncd_service.pid or /tmp/ncd_service.pid */
+    const char *pid_file = NULL;
+    const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
+    char pid_path_buf[256];
+    
+    if (xdg_runtime && *xdg_runtime) {
+        snprintf(pid_path_buf, sizeof(pid_path_buf), "%s/ncd_service.pid", xdg_runtime);
+        pid_file = pid_path_buf;
+    } else {
+        pid_file = "/tmp/ncd_service.pid";
+    }
+    
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        FILE *f = fopen(pid_file, "r");
+        if (!f) return;  /* PID file gone - service fully exited */
+        
+        pid_t pid = 0;
+        if (fscanf(f, "%d", &pid) != 1 || pid <= 0) {
+            fclose(f);
+            return;  /* Invalid PID - assume exited */
+        }
+        fclose(f);
+        
+        /* Check if process is still running (kill -0 sends no signal but checks existence) */
+        if (kill(pid, 0) != 0) return;  /* Process no longer exists */
+        
+        platform_sleep_ms(100);
+    }
+#endif
 }
 
 /* Ensure service is stopped - tries graceful first, then force kill */
 static void ensure_service_stopped(void) {
     if (!ipc_service_exists()) {
+        /* Pipe gone but process may still hold the mutex during cleanup */
+        wait_for_service_fully_exited(5);
         return;
     }
-    
+
     /* Try graceful stop first */
-    run_service_command("stop", NULL, 0);
-    
+    { char _buf[256]; run_service_command("stop", _buf, sizeof(_buf)); }
+
     /* Wait for graceful shutdown */
     bool stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
     if (stopped) {
+        wait_for_service_fully_exited(5);
         return;
     }
     
     /* Graceful shutdown timed out - force kill */
     printf("  [WARNING] Graceful shutdown timed out, force terminating...\n");
     force_terminate_service();
+    wait_for_service_fully_exited(3);
 }
 
 /* Ensure service is running - starts it if not */
@@ -203,7 +264,7 @@ static bool ensure_service_running(void) {
         return false;
     }
     
-    run_service_command("start", NULL, 0);
+    { char _buf[256]; run_service_command("start", _buf, sizeof(_buf)); }
     return wait_for_service_state(true, SERVICE_START_TIMEOUT);
 }
 
@@ -329,22 +390,23 @@ TEST(service_stop_when_already_stopped) {
 
 TEST(service_restart) {
     ensure_service_stopped();
-    
+
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
         printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
         return 0;
     }
-    
+
     /* Start service */
     char output[256] = {0};
-    run_service_command("start", NULL, 0);
+    int exit_code = run_service_command("start", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
     bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
     
     /* Restart should stop and start */
     memset(output, 0, sizeof(output));
-    int exit_code = run_service_command("stop", output, sizeof(output));
+    exit_code = run_service_command("stop", output, sizeof(output));
     ASSERT_EQ_INT(0, exit_code);
     wait_for_service_state(false, SERVICE_STOP_TIMEOUT);
     
@@ -362,15 +424,17 @@ TEST(service_restart) {
 
 TEST(service_ipc_ping) {
     ensure_service_stopped();
-    
+
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
         printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
         return 0;
     }
-    
+
     /* Start service */
-    run_service_command("start", NULL, 0);
+    char start_out[256] = {0};
+    int start_rc = run_service_command("start", start_out, sizeof(start_out));
+    ASSERT_EQ_INT(0, start_rc);
     bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -402,11 +466,7 @@ TEST(service_ipc_ping_when_stopped) {
      * briefly where CreateFile succeeds but the server is dead.
      * We wait for the pipe to be fully cleaned up by the OS.
      */
-#if NCD_PLATFORM_WINDOWS
-    Sleep(300);
-#else
-    usleep(300000);
-#endif
+    platform_sleep_ms(300);
     
     /* Initialize IPC client */
     int init_result = ipc_client_init();
@@ -423,11 +483,7 @@ TEST(service_ipc_ping_when_stopped) {
         /* Got a handle (zombie pipe), close and retry */
         ipc_client_disconnect(client);
         client = NULL;
-#if NCD_PLATFORM_WINDOWS
-        Sleep(50);
-#else
-        usleep(50000);
-#endif
+        platform_sleep_ms(50);
     }
     ASSERT_NULL(client);
     
@@ -445,7 +501,7 @@ TEST(service_ipc_get_version) {
     }
     
     /* Start service */
-    run_service_command("start", NULL, 0);
+    { char _buf[256]; run_service_command("start", _buf, sizeof(_buf)); }
     bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -481,7 +537,7 @@ TEST(service_ipc_get_state_info) {
     }
     
     /* Start service */
-    run_service_command("start", NULL, 0);
+    { char _buf[256]; run_service_command("start", _buf, sizeof(_buf)); }
     bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -516,7 +572,7 @@ TEST(service_ipc_shutdown_request) {
     }
     
     /* Start service */
-    run_service_command("start", NULL, 0);
+    { char _buf[256]; run_service_command("start", _buf, sizeof(_buf)); }
     bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -547,19 +603,21 @@ TEST(service_ipc_shutdown_request) {
 
 TEST(service_state_progression) {
     ensure_service_stopped();
-    
+
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
         printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
         return 0;
     }
-    
-    /* Start service */
-    run_service_command("start", NULL, 0);
-    
-    /* Initially service should exist but may be in STARTING state */
-    bool exists = wait_for_service_state(true, SERVICE_START_TIMEOUT);
-    ASSERT_TRUE(exists);
+
+    /* Start service and verify it launched successfully */
+    char output[256] = {0};
+    int exit_code = run_service_command("start", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
+
+    /* Wait for service process to be detectable via IPC pipe. */
+    bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
+    ASSERT_TRUE(started);
     
     /* Initialize IPC client */
     ipc_client_init();
@@ -579,11 +637,7 @@ TEST(service_state_progression) {
                 break;
             }
         }
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
     }
     
     ipc_client_cleanup();

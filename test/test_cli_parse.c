@@ -231,11 +231,12 @@ TEST(search_term_captured) {
     return 0;
 }
 
-TEST(combined_flags_ris_sets_all_three) {
+TEST(separate_flags_r_i_s_sets_all_three) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/ris", &opts);
+    char *argv[] = {(char *)"ncd", (char *)"/r", (char *)"/i", (char *)"/s"};
+    bool result = parse_args(4, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.force_rescan);
@@ -245,11 +246,12 @@ TEST(combined_flags_ris_sets_all_three) {
     return 0;
 }
 
-TEST(combined_flags_za_sets_fuzzy_and_all) {
+TEST(separate_flags_z_a_sets_fuzzy_and_all) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/za", &opts);
+    char *argv[] = {(char *)"ncd", (char *)"/z", (char *)"/a"};
+    bool result = parse_args(3, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.fuzzy_match);
@@ -457,8 +459,8 @@ void suite_cli_parse(void) {
     RUN_TEST(t_flag_sets_timeout);
     RUN_TEST(c_flag_sets_config_edit);
     RUN_TEST(search_term_captured);
-    RUN_TEST(combined_flags_ris_sets_all_three);
-    RUN_TEST(combined_flags_za_sets_fuzzy_and_all);
+    RUN_TEST(separate_flags_r_i_s_sets_all_three);
+    RUN_TEST(separate_flags_z_a_sets_fuzzy_and_all);
     RUN_TEST(dash_equivalent_to_slash);
     RUN_TEST(invalid_option_returns_false);
     RUN_TEST(a_with_suffix_is_unknown_option);

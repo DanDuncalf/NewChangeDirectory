@@ -216,7 +216,6 @@ static bool load_database_from_snapshot(NcdStateView *view) {
 
 /* Forward declarations for helper functions */
 static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry_delay_ms);
-static bool wait_for_service_ready(NcdIpcClient *client, int timeout_ms);
 
 /* Debug logging for state backend service - uses NCD_DEBUG_LOG from ncd.h */
 #ifdef NCD_DEBUG_LOG
@@ -514,40 +513,6 @@ static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry
             set_error("Failed to connect to service");
         }
     }
-    return false;
-}
-
-/*
- * Wait for service to be ready by pinging it.
- * Returns false if timeout or error.
- */
-static bool wait_for_service_ready(NcdIpcClient *client, int timeout_ms) {
-    int waited = 0;
-    int check_interval = 100;  /* Check every 100ms */
-    
-    while (waited < timeout_ms) {
-        NcdIpcResult result = ipc_client_ping(client);
-        
-        if (result == NCD_IPC_OK) {
-            /* Service is ready */
-            return true;
-        }
-        
-        if (result == NCD_IPC_ERROR_BUSY_LOADING || 
-            result == NCD_IPC_ERROR_BUSY_SCANNING ||
-            result == NCD_IPC_ERROR_NOT_READY) {
-            /* Service is starting/loading/scanning - wait and retry */
-            platform_sleep_ms(check_interval);
-            waited += check_interval;
-            continue;
-        }
-        
-        /* Other error */
-        set_error(ipc_error_string(result));
-        return false;
-    }
-    
-    set_error("Timeout waiting for service to be ready");
     return false;
 }
 

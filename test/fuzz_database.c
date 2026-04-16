@@ -71,7 +71,7 @@ void fuzz_json_load(void) {
         fclose(f);
         
         /* Should not crash */
-        NcdDatabase *db = db_load(test_file);
+        NcdDatabase *db = db_load_auto(test_file);
         if (db) {
             db_free(db);
         }

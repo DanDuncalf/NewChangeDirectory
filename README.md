@@ -139,22 +139,47 @@ CC=clang ./build.sh
 
 ## Running Tests
 
-### Linux/WSL
+### Quick Start - Run All Tests
 
+**Windows (complete test suite):**
+```batch
+:: Build everything first
+build.bat
+
+:: Run all tests (unit + integration)
+Run-All-Tests-Complete.bat --windows-only
+
+:: Or run just unit tests
+cd test
+Run-All-Unit-Tests.bat
+```
+
+**Linux/WSL (complete test suite):**
 ```bash
+# Build everything first
+./build.sh
+
+# Run all tests
 cd test
 make test
+
+# Additional test targets
 make fuzz       # Fuzz testing
 make bench      # Performance benchmarks
 make corruption # Corruption handling tests
 ```
 
-### Windows
+### Test Runners Reference
 
-```batch
-cd test
-build-tests.bat
-```
+| Script | Purpose | Platform |
+|--------|---------|----------|
+| `Run-All-Tests-Complete.bat` | Master runner - builds and runs ALL tests | Windows |
+| `test\Run-All-Unit-Tests.bat` | Runs all unit test executables | Windows |
+| `test\Test-Service-Windows.bat` | Service tests (isolated) | Windows |
+| `test\Test-NCD-Windows-Standalone.bat` | NCD without service | Windows |
+| `test\Test-NCD-Windows-With-Service.bat` | NCD with service | Windows |
+
+See `AGENTS.md` for complete testing documentation.
 
 ## Architecture
 

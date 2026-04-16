@@ -19,13 +19,13 @@
 #include "../src/state_backend.h"
 #include "../src/service_state.h"
 #include "../src/service_publish.h"
+#include "../src/platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
-#define sleep(x) Sleep((x) * 1000)
 #else
 #include <unistd.h>
 #endif
@@ -77,11 +77,7 @@ static bool start_service(void) {
         if (ipc_service_exists()) {
             return true;
         }
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
     }
     return false;
 }
@@ -103,11 +99,7 @@ static bool stop_service(void) {
         if (!ipc_service_exists()) {
             return true;
         }
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
     }
     return false;
 }
@@ -361,11 +353,7 @@ TEST(service_graceful_shutdown) {
             stopped = true;
             break;
         }
-#if NCD_PLATFORM_WINDOWS
-        Sleep(100);
-#else
-        usleep(100000);
-#endif
+        platform_sleep_ms(100);
     }
     
     ASSERT_TRUE(stopped);
@@ -405,11 +393,7 @@ TEST(snapshot_publisher_produces_valid_snapshots) {
     ASSERT_TRUE(start_service());
     
     /* Give service time to publish initial snapshots */
-#if NCD_PLATFORM_WINDOWS
-    Sleep(1000);
-#else
-    usleep(1000000);
-#endif
+    platform_sleep_ms(1000);
     
     NcdIpcClient *client = ipc_client_connect();
     ASSERT_NOT_NULL(client);
@@ -461,11 +445,7 @@ TEST(state_backend_connects_to_service_when_available) {
     ASSERT_TRUE(start_service());
     
     /* Give service time to initialize */
-#if NCD_PLATFORM_WINDOWS
-    Sleep(1000);
-#else
-    usleep(1000000);
-#endif
+    platform_sleep_ms(1000);
     
     /* Open state via best effort - should connect to service */
     NcdStateView *view = NULL;
@@ -498,11 +478,7 @@ TEST(state_backend_group_update_roundtrip_when_service_running) {
     ensure_service_stopped();
     ASSERT_TRUE(start_service());
     
-#if NCD_PLATFORM_WINDOWS
-    Sleep(1000);
-#else
-    usleep(1000000);
-#endif
+    platform_sleep_ms(1000);
     
     NcdStateView *view = NULL;
     NcdStateSourceInfo info;

@@ -1,0 +1,1473 @@
+========================================
+NCD Test Suite - Build and Run
+========================================
+
+cl.exe not found in PATH. Searching for Visual Studio environment...
+Found Visual Studio environment: C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat
+**********************************************************************
+** Visual Studio 2026 Developer Command Prompt v18.4.0
+** Copyright (c) 2026 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+
+========================================
+Building object files...
+========================================
+Compiling database.c...
+database.c
+..\src\database.c(223): warning C4267: 'function': conversion from 'size_t' to 'long', possible loss of data
+Compiling matcher.c...
+matcher.c
+Compiling scanner.c...
+scanner.c
+Compiling cli.c...
+cli.c
+Compiling platform_ncd.c (NCD-specific)...
+cl : Command line warning D9025 : overriding '/Foobj\' with '/Foobj\ncd_platform.obj'
+platform_ncd.c
+Compiling platform.c (shared)...
+cl : Command line warning D9025 : overriding '/Foobj\' with '/Foobj\sh_platform.obj'
+platform.c
+Compiling strbuilder.c (shared)...
+cl : Command line warning D9025 : overriding '/Foobj\' with '/Foobj\sh_strbuilder.obj'
+strbuilder.c
+Compiling common.c (shared)...
+cl : Command line warning D9025 : overriding '/Foobj\' with '/Foobj\sh_common.obj'
+common.c
+Compiling test_framework.c...
+test_framework.c
+
+========================================
+Building test executables...
+========================================
+Building test_database.exe...
+test_database.c
+test_database.c(102): warning C4102: 'cleanup': unreferenced label
+test_database.c(127): warning C4102: 'cleanup': unreferenced label
+test_database.c(158): warning C4102: 'cleanup': unreferenced label
+test_database.c(197): warning C4102: 'cleanup': unreferenced label
+test_database.c(221): warning C4102: 'cleanup': unreferenced label
+test_database.c(244): warning C4102: 'cleanup': unreferenced label
+test_database.c(623): warning C4102: 'cleanup': unreferenced label
+test_database.c(665): warning C4102: 'cleanup': unreferenced label
+test_database.c(802): warning C4102: 'cleanup': unreferenced label
+Building test_matcher.exe...
+test_matcher.c
+Building test_db_corruption.exe...
+test_db_corruption.c
+test_db_corruption.c(92): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(113): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(136): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(159): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(182): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(200): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(218): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(246): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(299): warning C4102: 'cleanup': unreferenced label
+test_db_corruption.c(462): warning C4102: 'cleanup': unreferenced label
+Building test_bugs.exe...
+test_bugs.c
+Building fuzz_database.exe...
+fuzz_database.c
+Building bench_matcher.exe...
+bench_matcher.c
+Building test_strbuilder.exe...
+test_strbuilder.c
+Building test_common.exe...
+test_common.c
+Building test_platform.exe...
+test_platform.c
+Building test_metadata.exe...
+test_metadata.c
+test_metadata.c(233): warning C4101: 'path': unreferenced local variable
+Building test_scanner.exe...
+test_scanner.c
+Building test_cli_parse.exe...
+test_cli_parse.c
+Compiling service_state.c...
+service_state.c
+Compiling control_ipc_win.c...
+cl : Command line warning D9025 : overriding '/Foobj\' with '/Foobj\control_ipc_win.obj'
+control_ipc_win.c
+Building test_service_lazy_load.exe...
+test_service_lazy_load.c
+Building test_service_lifecycle.exe...
+test_service_lifecycle.c
+Building test_service_integration.exe...
+test_service_integration.c
+
+========================================
+Build successful Running tests...
+========================================
+
+--- Running test_strbuilder.exe ---
+Starting test run...
+
+=== strbuilder ===
+  Running init_sets_valid_state...
+    PASSED
+  Running append_single_string...
+    PASSED
+  Running append_multiple_strings_concatenates...
+    PASSED
+  Running appendn_truncates_at_n_bytes...
+    PASSED
+  Running appendc_single_character...
+    PASSED
+  Running appendf_formatted_output...
+    PASSED
+  Running append_json_str_escapes_quotes...
+    PASSED
+  Running append_json_str_escapes_backslash...
+    PASSED
+  Running append_json_str_escapes_control_chars...
+    PASSED
+  Running clear_resets_length_but_keeps_buffer...
+    PASSED
+  Running steal_transfers_ownership...
+    PASSED
+  Running dup_copies_buffer...
+    PASSED
+  Running ensure_cap_grows_buffer...
+    PASSED
+  Running large_append_triggers_realloc...
+    PASSED
+  Running free_then_init_cycle...
+    PASSED
+
+========================================
+Tests: 15 run, 15 passed, 0 failed
+Assertions: 36 total, 0 failed
+PASSED: test_strbuilder.exe
+
+--- Running test_common.exe ---
+Starting test run...
+
+=== common ===
+  Running malloc_returns_non_null...
+    PASSED
+  Running calloc_returns_zeroed_memory...
+    PASSED
+  Running realloc_grows_allocation...
+    PASSED
+  Running strdup_copies_string...
+    PASSED
+  Running malloc_array_with_safe_sizes...
+    PASSED
+  Running mul_overflow_check_detects_overflow...
+    PASSED
+  Running add_overflow_check_detects_overflow...
+    PASSED
+
+========================================
+Tests: 7 run, 7 passed, 0 failed
+Assertions: 123 total, 0 failed
+PASSED: test_common.exe
+
+--- Running test_platform.exe ---
+Starting test run...
+
+=== platform ===
+  Running strcasestr_finds_substring...
+    PASSED
+  Running strcasestr_case_insensitive...
+    PASSED
+  Running strcasestr_returns_null_on_miss...
+    PASSED
+  Running is_drive_specifier_valid...
+    PASSED
+  Running is_drive_specifier_invalid...
+    PASSED
+  Running parse_drive_from_search_extracts_letter...
+    PASSED
+  Running parse_drive_from_search_no_drive...
+    PASSED
+  Running build_mount_path_valid_letter...
+    PASSED
+  Running filter_available_drives_filters_correctly...
+    PASSED
+  Running is_pseudo_fs_matches_known_types...
+    PASSED
+  Running get_app_title_returns_non_null...
+    PASSED
+  Running db_default_path_returns_valid_path...
+    PASSED
+
+========================================
+Tests: 12 run, 12 passed, 0 failed
+Assertions: 42 total, 0 failed
+PASSED: test_platform.exe
+
+--- Running test_database.exe ---
+NCD: Database file too small
+NCD: Database file too small
+NCD: Database has UTF16 BOM but header encoding is not UTF16
+Starting test run...
+
+=== database ===
+  Running create_and_free...
+    PASSED
+  Running add_drive...
+    PASSED
+  Running add_directory...
+    PASSED
+  Running full_path_reconstruction...
+    PASSED
+  Running binary_save_load_roundtrip...
+    PASSED
+  Running binary_load_corrupted_rejected...
+    PASSED
+  Running binary_load_truncated_rejected...
+    PASSED
+  Running json_save_load_roundtrip...
+    PASSED
+  Running load_auto_detects_binary_format...
+    PASSED
+  Running load_auto_detects_json_format...
+    PASSED
+  Running check_file_version_returns_correct_version...
+    PASSED
+  Running check_file_version_empty_file_returns_error...
+    PASSED
+  Running check_all_versions_with_no_databases...
+    PASSED
+  Running config_init_defaults_populates_all_fields...
+    PASSED
+  Running config_save_load_roundtrip...
+    PASSED
+  Running exclusion_add_adds_pattern...
+    PASSED
+  Running exclusion_remove_removes_pattern...
+    PASSED
+  Running exclusion_check_matches_pattern...
+    PASSED
+  Running exclusion_check_rejects_non_matching...
+    PASSED
+  Running exclusion_init_defaults_adds_defaults...
+    PASSED
+  Running heur_calculate_score_returns_higher_for_recent...
+    PASSED
+  Running heur_find_locates_entry_by_search...
+    PASSED
+  Running heur_find_best_finds_best_match...
+    PASSED
+  Running drive_backup_create_restore_roundtrip...
+    PASSED
+  Running find_drive_returns_correct_drive...
+    PASSED
+  Running find_drive_returns_null_for_missing...
+    PASSED
+  Running text_encoding_default_is_utf8...
+    PASSED
+  Running text_encoding_set_get_roundtrip...
+    PASSED
+  Running text_encoding_invalid_value_ignored...
+    PASSED
+  Running config_encoding_defaults_to_utf8...
+    PASSED
+  Running binary_save_load_utf8_no_bom...
+    PASSED
+  Running binary_save_load_utf16_with_bom...
+    PASSED
+  Running binary_load_rejects_bom_encoding_mismatch...
+    PASSED
+  Running config_encoding_migrates_from_v3...
+    PASSED
+  Running saved_database_version_matches_current...
+    PASSED
+  Running saved_database_version_is_correct_binary_version...
+    PASSED
+  Running filter_excluded_removes_matching_directories...
+    PASSED
+  Running filter_excluded_keeps_non_matching_directories...
+    PASSED
+  Running filter_excluded_updates_parent_indices...
+    PASSED
+
+========================================
+Tests: 39 run, 39 passed, 0 failed
+Assertions: 137 total, 0 failed
+PASSED: test_database.exe
+
+--- Running test_matcher.exe ---
+Starting test run...
+
+=== matcher ===
+  Running match_single_component...
+    PASSED
+  Running match_two_components...
+    PASSED
+  Running match_case_insensitive...
+    PASSED
+  Running match_with_hidden_filter...
+    PASSED
+  Running match_no_results...
+    PASSED
+  Running match_empty_search...
+    PASSED
+  Running match_prefix_single_component...
+    PASSED
+  Running match_prefix_multi_component...
+    PASSED
+  Running match_glob_star_suffix...
+    PASSED
+  Running match_glob_star_prefix...
+    PASSED
+  Running match_glob_star_both...
+    PASSED
+  Running match_glob_question_single...
+    PASSED
+  Running match_glob_question_multiple...
+    PASSED
+  Running match_glob_in_path...
+    PASSED
+  Running match_glob_no_match...
+    PASSED
+  Running fuzzy_match_with_typo...
+    PASSED
+  Running fuzzy_match_with_transposition...
+    PASSED
+  Running fuzzy_match_no_results_on_total_mismatch...
+    PASSED
+  Running fuzzy_match_case_difference...
+    PASSED
+  Running name_index_build_returns_non_null...
+    PASSED
+  Running name_index_find_by_hash_finds_entry...
+    PASSED
+  Running name_index_find_by_hash_misses_unknown_hash...
+    PASSED
+  Running name_index_free_doesnt_crash...
+    PASSED
+
+========================================
+Tests: 23 run, 23 passed, 0 failed
+Assertions: 58 total, 0 failed
+PASSED: test_matcher.exe
+
+--- Running test_metadata.exe ---
+Starting test run...
+
+=== metadata ===
+  Running metadata_create_returns_valid_struct...
+    PASSED
+  Running metadata_save_load_roundtrip...
+    PASSED
+  Running metadata_exists_returns_false_before_save...
+    PASSED
+  Running metadata_preserves_config_section...
+    PASSED
+  Running metadata_preserves_groups_section...
+    PASSED
+  Running metadata_preserves_exclusions_section...
+    PASSED
+  Running metadata_preserves_heuristics_section...
+    PASSED
+  Running metadata_preserves_history_section...
+    PASSED
+  Running metadata_cleanup_legacy_returns_0_with_none...
+    PASSED
+  Running metadata_free_handles_null...
+    PASSED
+  Running metadata_group_remove_path...
+    PASSED
+
+========================================
+Tests: 11 run, 11 passed, 0 failed
+Assertions: 56 total, 0 failed
+PASSED: test_metadata.exe
+
+--- Running test_scanner.exe ---
+Starting test run...
+
+=== scanner ===
+  Running scan_mount_populates_database...
+    PASSED
+  Running scan_mount_respects_hidden_flag...
+    PASSED
+  Running scan_mount_applies_exclusions...
+    PASSED
+  Running scan_mount_excludes_directories_from_database...
+    PASSED
+  Running scan_subdirectory_merges_into_existing_db...
+    PASSED
+  Running find_is_directory_returns_true_for_dirs...
+    PASSED
+  Running find_is_hidden_detects_hidden_entries...
+    PASSED
+  Running find_is_reparse_detects_symlinks...
+    PASSED
+  Running scan_mounts_handles_empty_mount_list...
+    PASSED
+
+========================================
+Tests: 9 run, 9 passed, 0 failed
+Assertions: 21 total, 0 failed
+PASSED: test_scanner.exe
+
+--- Running test_cli_parse.exe ---
+Starting test run...
+
+=== cli_parse ===
+  Running no_args_show_help_default...
+    PASSED
+  Running h_flag_sets_show_help...
+    PASSED
+  Running question_flag_sets_show_help...
+    PASSED
+  Running v_flag_sets_show_version...
+    PASSED
+  Running r_flag_sets_force_rescan...
+    PASSED
+  Running r_dot_flag_sets_subdir_rescan...
+    PASSED
+  Running i_flag_sets_show_hidden...
+    PASSED
+  Running s_flag_sets_show_system...
+    PASSED
+  Running a_flag_sets_both_hidden_and_system...
+    PASSED
+  Running z_flag_sets_fuzzy_match...
+    PASSED
+  Running f_flag_sets_show_history...
+    PASSED
+  Running fc_flag_sets_clear_history...
+    PASSED
+  Running gl_flag_sets_group_list...
+    PASSED
+  Running d_flag_sets_db_override...
+    PASSED
+  Running t_flag_sets_timeout...
+    PASSED
+  Running c_flag_sets_config_edit...
+    PASSED
+  Running search_term_captured...
+    PASSED
+  Running combined_flags_ris_sets_all_three...
+    PASSED
+  Running combined_flags_za_sets_fuzzy_and_all...
+    PASSED
+  Running dash_equivalent_to_slash...
+    PASSED
+  Running invalid_option_returns_false...
+NCD: unknown option: /qqq
+    PASSED
+  Running a_with_suffix_is_unknown_option...
+NCD: unknown option: /abc
+    PASSED
+  Running u8_flag_sets_encoding_switch_utf8...
+    PASSED
+  Running u16_flag_sets_encoding_switch_utf16...
+    PASSED
+  Running dash_u8_equivalent_to_slash_u8...
+    PASSED
+  Running dash_u16_equivalent_to_slash_u16...
+    PASSED
+  Running agent_query_all_depth_and_limit_parse...
+    PASSED
+  Running agent_ls_pattern_and_default_depth...
+    PASSED
+  Running agent_tree_default_depth_is_three...
+    PASSED
+  Running agent_ls_depth_zero_rejected...
+NCD: /agent ls --depth must be >= 1
+    PASSED
+  Running agent_tree_depth_zero_rejected...
+NCD: /agent tree --depth must be >= 1
+    PASSED
+
+========================================
+Tests: 31 run, 31 passed, 0 failed
+Assertions: 90 total, 0 failed
+PASSED: test_cli_parse.exe
+
+--- Running test_service_lazy_load.exe ---
+Starting test run...
+
+=== Service Lazy Loading Tests ===
+
+  Running state_machine_transitions...
+    PASSED
+  Running status_message_set_get...
+    PASSED
+  Running null_state_safety...
+    PASSED
+  Running queue_basic_operations...
+    PASSED
+  Running queue_dequeue...
+    PASSED
+  Running queue_null_safety...
+    PASSED
+  Running ipc_error_strings...
+    PASSED
+  Running service_init_performance...
+    PASSED
+  Running service_metadata_available_immediately...
+    PASSED
+  Running full_queue_process_cycle...
+    PASSED
+  Running service_state_note_heuristic_records_choice...
+    PASSED
+  Running service_state_add_group_adds_group...
+    PASSED
+  Running service_state_remove_group_removes_group...
+    PASSED
+  Running service_state_add_exclusion_adds_pattern...
+    PASSED
+  Running service_state_remove_exclusion_removes_pattern...
+    PASSED
+  Running service_state_update_config_updates_config...
+    PASSED
+  Running service_state_flush_persists_state...
+    PASSED
+  Running service_state_needs_flush_detects_dirty...
+    PASSED
+  Running service_state_generation_counters...
+    PASSED
+  Running service_state_get_stats_returns_valid_stats...
+    PASSED
+  Running service_state_get_clear_dirty_flags...
+    PASSED
+  Running service_state_wait_for_ready_timeout...
+    PASSED
+
+========================================
+Tests: 22 run, 22 passed, 0 failed
+Assertions: 89 total, 0 failed
+PASSED: test_service_lazy_load.exe
+
+--- Running test_service_lifecycle.exe ---
+Starting test run...
+
+=== Service Lifecycle Tests ===
+
+  Running service_status_when_stopped...
+    PASSED
+  Running service_start_when_stopped...
+    PASSED
+  Running service_double_start_fails...
+    PASSED
+  Running service_stop_when_running...
+    PASSED
+  Running service_stop_when_already_stopped...
+    PASSED
+  Running service_restart...
+    PASSED
+  Running service_ipc_ping...
+    PASSED
+  Running service_ipc_ping_when_stopped...
+    PASSED
+  Running service_ipc_get_version...
+    PASSED
+  Running service_ipc_get_state_info...
+    PASSED
+  Running service_ipc_shutdown_request...
+    PASSED
+  Running service_state_progression...
+    PASSED
+  Running service_termination_graceful_then_force...
+    PASSED
+
+--- Final cleanup: Leaving service running ---
+Service left running for subsequent tests.
+
+========================================
+Tests: 13 run, 13 passed, 0 failed
+Assertions: 50 total, 0 failed
+PASSED: test_service_lifecycle.exe
+
+--- Running test_service_integration.exe ---
+Starting test run...
+
+=== Service Integration Tests ===
+
+  Running help_shows_standalone_when_service_stopped...
+    PASSED
+  Running help_shows_service_running_when_service_active...
+    PASSED
+  Running help_includes_exclusion_and_agent_options...
+    PASSED
+  Running agent_service_status_not_running...
+    PASSED
+  Running agent_service_status_json_not_running...
+    PASSED
+  Running agent_service_status_running...
+    PASSED
+  Running agent_service_status_json_running...
+    PASSED
+  Running agent_service_status_after_stop...
+    PASSED
+  Running ncd_search_works_without_service...
+    PASSED
+  Running ncd_search_works_with_service...
+    PASSED
+  Running agent_query_uses_service_when_local_data_root_is_empty...
+    PASSED
+  Running a_flag_is_not_agent_alias...
+    PASSED
+
+--- Final cleanup: Leaving service running ---
+Service left running for subsequent tests.
+
+========================================
+Tests: 12 run, 12 passed, 0 failed
+Assertions: 43 total, 0 failed
+PASSED: test_service_integration.exe
+
+--- Running test_db_corruption.exe ---
+NCD: Invalid database magic number
+NCD: Unsupported database version 65535
+NCD: Invalid drive count: 0
+NCD: Invalid drive count: 4294967295
+NCD: Invalid drive count: 1000
+NCD: Database file too small
+NCD: Corrupted database headers
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Invalid database magic number
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Invalid drive count: 536870913
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Unsupported database version 67
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Unsupported database version 7
+NCD: Invalid database magic number
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Invalid database magic number
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Invalid database magic number
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Unsupported database version 195
+NCD: Database checksum mismatch (file may be corrupted)
+NCD: Database checksum mismatch (file may be corrupted)
+Starting test run...
+
+=== db_corruption ===
+  Running corrupt_magic_number...
+    PASSED
+  Running corrupt_version_invalid...
+    PASSED
+  Running corrupt_drive_count_zero...
+    PASSED
+  Running corrupt_drive_count_overflow...
+    PASSED
+  Running corrupt_drive_count_large...
+    PASSED
+  Running truncate_at_header...
+    PASSED
+  Running truncate_at_drive_header...
+    PASSED
+  Running append_garbage...
+    PASSED
+  Running flip_bits_in_header...
+    PASSED
+  Running corrupt_dir_count_overflow...
+    PASSED
+  Running random_bit_flips_alternating...
+    Random seed: 1774882049 (set NCD_TEST_SEED=1774882049 to reproduce)
+    64 iterations (alternating 1-bit/2-bit): 3 loaded, 61 rejected, 0 crashed
+    PASSED
+  Running random_bit_flips_same_byte...
+    Random seed: 1774882050 (set NCD_TEST_SEED=1774882050 to reproduce)
+    16 iterations (2 bits in same byte): 3 loaded, 13 rejected, 0 crashed
+    PASSED
+  Running corrupt_checksum_detected...
+    PASSED
+
+========================================
+Tests: 13 run, 13 passed, 0 failed
+Assertions: 21 total, 0 failed
+PASSED: test_db_corruption.exe
+
+--- Running test_bugs.exe ---
+Starting test run...
+
+=== bugs ===
+  Running metadata_heuristics_bounds_check...
+    [BUG CHECK] Heuristics entries loaded: 1 (expected 1, buggy gives 3)
+    PASSED
+  Running metadata_groups_bounds_check...
+    [BUG CHECK] Group entries loaded: 1 (expected 1, buggy gives 3)
+    PASSED
+  Running heuristics_roundtrip_multiple_entries...
+    Heuristics entries after roundtrip: 5 (expected 5)
+    PASSED
+  Running strbuilder_use_after_free_no_hang...
+    PASSED
+  Running strbuilder_ensure_cap_from_zero...
+    [BUG] After sb_free: cap=0 -- calling sb_ensure_cap would infinite-loop
+    PASSED
+  Running full_path_deep_chain_truncation...
+    [BUG CHECK] Path starts with: C:\d000\d001\d002\d003\d004\d005\d006\d0...
+    PASSED
+  Running full_path_circular_parent_chain...
+    [BUG CHECK] Circular path length: 0 chars
+    PASSED
+  Running full_path_long_names_buffer_limit...
+    Path with long names truncated to 511 chars (buf_size=512)
+    PASSED
+  Running fuzzy_match_digit_heavy_performance...
+    Fuzzy match '12345678' took 0.000 seconds, 0 matches
+    PASSED
+  Running check_version_truncated_after_magic...
+    [BUG CHECK] check_file_version on truncated file: 0 (0=ERROR, 1=OK, 2=MISMATCH, 3=SKIPPED)
+    PASSED
+  Running load_auto_truncated_after_magic...
+    [BUG CHECK] db_load_auto on truncated file: NULL (correct or crashed)
+    PASSED
+  Running check_version_empty_file...
+    PASSED
+  Running binfilehdr_layout_verification...
+    BinFileHdr layout verified: 32 bytes, all offsets correct
+    PASSED
+  Running check_all_versions_no_databases...
+    db_check_all_versions returned 0 entries
+    PASSED
+  Running matcher_empty_drives...
+    PASSED
+
+========================================
+Tests: 15 run, 15 passed, 0 failed
+Assertions: 52 total, 0 failed
+PASSED: test_bugs.exe
+
+--- Running bench_matcher.exe (quick run) ---
+=== Matcher Performance Benchmarks ===
+
+Small DB (1 drive, 1000 dirs):
+  Search 'src': 28.000 ms (0.028 ms per query)
+  Search 'src1': 0.000 ms (0.000 ms per query)
+
+Medium DB (4 drives, 10000 dirs each):
+  Search 'src': 277.000 ms (2.770 ms per query)
+  Search 'bin50': 1.000 ms (0.010 ms per query)
+
+Large DB (8 drives, 50000 dirs each):
+  Search 'core': 368.000 ms (36.800 ms per query)
+  Search 'app100': 0.000 ms (0.000 ms per query)
+
+Benchmarks complete.
+
+--- Running fuzz_database.exe (5 second run) ---
+Starting fuzz test (5 seconds)...
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 23249
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 46991
+NCD: Unsupported database version 38555
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 18562
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 26319
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 64523
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 34410
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 46736
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 10648
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 4576
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 51857
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 31582
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 5121
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 35273
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 24622
+NCD: Invalid database magic number
+NCD: Unsupported database version 38783
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 10534
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 40306
+NCD: Unsupported database version 46084
+NCD: Unsupported database version 10683
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 16042
+NCD: Unsupported database version 63955
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 17983
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 31556
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 21004
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 43494
+NCD: Unsupported database version 40767
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 40823
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 59302
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 42575
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 20963
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 7941
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 24019
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 37995
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 52634
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 18670
+NCD: Invalid database magic number
+NCD: Unsupported database version 30423
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 21357
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 25148
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 20726
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 40409
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 57573
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 33020
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 24227
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 3633
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 41808
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 6856
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 61877
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 57585
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 13761
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 50235
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 22441
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 62386
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 1041
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 25388
+NCD: Unsupported database version 43096
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 26695
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 20917
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 12087
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 6822
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 59619
+NCD: Invalid database magic number
+NCD: Unsupported database version 54762
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 30586
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 41969
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 13113
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Unsupported database version 35263
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+NCD: Invalid database magic number
+Fuzz test completed.
+
+========================================
+Cleaning up intermediate files...
+========================================
+
+========================================
+ALL UNIT TESTS PASSED
+========================================
+
+To run comprehensive feature tests (requires Administrator):
+  test\Win\test_features.bat
