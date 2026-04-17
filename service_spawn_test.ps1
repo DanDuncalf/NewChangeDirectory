@@ -40,7 +40,7 @@ if ($after) {
 
 if ($after) {
     Write-Host "`nService status:" -ForegroundColor Yellow
-    $status = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+    $status = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
     Write-Host "  $status"
     
     Write-Host "`nStopping service..." -ForegroundColor Yellow

@@ -14,7 +14,7 @@ echo ""
 # Stop old service if running
 if pgrep -x "NCDService" > /dev/null 2>&1; then
     echo "Stopping old NCD service..."
-    "${SCRIPT_DIR}/NewChangeDirectory" /agent quit 2>/dev/null || true
+    "${SCRIPT_DIR}/NewChangeDirectory" --agent:quit 2>/dev/null || true
     sleep 2
     pkill -9 -x "NCDService" 2>/dev/null || true
 fi
@@ -29,10 +29,10 @@ sudo chmod 755 "${DEST_DIR}/NewChangeDirectory" "${DEST_DIR}/NCDService" "${DEST
 # Verify
 echo ""
 echo "=== Verification ==="
-"${DEST_DIR}/NewChangeDirectory" /v
+"${DEST_DIR}/NewChangeDirectory" -v
 
 echo ""
 echo "=== Deployment Complete ==="
 echo "Binaries installed to: ${DEST_DIR}"
 echo ""
-echo "To use: ncd /?"
+echo "To use: ncd -?"

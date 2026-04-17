@@ -76,7 +76,7 @@ test_self_recursive_mount() {
         
         # Run scanner with timeout (should not hang)
         log_info "  Running scanner with 5-second timeout..."
-        if timeout 5 "$NCD_EXE" /r "$TEST_BASE" 2>&1 | head -20; then
+        if timeout 5 "$NCD_EXE" -r "$TEST_BASE" 2>&1 | head -20; then
             log_info "  PASS: Scanner completed without hanging"
         else
             log_warn "  Scanner exited with error (may be expected)"
@@ -112,7 +112,7 @@ test_circular_mount_chain() {
     
     # Run scanner with timeout
     log_info "  Running scanner with 5-second timeout..."
-    if timeout 5 "$NCD_EXE" /r "$TEST_BASE" 2>&1 | head -20; then
+    if timeout 5 "$NCD_EXE" -r "$TEST_BASE" 2>&1 | head -20; then
         log_info "  PASS: Scanner completed without hanging"
     else
         log_warn "  Scanner exited with error (may be expected with symlinks)"
@@ -144,7 +144,7 @@ test_deeply_nested_mounts() {
     done
     
     log_info "  Running scanner with 10-second timeout..."
-    if timeout 10 "$NCD_EXE" /r "$TEST_BASE/deep" 2>&1 | head -30; then
+    if timeout 10 "$NCD_EXE" -r "$TEST_BASE/deep" 2>&1 | head -30; then
         log_info "  PASS: Scanner handled deeply nested mounts"
     else
         log_warn "  Scanner exited with error"
@@ -168,14 +168,14 @@ test_special_filesystems() {
     mount | head -20
     
     log_info "  Running scanner on /proc (should be filtered)..."
-    if timeout 5 "$NCD_EXE" /r /proc 2>&1 | head -10; then
+    if timeout 5 "$NCD_EXE" -r /proc 2>&1 | head -10; then
         log_info "  PASS: Scanner handled /proc"
     else
         log_info "  Scanner rejected /proc (expected - pseudo-filesystem)"
     fi
     
     log_info "  Running scanner on /sys (should be filtered)..."
-    if timeout 5 "$NCD_EXE" /r /sys 2>&1 | head -10; then
+    if timeout 5 "$NCD_EXE" -r /sys 2>&1 | head -10; then
         log_info "  PASS: Scanner handled /sys"
     else
         log_info "  Scanner rejected /sys (expected - pseudo-filesystem)"
@@ -198,7 +198,7 @@ test_very_deep_directories() {
     log_info "  Created 100-level deep directory chain"
     log_info "  Running scanner with 30-second timeout..."
     
-    if timeout 30 "$NCD_EXE" /r "$TEST_BASE/deep_chain" 2>&1 | head -50; then
+    if timeout 30 "$NCD_EXE" -r "$TEST_BASE/deep_chain" 2>&1 | head -50; then
         log_info "  PASS: Scanner handled deep directory chain"
     else
         log_warn "  Scanner timed out or failed"

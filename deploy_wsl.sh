@@ -6,4 +6,4 @@ chmod 755 ~/.local/bin/NewChangeDirectory ~/.local/bin/NCDService ~/.local/bin/n
 export PATH=$HOME/.local/bin:$PATH
 echo "=== Deployed NCD to ~/.local/bin ==="
 which ncd
-ncd /? 2>&1 | head -10
+ncd -? 2>&1 | head -10

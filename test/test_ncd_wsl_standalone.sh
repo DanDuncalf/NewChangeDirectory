@@ -217,7 +217,7 @@ echo -n "TkNNRAEAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
 
 # Verify standalone mode
 echo "Verifying standalone mode..."
-STATUS=$($NCD /agent check --service-status 2>&1) || true
+STATUS=$($NCD --agent check --service-status 2>&1) || true
 echo "  Service status: $STATUS"
 echo ""
 
@@ -232,7 +232,7 @@ echo "  Created test directory tree"
 
 # Initial scan
 echo "Performing initial scan of test tree..."
-(cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+(cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1)
 echo "  Scan complete."
 echo ""
 
@@ -270,7 +270,7 @@ fi
 
 # Test 4: Service status shows NOT_RUNNING
 echo "[TEST 4] Service status shows NOT_RUNNING"
-ncd_run /agent check --service-status
+ncd_run --agent check --service-status
 if echo "$LAST_OUT" | grep -qi "NOT_RUNNING\|not_running"; then
     pass "Service status shows NOT_RUNNING"
 else
@@ -282,7 +282,7 @@ cd "$TESTROOT"
 
 # Test 5: Basic search finds directory (use /agent query to avoid TUI)
 echo "[TEST 5] Basic search finds directory"
-ncd_run /agent query Downloads --limit 1
+ncd_run --agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Basic search finds directory"
 else
@@ -291,7 +291,7 @@ fi
 
 # Test 6: Multi-component search (use /agent query to avoid TUI)
 echo "[TEST 6] Multi-component search"
-ncd_run /agent query "scott/Downloads" --limit 1
+ncd_run --agent query "scott/Downloads" --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Multi-component search"
 else
@@ -300,7 +300,7 @@ fi
 
 # Test 7: Agent query command
 echo "[TEST 7] Agent query command"
-ncd_run /agent query Downloads
+ncd_run --agent query Downloads
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Agent query command"
 else
@@ -309,7 +309,7 @@ fi
 
 # Test 8: Agent check database age
 echo "[TEST 8] Agent check database age"
-ncd_run /agent check --db-age
+ncd_run --agent check --db-age
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent check database age"
 else
@@ -318,7 +318,7 @@ fi
 
 # Test 9: Agent check stats
 echo "[TEST 9] Agent check stats"
-ncd_run /agent check --stats
+ncd_run --agent check --stats
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent check stats"
 else
@@ -328,7 +328,7 @@ fi
 # Test 10: Rescan creates database
 echo "[TEST 10] Rescan creates database"
 rm -f "$TEST_DATA/ncd/ncd_"*.database
-(cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+(cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1)
 if ls "$TEST_DATA/ncd/ncd_"*.database 1>/dev/null 2>&1; then
     pass "Rescan creates database"
 else
@@ -337,7 +337,7 @@ fi
 
 # Test 11: Search after rescan (use /agent query to avoid TUI)
 echo "[TEST 11] Search after rescan"
-ncd_run /agent query Projects --limit 1
+ncd_run --agent query Projects --limit 1
 if echo "$LAST_OUT" | grep -qi "Projects"; then
     pass "Search after rescan"
 else
@@ -357,7 +357,7 @@ fi
 # Test 13: Database override -d
 echo "[TEST 13] Database override -d"
 CUSTOM_DB="/tmp/ncd_test_$$.db"
-(cd "$TESTROOT" && "$NCD" /r. -d "$CUSTOM_DB" >/dev/null 2>&1)
+(cd "$TESTROOT" && "$NCD" -r . -d "$CUSTOM_DB" >/dev/null 2>&1)
 if [[ -f "$CUSTOM_DB" ]]; then
     pass "Database override -d"
 else
@@ -367,7 +367,7 @@ rm -f "$CUSTOM_DB"
 
 # Test 14: Agent ls command
 echo "[TEST 14] Agent ls command"
-ncd_run /agent ls "$TESTROOT" --depth 1
+ncd_run --agent ls "$TESTROOT" --depth 1
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent ls command"
 else
@@ -378,11 +378,11 @@ fi
 echo "[TEST 15] Standalone mode persists without service"
 # Ensure database exists (it may have been deleted by Test 10)
 if ! ls "$TEST_DATA/ncd/ncd_"*.database 1>/dev/null 2>&1; then
-    (cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+    (cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1)
 fi
 if ! is_service_running; then
     # Search for "alpha" which is in the test tree (use /agent query to avoid TUI)
-    ncd_run /agent query alpha --limit 1
+    ncd_run --agent query alpha --limit 1
     if echo "$LAST_OUT" | grep -qi "alpha"; then
         pass "Standalone mode persists without service"
     else

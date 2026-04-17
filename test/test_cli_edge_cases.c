@@ -29,7 +29,7 @@ TEST(cli_flags_as_separate_args) {
     init_options(&opts);
     
     /* Valid single-letter flags should work as separate arguments */
-    const char *argv[] = {"ncd", "/r", "/i", "/s", "/v"};
+    const char *argv[] = {"ncd", "-r", "-i", "-s", "-v"};
     bool result = parse_args_wrapper(5, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -38,15 +38,15 @@ TEST(cli_flags_as_separate_args) {
     return 0;
 }
 
-TEST(cli_multi_char_combined_flags_rejected) {
+TEST(cli_invalid_bundle_with_unknown_char_rejected) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Multi-character combined flags like /ris are no longer supported */
-    const char *argv[] = {"ncd", "/ris"};
+    /* Bundles with unknown characters like -rib should be rejected */
+    const char *argv[] = {"ncd", "-rib"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
-    /* Should be rejected as unknown option */
+    /* Should be rejected because 'b' is not a valid flag */
     ASSERT_FALSE(result);
     
     return 0;
@@ -56,8 +56,8 @@ TEST(cli_drive_letter_with_equals_rejected) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /r=C is not valid drive-letter syntax */
-    const char *argv[] = {"ncd", "/r=C"};
+    /* -r=C is not valid drive-letter syntax */
+    const char *argv[] = {"ncd", "-r=C"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     /* Should be rejected as unknown option */
@@ -72,8 +72,8 @@ TEST(cli_separate_flags_order_independence) {
     init_options(&opts2);
     
     /* Same flags in different orders should produce same result */
-    const char *argv1[] = {"ncd", "/r", "/i", "/s"};
-    const char *argv2[] = {"ncd", "/i", "/s", "/r"};
+    const char *argv1[] = {"ncd", "-r", "-i", "-s"};
+    const char *argv2[] = {"ncd", "-i", "-s", "-r"};
     
     bool r1 = parse_args_wrapper(4, argv1, &opts1);
     bool r2 = parse_args_wrapper(4, argv2, &opts2);
@@ -93,8 +93,8 @@ TEST(cli_single_flags_case_insensitive) {
     init_options(&opts2);
     
     /* Single-letter flags are case-insensitive */
-    const char *argv1[] = {"ncd", "/R", "/I", "/S"};
-    const char *argv2[] = {"ncd", "/r", "/i", "/s"};
+    const char *argv1[] = {"ncd", "-R", "-I", "-S"};
+    const char *argv2[] = {"ncd", "-r", "-i", "-s"};
     
     bool r1 = parse_args_wrapper(4, argv1, &opts1);
     bool r2 = parse_args_wrapper(4, argv2, &opts2);
@@ -112,8 +112,8 @@ TEST(cli_combined_flags_with_numbers) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Test numeric flags like /0 (history pingpong) */
-    const char *argv[] = {"ncd", "/0"};
+    /* Test numeric flags like -0 (history pingpong) */
+    const char *argv[] = {"ncd", "-0"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -271,11 +271,11 @@ TEST(cli_invalid_combination_i_and_dirs_only) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /i (show hidden) combined with --dirs-only in agent mode */
-    const char *argv[] = {"ncd", "/agent", "ls", "C:\\", "--dirs-only", "/i"};
-    bool result = parse_args_wrapper(6, argv, &opts);
+    /* -i (show hidden) combined with --dirs-only in agent mode */
+    const char *argv[] = {"ncd", "--agent:ls", "C:\\", "--dirs-only", "-i"};
+    bool result = parse_args_wrapper(5, argv, &opts);
     
-    /* These are actually compatible - /i applies to scanning, --dirs-only to listing */
+    /* These are actually compatible - -i applies to scanning, --dirs-only to listing */
     ASSERT_TRUE(result);
     
     return 0;
@@ -285,9 +285,9 @@ TEST(cli_invalid_combination_s_and_files_only) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /s (show system) with --files-only */
-    const char *argv[] = {"ncd", "/agent", "ls", "C:\\", "--files-only", "/s"};
-    bool result = parse_args_wrapper(6, argv, &opts);
+    /* -s (show system) with --files-only */
+    const char *argv[] = {"ncd", "--agent:ls", "C:\\", "--files-only", "-s"};
+    bool result = parse_args_wrapper(5, argv, &opts);
     
     /* These are compatible - different operations */
     ASSERT_TRUE(result);
@@ -300,8 +300,8 @@ TEST(cli_invalid_combination_agent_and_search) {
     init_options(&opts);
     
     /* Agent mode with regular search term - should be rejected or search ignored */
-    const char *argv[] = {"ncd", "/agent", "query", "downloads", "extra_search"};
-    bool result = parse_args_wrapper(5, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:query", "downloads", "extra_search"};
+    bool result = parse_args_wrapper(4, argv, &opts);
     
     /* Result depends on implementation */
     (void)result;
@@ -314,8 +314,8 @@ TEST(cli_invalid_combination_conf_and_invalid_path) {
     init_options(&opts);
     
     /* -conf with invalid path */
-    const char *argv[] = {"ncd", "-conf", "/nonexistent/path/config.metadata"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-conf:/nonexistent/path/config.metadata"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     /* Parser should accept -conf even with invalid path (validation happens later) */
     ASSERT_TRUE(result);
@@ -329,8 +329,8 @@ TEST(cli_invalid_combination_timeout_zero) {
     init_options(&opts);
     
     /* Timeout of 0 should be rejected or treated as no timeout */
-    const char *argv[] = {"ncd", "/t", "0"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-t:0"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     /* Result depends on implementation - 0 may be rejected */
     (void)result;
@@ -345,11 +345,11 @@ TEST(cli_drive_mask_all_26_drives) {
     init_options(&opts);
     
     /* Test all 26 drive letters A-Z */
-    char drive_str[28] = "/r";
+    char drive_str[30] = "-r:";
     for (int i = 0; i < 26; i++) {
-        drive_str[i + 2] = 'A' + i;
+        drive_str[i + 3] = 'A' + i;
     }
-    drive_str[28] = '\0';
+    drive_str[29] = '\0';
     
     const char *argv[] = {"ncd", drive_str};
     bool result = parse_args_wrapper(2, argv, &opts);
@@ -365,8 +365,8 @@ TEST(cli_drive_mask_none_valid) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /r with no drive letters - should scan all */
-    const char *argv[] = {"ncd", "/r"};
+    /* -r with no drive letters - should scan all */
+    const char *argv[] = {"ncd", "-r"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -381,7 +381,7 @@ TEST(cli_drive_mask_with_duplicates) {
     init_options(&opts);
     
     /* Duplicate drive letters should be handled */
-    const char *argv[] = {"ncd", "/rCCDD"};
+    const char *argv[] = {"ncd", "-r:CCDD"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -396,7 +396,7 @@ TEST(cli_drive_mask_with_invalid_letters) {
     init_options(&opts);
     
     /* Invalid characters in drive mask */
-    const char *argv[] = {"ncd", "/rC1D"};
+    const char *argv[] = {"ncd", "-r:C1D"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     /* Should either reject or skip invalid characters */
@@ -409,8 +409,8 @@ TEST(cli_skip_drive_mask_conflicts_with_include) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Skip mask /r-b should set skip_drive_mask */
-    const char *argv[] = {"ncd", "/r-b"};
+    /* Skip mask -r:-b should set skip_drive_mask */
+    const char *argv[] = {"ncd", "-r:-b"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -426,8 +426,8 @@ TEST(cli_agent_missing_subcommand) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /agent without subcommand should fail */
-    const char *argv[] = {"ncd", "/agent"};
+    /* --agent without subcommand should fail */
+    const char *argv[] = {"ncd", "--agent"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_FALSE(result);
@@ -440,8 +440,8 @@ TEST(cli_agent_unknown_subcommand) {
     init_options(&opts);
     
     /* Unknown subcommand should fail */
-    const char *argv[] = {"ncd", "/agent", "unknowncommand"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:unknowncommand"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_FALSE(result);
     
@@ -453,8 +453,8 @@ TEST(cli_agent_query_missing_search_term) {
     init_options(&opts);
     
     /* query subcommand without search term */
-    const char *argv[] = {"ncd", "/agent", "query"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:query"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     /* May be allowed (shows all) or rejected depending on implementation */
     (void)result;
@@ -467,8 +467,8 @@ TEST(cli_agent_ls_missing_path) {
     init_options(&opts);
     
     /* ls subcommand without path - may use current directory */
-    const char *argv[] = {"ncd", "/agent", "ls"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:ls"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     /* May succeed with current directory as default */
     (void)result;
@@ -481,7 +481,7 @@ TEST(cli_agent_ls_missing_path) {
 void suite_cli_edge_cases(void) {
     /* Combined Flags (6 tests) */
     RUN_TEST(cli_flags_as_separate_args);
-    RUN_TEST(cli_multi_char_combined_flags_rejected);
+    RUN_TEST(cli_invalid_bundle_with_unknown_char_rejected);
     RUN_TEST(cli_drive_letter_with_equals_rejected);
     RUN_TEST(cli_separate_flags_order_independence);
     RUN_TEST(cli_single_flags_case_insensitive);

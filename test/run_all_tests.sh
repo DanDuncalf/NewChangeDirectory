@@ -213,7 +213,7 @@ test_service_status() {
     
     if [[ "$platform" == "wsl" ]]; then
         local status
-        status=$(cd "$PROJECT_ROOT" && ./NewChangeDirectory /agent check --service-status 2>&1)
+        status=$(cd "$PROJECT_ROOT" && ./NewChangeDirectory --agent:check --service-status 2>&1)
         if [[ "$status" =~ READY|STARTING|LOADING ]]; then
             is_running=true
         fi

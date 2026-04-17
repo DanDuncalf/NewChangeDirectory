@@ -129,7 +129,7 @@ wait_for_service_ready() {
         fi
         # Check service status via NCD
         local status
-        status=$($NCD /agent check --service-status 2>&1) || true
+        status=$($NCD --agent check --service-status 2>&1) || true
         if echo "$status" | grep -qi "READY\|ready"; then
             return 0
         fi
@@ -264,7 +264,7 @@ echo "  Created test directory tree"
 
 # Initial scan (standalone) to create database
 echo "Performing initial scan of test tree..."
-(cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+(cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1)
 echo "  Scan complete."
 
 # Start service
@@ -293,7 +293,7 @@ fi
 
 # Test 2: Service status shows READY or STARTING
 echo "[TEST 2] Service status shows READY/STARTING"
-ncd_run /agent check --service-status
+ncd_run --agent check --service-status
 if echo "$LAST_OUT" | grep -qi "READY\|STARTING\|ready\|starting"; then
     pass "Service status shows READY/STARTING"
 else
@@ -315,7 +315,7 @@ cd "$TESTROOT"
 
 # Test 4: Basic search works with service
 echo "[TEST 4] Basic search works with service"
-ncd_run /agent query Downloads --limit 1
+ncd_run --agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Basic search works with service"
 else
@@ -324,7 +324,7 @@ fi
 
 # Test 5: Multi-component search with service
 echo "[TEST 5] Multi-component search with service"
-ncd_run /agent query "scott/Downloads" --limit 1
+ncd_run --agent query "scott/Downloads" --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Multi-component search with service"
 else
@@ -333,7 +333,7 @@ fi
 
 # Test 6: Agent query with service
 echo "[TEST 6] Agent query with service"
-ncd_run /agent query Downloads --limit 1
+ncd_run --agent query Downloads --limit 1
 if echo "$LAST_OUT" | grep -qi "Downloads"; then
     pass "Agent query with service"
 else
@@ -342,7 +342,7 @@ fi
 
 # Test 7: Agent check --service-status returns valid status
 echo "[TEST 7] Agent check --service-status returns valid status"
-ncd_run /agent check --service-status
+ncd_run --agent check --service-status
 if [[ $LAST_EXIT -eq 0 ]]; then
     if echo "$LAST_OUT" | grep -qi "NOT_RUNNING\|STARTING\|READY"; then
         pass "Agent check --service-status returns valid status"
@@ -355,7 +355,7 @@ fi
 
 # Test 8: Agent check --stats works
 echo "[TEST 8] Agent check --stats works"
-ncd_run /agent check --stats
+ncd_run --agent check --stats
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent check --stats works"
 else
@@ -368,7 +368,7 @@ stop_service
 sleep 2
 start_service
 wait_for_service_ready >/dev/null 2>&1
-ncd_run /agent query Projects --limit 1
+ncd_run --agent query Projects --limit 1
 if echo "$LAST_OUT" | grep -qi "Projects"; then
     pass "Search after service restart"
 else
@@ -377,7 +377,7 @@ fi
 
 # Test 10: Service mode JSON status
 echo "[TEST 10] Service mode JSON status"
-ncd_run /agent check --service-status --json
+ncd_run --agent check --service-status --json
 if echo "$LAST_OUT" | grep -qi '"status"\|"v":'; then
     pass "Service mode JSON status"
 else
@@ -386,7 +386,7 @@ fi
 
 # Test 11: Agent tree command with service
 echo "[TEST 11] Agent tree command with service"
-ncd_run /agent tree "$TESTROOT" --depth 2
+ncd_run --agent tree "$TESTROOT" --depth 2
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent tree command with service"
 else
@@ -395,7 +395,7 @@ fi
 
 # Test 12: Agent complete command
 echo "[TEST 12] Agent complete command"
-ncd_run /agent complete Proj
+ncd_run --agent complete Proj
 if [[ $LAST_EXIT -eq 0 ]]; then
     pass "Agent complete command"
 else
@@ -406,7 +406,7 @@ fi
 echo "[TEST 13] Service provides shared memory access"
 if is_service_running; then
     # Check that we can get database info through service
-    ncd_run /agent check --stats
+    ncd_run --agent check --stats
     if [[ $LAST_EXIT -eq 0 ]]; then
         pass "Service provides shared memory access"
     else
@@ -426,7 +426,7 @@ stop_service
 sleep 1
 start_service
 wait_for_service_ready >/dev/null 2>&1
-ncd_run /agent query Documents --limit 1
+ncd_run --agent query Documents --limit 1
 if echo "$LAST_OUT" | grep -qi "Documents"; then
     pass "Operations work after multiple restarts"
 else
@@ -435,7 +435,7 @@ fi
 
 # Test 15: JSON output format from agent commands
 echo "[TEST 15] JSON output format from agent commands"
-ncd_run /agent query Downloads --json
+ncd_run --agent query Downloads --json
 if echo "$LAST_OUT" | grep -qi '"v":\|\[\|{'; then
     pass "JSON output format from agent commands"
 else

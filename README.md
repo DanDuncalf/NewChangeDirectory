@@ -66,29 +66,29 @@ ncd() { source /path/to/ncd "$@"; }
 
 ```bash
 ncd <search>              # Search for a directory
-ncd /r                    # Rescan all drives
-ncd /rC                   # Rescan drive C only
-ncd /i <search>           # Include hidden directories
-ncd /s                    # Include system directories
-ncd /a                    # Include all (hidden + system)
-ncd /z <search>           # Fuzzy matching
+ncd -r                    # Rescan all drives
+ncd -r:c                   # Rescan drive C only
+ncd -i <search>           # Include hidden directories
+ncd -s                    # Include system directories
+ncd -a                    # Include all (hidden + system)
+ncd -z <search>           # Fuzzy matching
 ncd .                     # Navigator mode (browse from current dir)
 ncd @home                 # Jump to bookmarked group
-ncd /g @home              # Add current directory to group
-ncd /g- @home             # Remove current directory from group
-ncd /gl                   # List all groups
-ncd /0                    # Ping-pong between last two directories
-ncd /h                    # Browse history interactively (Del to remove)
-ncd /hl                   # List directory history
-ncd /hc                   # Clear all history
-ncd /hc3                  # Remove history entry #3
-ncd /f                    # Show frequent searches
-ncd /fc                   # Clear frequent searches
-ncd /x <pattern>          # Add exclusion pattern
-ncd /x- <pattern>         # Remove exclusion pattern
-ncd /xl                   # List exclusion patterns
-ncd /agent query <term>   # Agent mode (JSON output)
-ncd /?                    # Help
+ncd -g:@home              # Add current directory to group
+ncd -G:@home             # Remove current directory from group
+ncd -g:l                   # List all groups
+ncd -0                    # Ping-pong between last two directories
+ncd -h                    # Browse history interactively (Del to remove)
+ncd -h:l                   # List directory history
+ncd -h:c                   # Clear all history
+ncd -h:c3                  # Remove history entry #3
+ncd -f                    # Show frequent searches
+ncd -f:c                   # Clear frequent searches
+ncd -x:<pattern>          # Add exclusion pattern
+ncd -X:<pattern>         # Remove exclusion pattern
+ncd -x:l                   # List exclusion patterns
+ncd --agent:query <term>   # Agent mode (JSON output)
+ncd -?                    # Help
 ```
 
 ### Interactive Selection
@@ -106,7 +106,7 @@ When multiple directories match, NCD shows an interactive list:
 
 ### History Browser
 
-The interactive history browser (`ncd /h`) shows recently visited directories:
+The interactive history browser (`ncd -h`) shows recently visited directories:
 
 - **Arrow keys** - Navigate
 - **Delete** - Remove entry from history
@@ -201,16 +201,16 @@ The project uses a shared platform abstraction library located at `../shared/` w
 NCD includes an agent mode for LLM integration:
 
 ```bash
-ncd /agent query downloads --json --limit 10
-ncd /agent ls /home/user --depth 2 --json
-ncd /agent tree /home/user --depth 3 --json
-ncd /agent check /home/user/projects
-ncd /agent check --db-age
-ncd /agent check --stats
-ncd /agent check --service-status
-ncd /agent complete dow              # Shell tab-completion candidates
-ncd /agent mkdir <path>              # Create directory and parents if needed
-ncd /agent mkdirs <content>          # Create directory tree from JSON/flat format
+ncd --agent:query downloads --json --limit 10
+ncd --agent:ls /home/user --depth 2 --json
+ncd --agent:tree /home/user --depth 3 --json
+ncd --agent:check /home/user/projects
+ncd --agent:check --db-age
+ncd --agent:check --stats
+ncd --agent:check --service-status
+ncd --agent:complete dow              # Shell tab-completion candidates
+ncd --agent:mkdir <path>              # Create directory and parents if needed
+ncd --agent:mkdirs <content>          # Create directory tree from JSON/flat format
 ```
 
 Exit codes:

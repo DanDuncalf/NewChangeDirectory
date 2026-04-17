@@ -1,0 +1,65 @@
+========================================
+NCD Client Tests - Windows (Standalone)
+========================================
+
+NCD: E:\llama\NewChangeDirectory\NewChangeDirectory.exe
+Test Data: C:\Users\Dan\AppData\Local\Temp\ncd_ncd_test_153672583
+Test Root: C:\Users\Dan\AppData\Local\Temp\ncd_test_tree_1207371771
+
+Ensuring service is NOT running...
+  [INFO] Service cleanup complete.
+Verifying standalone mode...
+  Service status: NOT_RUNNING
+
+Setting up test environment...
+  Created test directory tree
+
+Performing initial scan of test tree...
+  Scan complete.
+
+--- Test Suite: Standalone Mode Operations ---
+
+[TEST 1] Help with /h
+[PASS] Help with /h
+[TEST 2] Version with /v
+[PASS] Version with /v
+[TEST 3] Service status shows NOT_RUNNING
+[PASS] Service status shows NOT_RUNNING
+[TEST 4] Basic search finds directory
+  Query output: [{"error":"no database"}
+]
+  Query exit code: 1
+[FAIL] Basic search finds directory - output: {"error":"no database"}
+
+[TEST 5] Multi-component search
+[FAIL] Multi-component search - output: {"error":"no database"}
+
+[TEST 6] Agent query command
+[FAIL] Agent query command - output: {"error":"no database"}
+
+[TEST 7] Agent check database age
+[FAIL] Agent check database age - exit code 1
+[TEST 8] Agent check stats
+[FAIL] Agent check stats - exit code 1
+[TEST 9] Rescan creates database
+[FAIL] Rescan creates database - no database file found
+[TEST 10] Search after rescan
+[FAIL] Search after rescan - output: {"error":"no database"}
+
+[TEST 11] No match returns error
+[PASS] No match returns error
+[TEST 12] Database override /d
+[FAIL] Database override /d - custom database not created
+Cleaning up test environment...
+  Removed test data directory
+  Removed test tree directory
+  Cleanup complete.
+
+========================================
+Test Summary
+========================================
+  Total:   12
+  Passed:  4
+  Failed:  8
+
+RESULT: FAILED

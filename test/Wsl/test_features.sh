@@ -268,7 +268,7 @@ test_file_nonempty() {
 #   Re-scan ONLY the test tree via /r. (subdirectory rescan).
 #   This is used instead of /r (which scans ALL mounts and is very slow).
 rescan_testroot() {
-    (cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1)
+    (cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1)
 }
 
 # test_custom "ID" "description"
@@ -394,7 +394,7 @@ setup
 printf "\n${C_BOLD}Performing initial scan of test tree...${C_RESET}\n"
 # Use /r. (subdirectory rescan) from TESTROOT to scan ONLY the test tree,
 # not the entire system. This keeps tests fast (~1 second vs minutes).
-(cd "$TESTROOT" && "$NCD" /r. 2>&1 | tail -1)
+(cd "$TESTROOT" && "$NCD" -r . 2>&1 | tail -1)
 printf "  Scan complete.\n"
 
 # Resolve DB_FILE: find whichever ncd_*.database file NCD created
@@ -418,7 +418,7 @@ category "A: Help & Version"
 
 # A1: Drive TUI help viewer via injected ESC key.
 test_custom "A1" "Help with /h"
-ncd_run_tui_timed 10 "ESC" /h
+ncd_run_tui_timed 10 "ESC" -h
 A1_EXIT=$?
 if [[ $A1_EXIT -eq 0 ]]; then
     pass "A1" "Help with /h"
@@ -427,8 +427,8 @@ elif [[ $A1_EXIT -eq 124 ]]; then
 else
     fail "A1" "Help with /h" "exit code $A1_EXIT"
 fi
-test_output_has "A2" "Help with /?"    "usage"  /?
-test_exit_ok    "A3" "Version /v"               /v
+test_output_has "A2" "Help with /?"    "usage"  -?
+test_exit_ok    "A3" "Version /v"               -v
 
 # ==========================================================================
 # CATEGORY B: Full Rescan (6 tests)
@@ -446,11 +446,11 @@ rescan_testroot
 test_ncd_finds "B3" "Rescan creates searchable DB" "Downloads" Downloads
 
 # B4: Rescan with timeout on test root only (avoid scanning all mounts)
-test_exit_ok_timed "B4" "Rescan with /t 10" 15 /r. /t 10
+test_exit_ok_timed "B4" "Rescan with /t 10" 15 -r. -t 10
 
 # B5: Rescan with /d override (use hard timeout)
 CUSTOM_DB="/tmp/ncd_custom_test_$$.db"
-test_exit_ok_timed "B5" "Rescan with /d override" 15 /r. /d "$CUSTOM_DB"
+test_exit_ok_timed "B5" "Rescan with /d override" 15 -r. -d "$CUSTOM_DB"
 rm -f "$CUSTOM_DB"
 
 # B6: Rescan after adding dirs
@@ -471,18 +471,18 @@ pass "C1" "Rescan runs successfully"
 
 # C2: Subdirectory rescan /r. (cd into Projects)
 test_custom "C2" "Subdirectory rescan /r."
-(cd "$TESTROOT/Projects" && "$NCD" /r. >/dev/null 2>&1)
+(cd "$TESTROOT/Projects" && "$NCD" -r . >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then pass "C2" "Subdirectory rescan /r."; else fail "C2" "Subdirectory rescan /r."; fi
 
 # C3: Subdirectory rescan /r . (with space)
 test_custom "C3" "Subdirectory rescan /r ."
-(cd "$TESTROOT/Users" && "$NCD" /r . >/dev/null 2>&1)
+(cd "$TESTROOT/Users" && "$NCD" -r . >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then pass "C3" "Subdirectory rescan /r ."; else fail "C3" "Subdirectory rescan /r ."; fi
 
 # C4-C6: Test /r flag variations on test root only (avoid full scans)
-test_exit_ok_timed "C4" "Rescan exclude /r-a"          15 /r. -a
-test_exit_ok_timed "C5" "Rescan with timeout /t 5"     15 /r. /t 5
-test_exit_ok_timed "C6" "Rescan /t5 shorthand"         15 /t5 /r.
+test_exit_ok_timed "C4" "Rescan exclude /r-a"          15 -r. -a
+test_exit_ok_timed "C5" "Rescan with timeout /t 5"     15 -r. -t 5
+test_exit_ok_timed "C6" "Rescan -t 5 shorthand"         15 -t 5 -r.
 
 # ==========================================================================
 # CATEGORY D: Basic Search (9 tests)
@@ -531,18 +531,18 @@ test_exit_ok      "E7" "Star-only glob"                       "*"
 
 category "F: Fuzzy Match /z"
 
-test_ncd_finds    "F1" "Fuzzy exact term"           "Photos2024"  /z Photos2024
-test_ncd_finds    "F2" "Fuzzy with typo"            "Downloads"   /z Downoads
-test_ncd_finds    "F3" "Fuzzy word-to-digit"        "gamma"       /z gamma2
+test_ncd_finds    "F1" "Fuzzy exact term"           "Photos2024"  -z Photos2024
+test_ncd_finds    "F2" "Fuzzy with typo"            "Downloads"   -z Downoads
+test_ncd_finds    "F3" "Fuzzy word-to-digit"        "gamma"       -z gamma2
 # F4: NCD never indexes dot-prefixed directories, so /z /i can't find them.
 # Test fuzzy with /a flag on a regular directory instead.
-test_ncd_finds    "F4" "Fuzzy combined with /a"     "Photos"      /z /a Photos
-test_ncd_no_match "F5" "Fuzzy no match at all"                    /z zzzzqqqq
+test_ncd_finds    "F4" "Fuzzy combined with /a"     "Photos"      -z -a Photos
+test_ncd_no_match "F5" "Fuzzy no match at all"                    -z zzzzqqqq
 
 # F6: Fuzzy performance (should complete in <5s)
 test_custom "F6" "Fuzzy digit-heavy performance"
 START_T=$SECONDS
-ncd_run /z src4release
+ncd_run -z src4release
 ELAPSED=$((SECONDS - START_T))
 if [[ $ELAPSED -lt 5 ]]; then
     pass "F6" "Fuzzy digit-heavy performance (${ELAPSED}s)"
@@ -567,10 +567,10 @@ test_ncd_no_match "G1" "Default hides hidden dirs"                    .hidden_co
 skip              "G2" "/i shows hidden dirs" "NCD excludes dot-dirs at scan time"
 # G3-G5: System filter (Windows\System32 was created as a regular dir on Linux,
 # so it won't have the system flag. Test that /s doesn't crash.)
-test_exit_ok      "G3" "/s flag accepted"                          /s System32
+test_exit_ok      "G3" "/s flag accepted"                          -s System32
 # G4: Same as G2 -- dot-dirs excluded at scan time, /a can't find them.
 skip              "G4" "/a shows all dirs" "NCD excludes dot-dirs at scan time"
-test_exit_ok      "G5" "/a flag accepted"                          /a System32
+test_exit_ok      "G5" "/a flag accepted"                          -a System32
 # G6: Default should hide hidden dirs (same as G1, different wording)
 test_ncd_no_match "G6" "Default excludes .hidden_config"              .hidden_config
 
@@ -582,21 +582,21 @@ category "H: Groups/Bookmarks"
 
 # H1: Create group @proj
 test_custom "H1" "Create group @proj"
-(cd "$TESTROOT/Projects" && "$NCD" /g @proj >/dev/null 2>&1)
+(cd "$TESTROOT/Projects" && "$NCD" -g @proj >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then pass "H1" "Create group @proj"; else fail "H1" "Create group @proj"; fi
 
 # H2: Create group @users
 test_custom "H2" "Create group @users"
-(cd "$TESTROOT/Users" && "$NCD" /g @users >/dev/null 2>&1)
+(cd "$TESTROOT/Users" && "$NCD" -g @users >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then pass "H2" "Create group @users"; else fail "H2" "Create group @users"; fi
 
 # H3: List groups
-test_output_has "H3" "List groups /gl" "proj" /gl
+test_output_has "H3" "List groups /gl" "proj" -gl
 
 # H4: Verify group appears in group list (navigation with @name has a known
 # issue where /gl can list groups but @name lookup says "Unknown group")
 test_custom "H4" "Group @proj appears in /gl"
-OUTPUT=$(cd "$TESTROOT" && "$NCD" /gl 2>&1)
+OUTPUT=$(cd "$TESTROOT" && "$NCD" -gl 2>&1)
 if echo "$OUTPUT" | grep -qi "proj"; then
     pass "H4" "Group @proj appears in /gl"
 else
@@ -605,7 +605,7 @@ fi
 
 # H5: Verify second group appears in group list
 test_custom "H5" "Group @users appears in /gl"
-OUTPUT=$(cd "$TESTROOT" && "$NCD" /gl 2>&1)
+OUTPUT=$(cd "$TESTROOT" && "$NCD" -gl 2>&1)
 if echo "$OUTPUT" | grep -qi "users"; then
     pass "H5" "Group @users appears in /gl"
 else
@@ -614,9 +614,9 @@ fi
 
 # H6: Update existing group and verify via /gl
 test_custom "H6" "Update existing group"
-(cd "$TESTROOT/Media" && "$NCD" /g @proj >/dev/null 2>&1)
+(cd "$TESTROOT/Media" && "$NCD" -g @proj >/dev/null 2>&1)
 if [[ $? -eq 0 ]]; then
-    OUTPUT=$(cd "$TESTROOT" && "$NCD" /gl 2>&1)
+    OUTPUT=$(cd "$TESTROOT" && "$NCD" -gl 2>&1)
     if echo "$OUTPUT" | grep -qi "Media"; then
         pass "H6" "Update existing group"
     else
@@ -627,10 +627,10 @@ else
 fi
 
 # H7: Remove group
-test_exit_ok "H7" "Remove group /g- @users" /g- @users
+test_exit_ok "H7" "Remove group /g- @users" -g- @users
 
 # H8: Verify removed
-test_output_lacks "H8" "Removed group not in list" "@users" /gl
+test_output_lacks "H8" "Removed group not in list" "@users" -gl
 
 # H9: Use removed group (NCD returns exit 1 and ERROR status for unknown groups)
 test_custom "H9" "Removed group returns error"
@@ -691,26 +691,26 @@ category "J: History/Heuristics"
 
 # J1: Search creates history
 ncd_run Downloads
-test_exit_ok "J1" "Search creates history entry" /f
+test_exit_ok "J1" "Search creates history entry" -f
 
 # J2: Show history
-test_output_has "J2" "History shows search term" "download" /f
+test_output_has "J2" "History shows search term" "download" -f
 
 # J3: History influences ranking (just verify /f still works after multiple searches)
 ncd_run Music
 ncd_run Downloads
-test_exit_ok "J3" "History after multiple searches" /f
+test_exit_ok "J3" "History after multiple searches" -f
 
 # J4: Multiple searches appear in history
 ncd_run Reports
-test_output_has "J4" "Multiple searches in history" "download" /f
+test_output_has "J4" "Multiple searches in history" "download" -f
 
 # J5: Clear history
-test_exit_ok "J5" "Clear history /fc" /fc
+test_exit_ok "J5" "Clear history /fc" -fc
 
 # J6: History empty after clear
 test_custom "J6" "History empty after clear"
-ncd_run /f
+ncd_run -f
 # After clearing, output should be empty or say "no history"
 if [[ -z "$LAST_OUTPUT" ]] || echo "$LAST_OUTPUT" | grep -qi "no\|empty\|0 entries"; then
     pass "J6" "History empty after clear"
@@ -731,7 +731,7 @@ category "K: Configuration /c"
 
 # K1: Open config editor and save immediately via injected Enter.
 test_custom "K1" "Config edit runs without crash"
-ncd_run_tui_timed 10 "ENTER" /c
+ncd_run_tui_timed 10 "ENTER" -c
 K1_EXIT=$?
 if [[ $K1_EXIT -eq 0 ]]; then
     pass "K1" "Config edit runs without crash"
@@ -745,7 +745,7 @@ fi
 test_custom "K2" "Config persists defaults"
 META_FILE="$XDG_DATA_HOME/ncd/ncd.metadata"
 cp "$META_FILE" "${META_FILE}.k2.bak" >/dev/null 2>&1
-ncd_run_tui_timed 10 "SPACE,ENTER" /c
+ncd_run_tui_timed 10 "SPACE,ENTER" -c
 K2_EXIT=$?
 if [[ $K2_EXIT -eq 124 ]]; then
     skip "K2" "Config persists defaults" "TUI key injection not supported in this build"
@@ -758,14 +758,14 @@ rm -f "${META_FILE}.k2.bak"
 
 # K3: Toggle config back and verify /i search path still works.
 test_custom "K3" "Flag overrides config"
-ncd_run_tui_timed 10 "SPACE,ENTER" /c
+ncd_run_tui_timed 10 "SPACE,ENTER" -c
 K3_EXIT=$?
 if [[ $K3_EXIT -eq 124 ]]; then
     skip "K3" "Flag overrides config" "TUI key injection not supported in this build"
 elif [[ $K3_EXIT -ne 0 ]]; then
     fail "K3" "Flag overrides config" "config editor exit code $K3_EXIT"
 else
-    test_ncd_finds "K3" "Flag overrides config" "Downloads" /i Downloads
+    test_ncd_finds "K3" "Flag overrides config" "Downloads" -i Downloads
 fi
 
 # ==========================================================================
@@ -778,7 +778,7 @@ CUSTOM_DB2="/tmp/ncd_custom_L_$$.db"
 
 # L1: Custom DB path (must scan from TESTROOT so NCD indexes the test tree)
 test_custom "L1" "Custom DB path"
-(cd "$TESTROOT" && "$NCD" /r. /d "$CUSTOM_DB2" >/dev/null 2>&1)
+(cd "$TESTROOT" && "$NCD" -r . -d "$CUSTOM_DB2" >/dev/null 2>&1)
 if [[ -f "$CUSTOM_DB2" ]]; then
     pass "L1" "Custom DB path"
 else
@@ -786,7 +786,7 @@ else
 fi
 
 # L2: Search with custom DB (ncd_run cds to TESTROOT automatically)
-test_ncd_finds "L2" "Search with custom DB" "Downloads" /d "$CUSTOM_DB2" Downloads
+test_ncd_finds "L2" "Search with custom DB" "Downloads" -d "$CUSTOM_DB2" Downloads
 
 # L3: Default DB unchanged
 test_file_exists "L3" "Default DB still exists" "$DB_FILE"
@@ -799,9 +799,9 @@ rm -f "$CUSTOM_DB2"
 
 category "M: Timeout /t"
 
-test_exit_ok_timed "M1" "Short timeout rescan"       15 /r. /t 5
-test_exit_ok       "M2" "/t with search"                 /t 60 Downloads
-test_exit_ok_timed "M3" "/t<N> no space shorthand"  15 /t5 /r.
+test_exit_ok_timed "M1" "Short timeout rescan"       15 -r. -t 5
+test_exit_ok       "M2" "/t with search"                 -t 60 Downloads
+test_exit_ok_timed "M3" "/t<N> no space shorthand"  15 -t 5 -r.
 
 # ==========================================================================
 # CATEGORY N: Navigator Mode (3 tests)
@@ -894,14 +894,14 @@ test_ncd_finds    "P4" "Deep nesting search"       "L10"                 L10
 # P5: Multi-match uses agent query (direct search would open TUI which
 # blocks when NCD can't get /dev/tty read access in piped scripts)
 test_custom "P5" "Multiple results (src)"
-OUTPUT=$("$NCD" /agent query src --limit 5 2>&1)
+OUTPUT=$("$NCD" --agent query src --limit 5 2>&1)
 if echo "$OUTPUT" | grep -qi "src"; then
     pass "P5" "Multiple results (src)"
 else
     fail "P5" "Multiple results (src)" "output: $OUTPUT"
 fi
 # P6: Combined flags (use unique search term to avoid multi-match TUI)
-test_exit_ok      "P6" "Combined flags /ris"                             /ris Downloads
+test_exit_ok      "P6" "Combined flags /ris"                             -ris Downloads
 
 # ==========================================================================
 # CATEGORY Q: Version Update Flow (3 tests)
@@ -953,9 +953,9 @@ test_file_nonempty "Q3" "Fresh rescan clears version issues" "$DB_FILE"
 
 category "R: Error Handling"
 
-test_exit_fail "R1" "Invalid option /qqq"        /qqq
-test_exit_fail "R2" "/d missing path"             /d
-test_exit_fail "R3" "/g missing name"             /g
+test_exit_fail "R1" "Invalid option /qqq"        -qqq
+test_exit_fail "R2" "/d missing path"             -d
+test_exit_fail "R3" "/g missing name"             -g
 
 # ==========================================================================
 # CATEGORY U: Circular Directory History /0../9 (12 tests)
@@ -996,7 +996,7 @@ fi
 
 # U3: /0 same as bare NCD
 test_custom "U3" "/0 same as bare NCD"
-ncd_run /0
+ncd_run -0
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U3" "/0 same as bare NCD (no crash)"
 else
@@ -1005,7 +1005,7 @@ fi
 
 # U4: /1 pushes current dir
 test_custom "U4" "/1 pushes current dir"
-(cd "$DIR_C" && "$NCD" /1 >/dev/null 2>&1)
+(cd "$DIR_C" && "$NCD" -1 >/dev/null 2>&1)
 RET=$?
 if [[ $RET -eq 0 ]] || [[ $RET -eq 1 ]]; then
     pass "U4" "/1 pushes current dir"
@@ -1015,7 +1015,7 @@ fi
 
 # U5: /1 shifts list down
 test_custom "U5" "/1 shifts list down"
-(cd "$DIR_D" && "$NCD" /1 >/dev/null 2>&1)
+(cd "$DIR_D" && "$NCD" -1 >/dev/null 2>&1)
 RET=$?
 if [[ $RET -eq 0 ]] || [[ $RET -eq 1 ]]; then
     pass "U5" "/1 shifts list down"
@@ -1025,7 +1025,7 @@ fi
 
 # U6: /2 goes back 2
 test_custom "U6" "/2 goes back 2 dirs"
-ncd_run /2
+ncd_run -2
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U6" "/2 goes back 2 dirs"
 else
@@ -1034,7 +1034,7 @@ fi
 
 # U7: /3 goes back 3
 test_custom "U7" "/3 goes back 3 dirs"
-ncd_run /3
+ncd_run -3
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U7" "/3 goes back 3 dirs"
 else
@@ -1046,7 +1046,7 @@ test_custom "U8" "Circular list max 9 entries"
 # Build 10+ history entries
 for i in $(seq 1 11); do
     mkdir -p "$TESTROOT/hist_$i"
-    (cd "$TESTROOT/hist_$i" && "$NCD" /1 >/dev/null 2>&1)
+    (cd "$TESTROOT/hist_$i" && "$NCD" -1 >/dev/null 2>&1)
 done
 # No crash = pass
 pass "U8" "Circular list max 9 entries (no crash)"
@@ -1055,7 +1055,7 @@ for i in $(seq 1 11); do rmdir "$TESTROOT/hist_$i" 2>/dev/null; done
 
 # U9: /8 max index
 test_custom "U9" "/8 max index"
-ncd_run /8
+ncd_run -8
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U9" "/8 max index"
 else
@@ -1064,7 +1064,7 @@ fi
 
 # U10: /9 out of range
 test_custom "U10" "/9 out of range"
-ncd_run /9
+ncd_run -9
 # Should handle gracefully (either error or no-op)
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U10" "/9 out of range (handled gracefully)"
@@ -1074,7 +1074,7 @@ fi
 
 # U11: History survives process restart (just verify /2 still works)
 test_custom "U11" "History persists across runs"
-ncd_run /2
+ncd_run -2
 if [[ $LAST_EXIT -eq 0 ]] || [[ $LAST_EXIT -eq 1 ]]; then
     pass "U11" "History persists across runs"
 else
@@ -1113,14 +1113,14 @@ skip "V4"  "Agent tree --json --flat"    "NCD tree path separator bug on Linux"
 skip "V5"  "Agent tree --depth limits"   "NCD tree path separator bug on Linux"
 
 # V6: Non-existent path should still fail (doesn't need DB lookup)
-test_exit_fail "V6" "Agent tree fails on non-existent path" /agent tree "/nonexistent/path" --json
+test_exit_fail "V6" "Agent tree fails on non-existent path" -agent tree "/nonexistent/path" --json
 
 skip "V7"  "Agent tree --flat paths"     "NCD tree path separator bug on Linux"
 skip "V8"  "Agent tree JSON fields"      "NCD tree path separator bug on Linux"
 skip "V9"  "Agent tree default names"    "NCD tree path separator bug on Linux"
 
 # V10: Tree requires a path argument
-test_exit_fail "V10" "Agent tree requires path argument" /agent tree
+test_exit_fail "V10" "Agent tree requires path argument" -agent tree
 
 # ==========================================================================
 # Summary

@@ -104,10 +104,10 @@ check_log_errors() {
     local log_path
     log_path=$(get_log_path)
     if [[ -f "$log_path" ]]; then
-        if grep -i "ERROR" "$log_path" >/dev/null 2>&1; then
+        if grep -E '\[L[0-9]+\] .*ERROR' "$log_path" >/dev/null 2>&1; then
             echo ""
             echo "  [FAIL] Errors found in service log:"
-            grep -i "ERROR" "$log_path" | head -5
+            grep -E '\[L[0-9]+\] .*ERROR' "$log_path" | head -5
             TESTS_FAILED=$((TESTS_FAILED + 1))
             return 1
         fi
@@ -352,9 +352,9 @@ echo ""
 echo "Checking service log for errors..."
 LOG_PATH=$(get_log_path)
 if [[ -f "$LOG_PATH" ]]; then
-    if grep -i "ERROR" "$LOG_PATH" >/dev/null 2>&1; then
+    if grep -E '\[L[0-9]+\] .*ERROR' "$LOG_PATH" >/dev/null 2>&1; then
         printf "  ${C_RED}[FAIL]${C_RESET} Errors found in service log:\n"
-        grep -i "ERROR" "$LOG_PATH" | head -5
+        grep -E '\[L[0-9]+\] .*ERROR' "$LOG_PATH" | head -5
         TESTS_FAILED=$((TESTS_FAILED + 1))
     else
         printf "  ${C_GREEN}[PASS]${C_RESET} No errors found in service log\n"

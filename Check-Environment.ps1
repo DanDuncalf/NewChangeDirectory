@@ -166,7 +166,7 @@ function Test-Environment {
     else {
         Write-Finding "No NCD database found" 'Warning'
         Write-Host "       Expected at: $ncdPath" -ForegroundColor Gray
-        Write-Host "       Run 'ncd /r' to create database" -ForegroundColor Gray
+        Write-Host "       Run 'ncd -r' to create database" -ForegroundColor Gray
         $results.Issues += "NO_DATABASE"
     }
     
@@ -355,7 +355,7 @@ else {
 # Final recommendations
 Write-Host "`nRecommendations:" -ForegroundColor $colors.Info
 if ($results.Details['DatabaseCount'] -eq 0) {
-    Write-Host "  - Run 'ncd /r' to create your database" -ForegroundColor Gray
+    Write-Host "  - Run 'ncd -r' to create your database" -ForegroundColor Gray
 }
 Write-Host "  - Use '.\Run-Tests-Safe.bat' to run tests safely" -ForegroundColor Gray
 Write-Host "  - Or use '.\Run-NcdTests.ps1' for PowerShell-native testing" -ForegroundColor Gray

@@ -877,7 +877,7 @@ static bool handle_encoding_switch(uint8_t new_encoding, uint8_t current_encodin
     
     ncd_printf("Encoding changed to %s. %d database file(s) invalidated.\r\n", 
                mode_name, deleted_count);
-    ncd_println("Run 'ncd /r' to perform a full rescan.");
+    ncd_println("Run 'ncd -r' to perform a full rescan.");
     
     return true;
 }
@@ -913,83 +913,77 @@ static void print_usage(void)
     ncd_printf("%s%s\r\n"
         "\r\n"
         "Usage:\r\n"
-        "  ncd <search>                    Search and navigate to a directory\r\n"
-        "  ncd [options] <search>          Search with options\r\n"
-        "  ncd /r [drives]                 Rescan drives\r\n"
-        "  ncd /?                          Show this help\r\n"
+        "  ncd [options] <search>           Search and navigate to a directory\r\n"
+        "  ncd [command]:[value]            Execute specific maintenance or action\r\n"
+        "  ncd -h | --help                  Show this help\r\n"
         "\r\n"
         "Navigation:\r\n"
-        "  <search>      Partial directory name with optional wildcards (*, ?)\r\n"
-        "  .             Browse from current directory (navigator mode)\r\n"
+        "  <search>                         Partial directory name (wildcards *, ? supported)\r\n"
+        "  .                                Browse from current directory (navigator mode)\r\n"
 #if NCD_PLATFORM_WINDOWS
-        "  X: or X:\\     Browse from drive root (navigator mode)\r\n"
+        "  X: or X:\\                        Browse from drive root (navigator mode)\r\n"
 #else
-        "  /             Browse from root filesystem (navigator mode)\r\n"
-        "  /mnt/X        Browse from Windows drive X: via /mnt (WSL only)\r\n"
+        "  /                                Browse from root filesystem (navigator mode)\r\n"
+        "  /mnt/X                           Browse from Windows drive X: via /mnt (WSL only)\r\n"
 #endif
-        "  @<group>      Jump to a group/bookmark (see Groups below)\r\n"
+        "  @<group>                         Jump to a group/bookmark (see Groups below)\r\n"
         "\r\n"
-        "Search Options:\r\n"
-        "  /i            Include hidden directories\r\n"
-        "  /s            Include system directories\r\n"
-        "  /a            Include all (hidden + system)\r\n"
-        "  /z            Fuzzy matching (typo-tolerant)\r\n"
+        "Search Options (Bundling supported, e.g., -asz):\r\n"
+        "  -i, --hidden                     Include hidden directories\r\n"
+        "  -s, --system                     Include system directories\r\n"
+        "  -a, --all                        Include all (hidden + system)\r\n"
+        "  -z, --fuzzy                      Fuzzy matching (typo-tolerant)\r\n"
         "\r\n"
-        "History:\r\n"
-        "  /0            Ping-pong: swap between last two directories\r\n"
-        "  /1 .. /9      Jump to Nth directory in history (/1=oldest, /9=newest)\r\n"
-        "  /h            Browse history (interactive, Del to remove)\r\n"
-        "  /hl           List directory history\r\n"
-        "  /hc           Clear all directory history\r\n"
-        "  /hc#          Remove history entry # (e.g., /hc3)\r\n"
-        "  /f            Show frequent searches (last 20)\r\n"
-        "  /fc           Clear frequent search history\r\n"
+        "History & Frequency:\r\n"
+        "  -0                               Ping-pong: swap between last two directories\r\n"
+        "  -1 .. -9                         Jump to Nth directory in history (-1=oldest, -9=newest)\r\n"
+        "  -h                               Browse history (interactive, Del to remove)\r\n"
+        "  -h:l                             List directory history\r\n"
+        "  -h:c                             Clear all directory history\r\n"
+        "  -h:c<#>                          Remove history entry # (e.g., -h:c3)\r\n"
+        "  -f                               Show frequent searches (last 20)\r\n"
+        "  -f:c                             Clear frequent search history\r\n"
         "\r\n"
         "Groups:\r\n"
-        "  /g @<name>    Add current directory to group (e.g., /g @proj)\r\n"
-        "  /g- @<name>   Remove current directory from group\r\n"
-        "  /gl           List all groups and their directories\r\n"
+        "  -g:@<name>                       Add current directory to group (e.g., -g:@proj)\r\n"
+        "  -G:@<name>                       Remove current directory from group\r\n"
+        "  -g:l                             List all groups and their directories\r\n"
         "\r\n"
         "Scanning:\r\n"
 #if NCD_PLATFORM_WINDOWS
-        "  /r            Rescan all drives\r\n"
+        "  -r                               Rescan all drives\r\n"
 #else
-        "  /r            Rescan all mounted filesystems\r\n"
-        "  /r /          Rescan root filesystem only (excludes /mnt/*)\r\n"
+        "  -r                               Rescan all mounted filesystems\r\n"
+        "  -r:/                             Rescan root filesystem only (excludes /mnt/*)\r\n"
 #endif
-        "  /r .          Rescan current subdirectory only\r\n"
-        "  /r.           Rescan current subdirectory only\r\n"
-#if NCD_PLATFORM_WINDOWS
-        "  /r e,p        Rescan specific drives (space form)\r\n"
-        "  /rBDE         Rescan specific drives (B:, D:, E:)\r\n"
-        "  /r-b-d        Rescan all drives except B: and D:\r\n"
-#else
-        "  /r /mnt/c     Rescan specific mount (e.g., Windows C: drive)\r\n"
-#endif
+        "  -r:.                             Rescan current subdirectory only\r\n"
+        "  -r:<drives>                      Rescan specific drives (e.g., -r:d or -r:bde)\r\n"
+        "  -r:-<drives>                     Rescan all drives except specified (e.g., -r:-c)\r\n"
         "\r\n"
         "Exclusions:\r\n"
 #if NCD_PLATFORM_WINDOWS
-        "  /x <pat>      Add exclusion pattern (e.g., /x C:Windows)\r\n"
+        "  -x:<pat>                         Add exclusion pattern (e.g., -x:C:\\Windows)\r\n"
 #else
-        "  /x <pat>      Add exclusion pattern (e.g., /x /proc)\r\n"
+        "  -x:<pat>                         Add exclusion pattern (e.g., -x:/proc)\r\n"
 #endif
-        "  /x- <pat>     Remove exclusion pattern\r\n"
-        "  /xl           List exclusion patterns\r\n"
-        "  -x/-x-/-xl    Dash aliases for /x options\r\n"
+        "  -X:<pat>                         Remove exclusion pattern\r\n"
+        "  -x:l                             List exclusion patterns\r\n"
         "\r\n"
-        "Configuration:\r\n"
-        "  /c            Edit default options interactively\r\n"
-        "  /d <path>     Use alternate database file\r\n"
-        "  /t <sec>      Scan timeout in seconds (default: 300, /t30 also accepted)\r\n"
-        "  /retry <n>    Service busy retry count (0-255, 0=use config default)\r\n"
-        "  /u8           Set text encoding to UTF-8 (default)\r\n"
+        "Configuration & System:\r\n"
+        "  -c, --config                     Edit default options interactively\r\n"
+        "  -d:<path>                        Use alternate database file\r\n"
+        "  -t:<sec>                         Scan timeout in seconds (default: 300)\r\n"
+        "  --retry:<n>                      Service busy retry count (0-255)\r\n"
+        "  -u:8 | -u:16                     Set text encoding (UTF-8 or UTF-16LE)\r\n"
+        "  -v, --version                    Print version\r\n"
+        "  --agent:<cmd>                    LLM integration mode (e.g., --agent:query <term>)\r\n"
 #if NCD_PLATFORM_WINDOWS
-        "  /u16          Set text encoding to UTF-16LE (Windows/PowerShell)\r\n"
-#endif
-        "  /v            Print version\r\n"
         "\r\n"
-        "Agent Mode:\r\n"
-        "  /agent <cmd>  LLM integration mode (see: ncd /agent query <term>)\r\n",
+        "Windows Note:\r\n"
+        "  / prefix acts as a silent alias for - (single flag only).\r\n"
+        "  Example: /i works like -i, but /as is not a bundle.\r\n"
+#endif
+        ,
         platform_get_app_title(), status_suffix);
     
     /* Platform-specific suffix */
@@ -1006,13 +1000,13 @@ static void print_usage(void)
         "  ncd scott\\downloads        Search with path context\r\n"
         "  ncd down*                  Wildcard: matches downloads, downgrade, etc.\r\n"
         "  ncd *load*                 Wildcard: matches downloads, uploads, etc.\r\n"
-        "  ncd /z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
+        "  ncd -z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
         "  ncd .                      Browse current directory tree\r\n"
-        "  ncd /g @proj               Add current dir to @proj group\r\n"
+        "  ncd -g:@proj               Add current dir to @proj group\r\n"
         "  ncd @proj                  Jump to @proj group\r\n"
-        "  ncd /0                     Swap to previous directory\r\n"
-        "  ncd /r                     Rescan all drives\r\n"
-        "  ncd /rBDE                  Rescan drives B:, D:, E: only\r\n"
+        "  ncd -0                     Swap to previous directory\r\n"
+        "  ncd -r                     Rescan all drives\r\n"
+        "  ncd -r:bde                 Rescan drives B:, D:, E: only\r\n"
 #else
     ncd_print(
         "\r\n"
@@ -1021,13 +1015,13 @@ static void print_usage(void)
         "  ncd scott/downloads        Search with path context\r\n"
         "  ncd down*                  Wildcard: matches downloads, downgrade, etc.\r\n"
         "  ncd *load*                 Wildcard: matches downloads, uploads, etc.\r\n"
-        "  ncd /z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
+        "  ncd -z donloads            Fuzzy: matches \"downloads\" despite typo\r\n"
         "  ncd .                      Browse current directory tree\r\n"
-        "  ncd /g @proj               Add current dir to @proj group\r\n"
+        "  ncd -g:@proj               Add current dir to @proj group\r\n"
         "  ncd @proj                  Jump to @proj group\r\n"
-        "  ncd /0                     Swap to previous directory\r\n"
-        "  ncd /r                     Rescan all mounted filesystems\r\n"
-        "  ncd /r /                   Rescan root filesystem only\r\n"
+        "  ncd -0                     Swap to previous directory\r\n"
+        "  ncd -r                     Rescan all mounted filesystems\r\n"
+        "  ncd -r:/                   Rescan root filesystem only\r\n"
 #endif
         "\r\n"
         "Tab Completion:\r\n"
@@ -1088,14 +1082,14 @@ static void agent_print_usage(void)
         "NCD Agent Mode -- Filesystem oracle for LLM agents\r\n"
         "\r\n"
         "Usage:\r\n"
-        "  ncd /agent query <search> [options]\r\n"
-        "  ncd /agent ls <path> [options]\r\n"
-        "  ncd /agent tree <path> [options]\r\n"
-        "  ncd /agent check <path> | --db-age | --stats | --service-status\r\n"
-        "  ncd /agent complete <partial> [--limit N] [--json]\r\n"
-        "  ncd /agent mkdir <path> [--json]\r\n"
-        "  ncd /agent mkdirs [--file <path>] [--json] <content>\r\n"
-        "  ncd /agent quit [--json]\r\n"
+        "  ncd --agent:query <search> [options]\r\n"
+        "  ncd --agent:ls <path> [options]\r\n"
+        "  ncd --agent:tree <path> [options]\r\n"
+        "  ncd --agent:check <path> | --db-age | --stats | --service-status\r\n"
+        "  ncd --agent:complete <partial> [--limit N] [--json]\r\n"
+        "  ncd --agent:mkdir <path> [--json]\r\n"
+        "  ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n"
+        "  ncd --agent:quit [--json]\r\n"
         "\r\n"
         "Commands:\r\n"
         "  query <search>    Search the NCD index for directories\r\n"
@@ -2901,7 +2895,7 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
             agent_print("{\"v\":1,\"error\":\"no input provided (use --file or provide content)\",\"result\":\"error\"}\r\n");
         } else {
             agent_print("ERROR: No input provided. Use --file or provide content as argument.\r\n");
-            agent_print("Usage: ncd /agent mkdirs [--file <path>] [--json] <content>\r\n");
+            agent_print("Usage: ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n");
             agent_print("\r\n");
             agent_print("Flat file format (2 spaces = child):\r\n");
             agent_print("  parent\r\n");
@@ -3151,7 +3145,7 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------------ parse options */
     NcdOptions opts;
     if (!parse_args(argc, argv, &opts)) {
-        result_error("Invalid command line.  Run 'ncd /?' for help.");
+        result_error("Invalid command line.  Run 'ncd -?' for help.");
         con_close();
         return 1;
     }
@@ -3294,7 +3288,7 @@ int main(int argc, char *argv[])
         !opts.history_pingpong && opts.history_index == 0 && !opts.history_browse && 
         !opts.history_list && !opts.history_clear && opts.history_remove == 0) {
         ncd_println("Welcome to NCD! Let's set up your default options.");
-        ncd_println("(Use 'ncd /c' anytime to change these settings)\r\n");
+        ncd_println("(Use 'ncd -c' anytime to change these settings)\r\n");
         
         NcdMetadata *meta = db_metadata_create();
         db_config_init_defaults(&meta->cfg);
@@ -3319,7 +3313,7 @@ int main(int argc, char *argv[])
                 }
             }
         } else {
-            ncd_println("Using default settings. (Run 'ncd /c' to configure later)\r\n");
+            ncd_println("Using default settings. (Run 'ncd -c' to configure later)\r\n");
         }
         db_metadata_free(meta);
     }
@@ -4164,7 +4158,7 @@ int main(int argc, char *argv[])
                 if (vstatus == DB_VERSION_MISMATCH || vstatus == DB_VERSION_SKIPPED) {
                     ncd_printf("NCD: Database for %c: needs a full rescan "
                                "(format changed).\r\n"
-                               "     Run 'ncd /r' to rebuild, then retry "
+                               "     Run 'ncd -r' to rebuild, then retry "
                                "the subdirectory rescan.\r\n", drive);
                     db_metadata_free(meta);
                     scan_set_exclusion_list(NULL);
@@ -4379,7 +4373,7 @@ int main(int argc, char *argv[])
             if (vstatus == DB_VERSION_MISMATCH || vstatus == DB_VERSION_SKIPPED) {
                 ncd_printf("NCD: Database for %c: needs a full rescan "
                            "(format changed).\r\n"
-                           "     Run 'ncd /r' to rebuild, then retry "
+                           "     Run 'ncd -r' to rebuild, then retry "
                            "the subdirectory rescan.\r\n", target_drive);
                 con_close();
                 return 1;
@@ -4392,7 +4386,7 @@ int main(int argc, char *argv[])
             allow_implicit_rebuild = false;
             ncd_printf("NCD: Test mode active -- skipping implicit rebuild for drive %c:.\r\n",
                        target_drive);
-            ncd_println("     Run 'ncd /r.' from your isolated test directory first.");
+            ncd_println("     Run 'ncd -r:.' from your isolated test directory first.");
         }
 
         if (allow_implicit_rebuild) {
@@ -4493,7 +4487,7 @@ int main(int argc, char *argv[])
                 for (int i = 0; i < outdated_count; i++) {
                     db_set_skipped_rescan_flag(outdated[i].path);
                 }
-                ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
+                ncd_println("Skipped database updates. Use 'ncd -r' to force rescan.");
             } else {
                 /* User chose to update some or all */
                 bool any_selected = false;
@@ -4578,7 +4572,7 @@ int main(int argc, char *argv[])
                     for (int i = 0; i < outdated_count; i++) {
                         db_set_skipped_rescan_flag(outdated[i].path);
                     }
-                    ncd_println("Skipped database updates. Use 'ncd /r' to force rescan.");
+                    ncd_println("Skipped database updates. Use 'ncd -r' to force rescan.");
                 }
             }
         }
@@ -4868,7 +4862,7 @@ int main(int argc, char *argv[])
     /* Verify the actual directory still exists */
     if (!platform_dir_exists(resolved_path)) {
         result_error("Directory no longer exists: %s\r\n"
-                     "Tip: run 'ncd /r' to refresh the database.",
+                     "Tip: run 'ncd -r' to refresh the database.",
                      resolved_path);
         spawn_background_rescan(NULL);
         free(matches);

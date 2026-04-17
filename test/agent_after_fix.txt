@@ -1,0 +1,61 @@
+==========================================
+NCD Agent Command Tests [Windows]
+==========================================
+
+WARNING: Not running as admin, using temp directory
+  Using temp directory at C:\Users\Dan\AppData\Local\Temp\ncd_agent_tree_14257 (drive C:)
+Creating test directory tree...
+Scanning test tree...
+
+========== Agent Command Tests ==========
+
+--- Agent Query Tests ---
+  FAIL  W1  query returns JSON with results
+  FAIL  W2  query with --limit returns results
+  PASS  W3  query nonexistent returns empty/zero results
+  FAIL  W4  query with --all flag works
+--- Agent List Tests ---
+  PASS  W5  ls lists directories in path
+  PASS  W6  ls --depth shows nested directories
+  PASS  W7  ls --dirs-only works
+  PASS  W8  ls --pattern filters results
+  PASS  W9  ls fails on non-existent path
+--- Agent Tree Tests ---
+  FAIL  W10  tree --json returns valid JSON
+  FAIL  W11  tree --flat shows relative paths
+  FAIL  W12  tree --depth limits results
+  PASS  W13  tree fails on non-existent path
+  PASS  W14  tree requires path argument
+--- Agent Check Tests ---
+  PASS  W15  check path exists returns success
+  PASS  W16  check non-existent path fails
+  FAIL  W17  check --db-age returns data
+  FAIL  W18  check --stats returns data
+  PASS  W19  check --service-status returns status
+--- Agent Complete Tests ---
+  FAIL  W20  complete returns suggestions
+  FAIL  W21  complete finds matching dirs
+  PASS  W22  complete handles no matches
+--- Agent Mkdir Tests ---
+  PASS  W23  mkdir creates single directory
+  PASS  W24  mkdir creates partial nested path
+  PASS  W25  mkdir handles existing directory (silent)
+  PASS  W26  mkdir fails on invalid path
+--- Agent Mkdirs Tests ---
+  PASS  W27  mkdirs creates tree from flat file
+  PASS  W28  mkdirs creates from JSON array
+  PASS  W29  mkdirs creates from JSON object tree
+  PASS  W30  mkdirs requires input
+
+==========================================
+Test Summary
+==========================================
+  Total:   30
+  Passed:  20
+  Failed:  10
+  Skipped: 0
+
+Cleaning up...
+  Removed temp directory
+  Cleaned up test data
+Some tests FAILED.

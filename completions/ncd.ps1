@@ -7,7 +7,7 @@ Register-ArgumentCompleter -CommandName ncd -ScriptBlock {
     # Skip flag completion
     if ($wordToComplete -match '^[/-]') { return }
 
-    $results = & NewChangeDirectory.exe /agent complete $wordToComplete --limit 20 2>$null
+    $results = & NewChangeDirectory.exe --agent:complete $wordToComplete --limit 20 2>$null
     foreach ($line in $results) {
         if ($line.Trim()) {
             [System.Management.Automation.CompletionResult]::new(

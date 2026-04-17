@@ -107,7 +107,7 @@ if exist "%LOCALAPPDATA%\NCD\ncd_*.database" (
     echo If your databases are missing, they may have been:
     echo   - Deleted by accident
     echo   - Stored in a different location
-    echo   - Not yet created (run 'ncd /r' to scan)
+    echo   - Not yet created (run 'ncd -r' to scan)
 )
 echo.
 
@@ -150,8 +150,8 @@ echo.
 if /I "%~1"=="fix" (
     echo Fixes have been applied. Recommended actions:
     echo   1. Close and reopen your command prompt
-    echo   2. Run 'ncd /?' to verify NCD works correctly
-    echo   3. Run 'ncd /agent check --db-age' to check database
+    echo   2. Run 'ncd -?' to verify NCD works correctly
+    echo   3. Run 'ncd --agent:check --db-age' to check database
 ) else (
     echo To apply fixes, run: %~nx0 fix
     echo.

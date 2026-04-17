@@ -16,7 +16,7 @@ echo ""
 echo "=== Scan ==="
 cd "$TESTROOT"
 echo "Now in: $(pwd)"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r.
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:.
 echo "Scan done"
 echo ""
 

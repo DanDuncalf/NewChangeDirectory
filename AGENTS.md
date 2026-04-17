@@ -353,10 +353,10 @@ All tests must be **completely isolated** from the user's real data:
 |----------|-----------|-----------|
 | **Drives/Mounts** | `C:`, `D:`, etc. | VHD (Windows) or ramdisk (WSL) |
 | **Metadata** | `%LOCALAPPDATA%\NCD\ncd.metadata` | Temp directory via `-conf` or env override |
-| **Databases** | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `/d <path>` |
+| **Databases** | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `-d:path` |
 
 **Rules for writing tests:**
-1. **Never use bare `/r`** - Always use `/r.` (subdirectory) or `/rDRIVE` (specific drive)
+1. **Never use bare `-r`** - Always use `-r:.` (subdirectory) or `-r:drive` (specific drive)
 2. **Never scan user drives** - Only scan the test VHD/ramdisk/temp directory
 3. **Never modify user metadata** - Use `-conf <temp_path>` for custom metadata location
 4. **Clean up after tests** - Remove all test files and databases
@@ -393,7 +393,7 @@ The primary test runners implement multiple layers of isolation:
 2. **Individual Test Script Layer:**
    - Each test script creates its own sub-directory within the temp location
    - Uses `-conf` option to specify custom metadata paths
-   - Uses `/d` option to specify database locations
+   - Uses `-d:` option to specify database locations
    - Only scans test VHDs/ramdisks, never user drives
 
 3. **Cleanup on ALL Exit Paths:**
@@ -595,7 +595,7 @@ Tests will skip gracefully if the service executable is not available.
 
 **Test Infrastructure Note (Windows):**
 NCD automatically detects when stdout is redirected (e.g., in tests or when piping output) and switches from direct console writes (`CONOUT$`) to standard stdout output. This allows:
-- Help text output (`ncd /?`) to be captured via pipe redirection for testing
+- Help text output (`ncd -?`) to be captured via pipe redirection for testing
 - Proper operation in both interactive (console) and batch (redirected) modes
 
 The detection uses `GetConsoleMode()` on Windows and `isatty()` on Linux. When redirected, output goes through `fputs(stdout)`; when in a console, output uses `WriteConsoleA()` for better TUI performance.
@@ -636,7 +636,7 @@ NCD supports automated keystroke injection for testing and scripting the interac
 ```batch
 :: Navigate to rescan_interval field (6th item), enter -1, save
 set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
-ncd /c
+ncd -c
 set "NCD_UI_KEYS="
 ```
 
@@ -660,7 +660,7 @@ set "NCD_UI_KEYS=DOWN,ENTER,TEXT:mydir,ENTER"
 set "NCD_UI_KEYS_STRICT=1"
 
 :: Run NCD - output goes to stdout instead of console
-ncd /c > tui_output.txt 2>&1
+ncd -c > tui_output.txt 2>&1
 
 :: Clean up
 set "NCD_TUI_TEST="
@@ -778,7 +778,7 @@ typedef struct {
 
 **Symptoms:**
 - NCD reports "No database found"
-- `ncd /agent check --db-age` shows wrong location
+- `ncd --agent:check --db-age` shows wrong location
 - Environment check reports corruption
 
 **Cause:** Previous test was interrupted with Ctrl+C (batch file limitation)
@@ -852,62 +852,62 @@ ncd downloads
 ncd scott\downloads
 
 # Force rescan
-ncd /r                    # All drives
-ncd /rBDE                 # Specific drives only (B:,D:,E:)
-cd /r-b-d                 # Exclude drives B: and D:
-cd /r.                    # Rescan current subdirectory only
+ncd -r                    # All drives
+ncd -r:bde                 # Specific drives only (B:,D:,E:)
+cd -r:-b-d                 # Exclude drives B: and D:
+cd -r:.                    # Rescan current subdirectory only
 
 # Options
-ncd /i scott\appdata      # Include hidden directories
-ncd /s                    # Include system directories
-ncd /a                    # Include all (hidden + system)
-ncd /z                    # Fuzzy matching with DL distance
+ncd -i scott\appdata      # Include hidden directories
+ncd -s                    # Include system directories
+ncd -a                    # Include all (hidden + system)
+ncd -z                    # Fuzzy matching with DL distance
 
 # Interactive navigation
 ncd .                     # Navigate from current directory
 ncd C:                    # Navigate from drive root (Windows)
 
 # Groups (bookmarks) - supports multiple directories per group
-ncd /g @home              # Add current directory to group
-ncd /g- @home             # Remove current directory from group
-ncd /gl                   # List all groups
+ncd -g:@home              # Add current directory to group
+ncd -G:@home             # Remove current directory from group
+ncd -g:l                   # List all groups
 ncd @home                 # Jump to group (shows selector if multiple)
 
 # Directory history
-ncd /0                    # Ping-pong between two most recent directories
-ncd /h                    # Browse history interactively (Del to remove)
-ncd /hl                   # List directory history
-ncd /hc                   # Clear all history
-ncd /hc3                  # Remove history entry #3
+ncd -0                    # Ping-pong between two most recent directories
+ncd -h                    # Browse history interactively (Del to remove)
+ncd -h:l                   # List directory history
+ncd -h:c                   # Clear all history
+ncd -h:c3                  # Remove history entry #3
 
 # Exclusions
-ncd /x <pattern>          # Add exclusion pattern (e.g., /x C:Windows)
-ncd /x- <pattern>         # Remove exclusion pattern
-ncd /xl                   # List all exclusions
+ncd -x:<pattern>          # Add exclusion pattern (e.g., -x:C:Windows)
+ncd -X:<pattern>         # Remove exclusion pattern
+ncd -x:l                   # List all exclusions
 
-(Note: `-x`, `-x-`, `-xl` are also accepted)
+(Note: `-x`, `-X`, `-x:l` are also accepted)
 
 # Configuration
-ncd /c                    # Edit configuration (set default options)
+ncd -c                    # Edit configuration (set default options)
 
 # Frequent searches
-ncd /f                    # Show frequent searches
-ncd /fc                   # Clear frequent searches
+ncd -f                    # Show frequent searches
+ncd -f:c                   # Clear frequent searches
 
 # Agent mode (LLM integration)
-ncd /agent query <search> [--json] [--limit N] [--depth]
-ncd /agent ls <path> [--json] [--depth N] [--dirs-only|--files-only]
-ncd /agent tree <path> [--json] [--depth N] [--flat]  # Show directory tree from DB
-ncd /agent check <path> | --db-age | --stats | --service-status
-ncd /agent complete <partial> [--limit N]  # Shell tab-completion
-ncd /agent mkdir <path>  # Create single directory
-ncd /agent mkdirs [--file <path>] [--json] <content>  # Create directory tree
+ncd --agent:query <search> [--json] [--limit N] [--depth]
+ncd --agent:ls <path> [--json] [--depth N] [--dirs-only|--files-only]
+ncd --agent:tree <path> [--json] [--depth N] [--flat]  # Show directory tree from DB
+ncd --agent:check <path> | --db-age | --stats | --service-status
+ncd --agent:complete <partial> [--limit N]  # Shell tab-completion
+ncd --agent:mkdir <path>  # Create single directory
+ncd --agent:mkdirs [--file <path>] [--json] <content>  # Create directory tree
 
 # Service management
 ncd_service start         # Start resident service (faster startup)
 ncd_service stop          # Stop resident service (waits up to 5s, returns 0 on success, 1 on error)
 ncd_service stop block N  # Stop service and wait N seconds (-1 if timeout)
-ncd /agent check --service-status  # Check if service is running
+ncd --agent:check --service-status  # Check if service is running
 
 # Service Logging (for debugging crashes)
 # Log file location: %LOCALAPPDATA%\NCD\ncd_service.log (Windows)
@@ -924,8 +924,8 @@ ncd -conf <path>          # Use custom metadata file path
 ncd_service start -conf <path>  # Service with custom metadata path
 
 # Help
-ncd /?                    # or /h
-ncd /v                    # Version info
+ncd -?                    # or -h
+ncd -v                    # Version info
 ```
 
 ### Interactive Selection UI
@@ -952,7 +952,7 @@ Filter matching:
 
 ### History Browser
 
-The interactive history browser (`ncd /h`) shows recently visited directories:
+The interactive history browser (`ncd -h`) shows recently visited directories:
 
 - **Arrow keys** - Navigate
 - **Delete** - Remove entry from history
@@ -1054,7 +1054,7 @@ ncd_service start -conf /opt/ncd/config/ncd.metadata
 
 **Behavior:**
 - When `-conf` is specified, all metadata operations (config, groups, exclusions, heuristics, history) use the specified file
-- Per-drive database files are still loaded from their default locations or the location specified by `/d <path>`
+- Per-drive database files are still loaded from their default locations or the location specified by `-d:path`
 - The override applies to both NCD client and NCD Service when specified
 - If the file doesn't exist, it will be created with default settings
 
@@ -1088,14 +1088,14 @@ A child process cannot change the working directory of its parent shell (OS limi
 
 ### Auto-Rescan Configuration
 
-The auto-rescan interval is now configurable. Use `ncd /c` to edit the configuration and set:
+The auto-rescan interval is now configurable. Use `ncd -c` to edit the configuration and set:
 
 - **Auto-rescan hours**: Number of hours (1-168) before automatically triggering a background rescan
 - **Never** (-1): Disable auto-rescan entirely
 
 The default is -1 (never auto-rescan). When set to a positive value and the database is older than the configured interval, NCD will automatically spawn a background rescan after a successful navigation.
 
-**⚠️ WARNING:** The background rescan uses `ncd /r` which scans **ALL drives/mounts**. If you don't want this behavior, set `rescan_interval_hours=-1` or be aware that using `ncd` manually (outside of test mode) may trigger full system scans.
+**⚠️ WARNING:** The background rescan uses `ncd -r` which scans **ALL drives/mounts**. If you don't want this behavior, set `rescan_interval_hours=-1` or be aware that using `ncd` manually (outside of test mode) may trigger full system scans.
 
 ### Why two UI modes?
 
@@ -1179,7 +1179,7 @@ ncd_service stop
 ncd_service start
 
 # 4. Verify version
-ncd /v
+ncd -v
 ```
 
 **Downgrading (if needed):**
@@ -1291,7 +1291,7 @@ fi
 
 ### Service-Side Rescan
 
-When the NCD service is running, `/r` (rescan) requests are handled by the service rather than the client. This provides several benefits:
+When the NCD service is running, `-r` (rescan) requests are handled by the service rather than the client. This provides several benefits:
 
 - **Non-blocking operation**: The service continues serving queries from the old snapshot while building a new database
 - **Atomic updates**: The new database is published atomically once scanning completes
@@ -1564,13 +1564,13 @@ NCD includes an "agent mode" API for LLM integration:
 
 ```bash
 # Query the database
-ncd /agent query downloads --json --limit 10
+ncd --agent:query downloads --json --limit 10
 
 # List directory contents (live filesystem)
-ncd /agent ls /home/user --depth 2 --json
+ncd --agent:ls /home/user --depth 2 --json
 
 # Show directory tree from database
-ncd /agent tree /home/user --depth 3 --json
+ncd --agent:tree /home/user --depth 3 --json
 ```
 
 ### Agent Tree Output Formats
@@ -1580,7 +1580,7 @@ The `/agent tree` command supports multiple output formats:
 **1. Indented Tree Format (default)**
 Displays directories as an indented tree with 2 spaces per level:
 ```bash
-$ ncd /agent tree /home/user --depth 2
+$ ncd --agent:tree /home/user --depth 2
 docs
   architecture
   history
@@ -1589,7 +1589,7 @@ docs
 **2. Flat Format with Full Paths (`--flat`)**
 Displays directories as relative paths with platform-specific separators:
 ```bash
-$ ncd /agent tree /home/user --depth 2 --flat
+$ ncd --agent:tree /home/user --depth 2 --flat
 docs/architecture
 docs/history
 ```
@@ -1597,7 +1597,7 @@ docs/history
 **3. JSON Format (`--json`)**
 Returns structured JSON with name and depth fields:
 ```bash
-$ ncd /agent tree /home/user --depth 2 --json
+$ ncd --agent:tree /home/user --depth 2 --json
 {"v":1,"tree":[
   {"n":"docs","d":0},
   {"n":"architecture","d":1},
@@ -1608,7 +1608,7 @@ $ ncd /agent tree /home/user --depth 2 --json
 **4. JSON Flat Format (`--json --flat`)**
 Combines JSON structure with full relative paths:
 ```bash
-$ ncd /agent tree /home/user --depth 2 --json --flat
+$ ncd --agent:tree /home/user --depth 2 --json --flat
 {"v":1,"tree":[
   {"n":"docs/architecture","d":1},
   {"n":"docs/history","d":1}
@@ -1626,26 +1626,26 @@ $ ncd /agent tree /home/user --depth 2 --json --flat
 - `1` - Path not found in database or error
 
 # Check if path exists in database
-ncd /agent check /home/user/projects
+ncd --agent:check /home/user/projects
 
 # Get database age
-ncd /agent check --db-age
+ncd --agent:check --db-age
 
 # Get database statistics
-ncd /agent check --stats
+ncd --agent:check --stats
 
 # Check service status (returns: READY, STARTING, or NOT_RUNNING)
-ncd /agent check --service-status
+ncd --agent:check --service-status
 
 # Shell tab-completion candidates
-ncd /agent complete dow --limit 20
+ncd --agent:complete dow --limit 20
 
 # Create directory (creates parent directories as needed)
-ncd /agent mkdir /home/user/new/project
+ncd --agent:mkdir /home/user/new/project
 
 # Create directory tree from JSON or flat file format
-ncd /agent mkdirs --file tree.txt
-ncd /agent mkdirs '[{"name":"project","children":[{"name":"src"}]}]' --json
+ncd --agent:mkdirs --file tree.txt
+ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src"}]}]' --json
 ```
 
 ### Agent Mkdirs Input Formats
@@ -1663,7 +1663,7 @@ project
   docs
   tests
 
-$ ncd /agent mkdirs --file tree.txt
+$ ncd --agent:mkdirs --file tree.txt
 Creating directory tree...
 
 project: Directory created
@@ -1681,18 +1681,18 @@ Supports two JSON structures:
 
 *Simple string array:*
 ```bash
-$ ncd /agent mkdirs '["dir1", "dir2", "dir3"]'
+$ ncd --agent:mkdirs '["dir1", "dir2", "dir3"]'
 ```
 
 *Object tree with children:*
 ```bash
-$ ncd /agent mkdirs '[{"name":"project","children":[{"name":"src","children":[{"name":"core"}]}]}]'
+$ ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src","children":[{"name":"core"}]}]}]'
 ```
 
 **3. JSON Output Format (`--json`)**
 Returns structured JSON with per-directory results:
 ```bash
-$ ncd /agent mkdirs --file tree.txt --json
+$ ncd --agent:mkdirs --file tree.txt --json
 {"v":1,"dirs":[
   {"path":"project","result":"created","message":"Directory created"},
   {"path":"project\\src","result":"created","message":"Directory created"}
@@ -1735,9 +1735,9 @@ export NCD_TEST_MODE=1
 ncd some_search
 ```
 
-**Note:** When running NCD manually (not through tests), the auto-rescan feature may trigger a full system scan (`ncd /r`) if the database is older than the configured interval (default: -1/disabled). To enable auto-rescan, use `ncd /c rescan_interval_hours=24`. To ensure it stays disabled, either:
+**Note:** When running NCD manually (not through tests), the auto-rescan feature may trigger a full system scan (`ncd -r`) if the database is older than the configured interval (default: -1/disabled). To enable auto-rescan, use `ncd -c rescan_interval_hours=24`. To ensure it stays disabled, either:
 - Set `NCD_TEST_MODE=1` before running NCD
-- Use `ncd /c rescan_interval_hours=-1` to disable auto-rescan permanently
+- Use `ncd -c rescan_interval_hours=-1` to disable auto-rescan permanently
 
 ## Known Limitations
 

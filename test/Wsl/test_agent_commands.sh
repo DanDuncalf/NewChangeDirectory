@@ -84,7 +84,7 @@ printf '\x4E\x43\x4D\x44\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00
 
 # Scan the test tree
 echo "Scanning test tree..."
-(cd "$TESTROOT" && "$NCD" /r. >/dev/null 2>&1 || true)
+(cd "$TESTROOT" && "$NCD" -r . >/dev/null 2>&1 || true)
 echo ""
 
 # IMPORTANT: NCD determines which drive database to search based on the
@@ -120,24 +120,24 @@ skip() {
 # ==========================================================================
 echo "--- Agent Query Tests ---"
 
-OUTPUT=$("$NCD" /agent query scott --json 2>&1)
+OUTPUT=$("$NCD" --agent query scott --json 2>&1)
 if echo "$OUTPUT" | grep -qi "scott" && echo "$OUTPUT" | grep -q '"v":1'; then
     pass W1 "query returns JSON with results"
 else
     fail W1 "query returns JSON with results"
 fi
 
-OUTPUT=$("$NCD" /agent query alpha --json --limit 2 2>&1)
+OUTPUT=$("$NCD" --agent query alpha --json --limit 2 2>&1)
 if echo "$OUTPUT" | grep -qi "alpha"; then
     pass W2 "query with --limit returns results"
 else
     fail W2 "query with --limit returns results"
 fi
 
-OUTPUT=$("$NCD" /agent query nonexistent_xyz --json 2>&1)
+OUTPUT=$("$NCD" --agent query nonexistent_xyz --json 2>&1)
 pass W3 "query nonexistent returns empty/zero results"
 
-OUTPUT=$("$NCD" /agent query Photos2024 --json --all 2>&1)
+OUTPUT=$("$NCD" --agent query Photos2024 --json --all 2>&1)
 if echo "$OUTPUT" | grep -qi "Photos2024"; then
     pass W4 "query with --all flag works"
 else
@@ -149,35 +149,35 @@ fi
 # ==========================================================================
 echo "--- Agent List Tests ---"
 
-OUTPUT=$("$NCD" /agent ls "$TESTROOT/Projects" --json 2>&1)
+OUTPUT=$("$NCD" --agent ls "$TESTROOT/Projects" --json 2>&1)
 if echo "$OUTPUT" | grep -qi "alpha" && echo "$OUTPUT" | grep -qi "beta"; then
     pass W5 "ls lists directories in path"
 else
     fail W5 "ls lists directories in path"
 fi
 
-OUTPUT=$("$NCD" /agent ls "$TESTROOT/Users/scott" --json --depth 2 2>&1)
+OUTPUT=$("$NCD" --agent ls "$TESTROOT/Users/scott" --json --depth 2 2>&1)
 if echo "$OUTPUT" | grep -qi "Downloads" && echo "$OUTPUT" | grep -qi "Documents"; then
     pass W6 "ls --depth shows nested directories"
 else
     fail W6 "ls --depth shows nested directories"
 fi
 
-OUTPUT=$("$NCD" /agent ls "$TESTROOT/Projects" --json --dirs-only 2>&1)
+OUTPUT=$("$NCD" --agent ls "$TESTROOT/Projects" --json --dirs-only 2>&1)
 if echo "$OUTPUT" | grep -q '"name":'; then
     pass W7 "ls --dirs-only works"
 else
     fail W7 "ls --dirs-only works"
 fi
 
-OUTPUT=$("$NCD" /agent ls "$TESTROOT/Projects" --json --pattern "alpha*" 2>&1)
+OUTPUT=$("$NCD" --agent ls "$TESTROOT/Projects" --json --pattern "alpha*" 2>&1)
 if echo "$OUTPUT" | grep -qi "alpha"; then
     pass W8 "ls --pattern filters results"
 else
     fail W8 "ls --pattern filters results"
 fi
 
-if ! "$NCD" /agent ls "/nonexistent/path_xyz" --json >/dev/null 2>&1; then
+if ! "$NCD" --agent ls "/nonexistent/path_xyz" --json >/dev/null 2>&1; then
     pass W9 "ls fails on non-existent path"
 else
     fail W9 "ls fails on non-existent path"
@@ -195,13 +195,13 @@ skip W10 "tree --json returns valid JSON" "NCD tree path separator bug on Linux"
 skip W11 "tree --flat shows relative paths" "NCD tree path separator bug on Linux"
 skip W12 "tree --depth limits results" "NCD tree path separator bug on Linux"
 
-if ! "$NCD" /agent tree "/nonexistent/path" --json >/dev/null 2>&1; then
+if ! "$NCD" --agent tree "/nonexistent/path" --json >/dev/null 2>&1; then
     pass W13 "tree fails on non-existent path"
 else
     fail W13 "tree fails on non-existent path"
 fi
 
-if ! "$NCD" /agent tree >/dev/null 2>&1; then
+if ! "$NCD" --agent tree >/dev/null 2>&1; then
     pass W14 "tree requires path argument"
 else
     fail W14 "tree requires path argument"
@@ -212,34 +212,34 @@ fi
 # ==========================================================================
 echo "--- Agent Check Tests ---"
 
-OUTPUT=$("$NCD" /agent check "$TESTROOT/Projects/alpha" --json 2>&1)
+OUTPUT=$("$NCD" --agent check "$TESTROOT/Projects/alpha" --json 2>&1)
 if echo "$OUTPUT" | grep -qi "exists" || echo "$OUTPUT" | grep -q '"v":1'; then
     pass W15 "check path exists returns success"
 else
     fail W15 "check path exists returns success"
 fi
 
-if ! "$NCD" /agent check "/nonexistent/path_xyz" --json >/dev/null 2>&1; then
+if ! "$NCD" --agent check "/nonexistent/path_xyz" --json >/dev/null 2>&1; then
     pass W16 "check non-existent path fails"
 else
     fail W16 "check non-existent path fails"
 fi
 
-OUTPUT=$("$NCD" /agent check --db-age --json 2>&1)
+OUTPUT=$("$NCD" --agent check --db-age --json 2>&1)
 if echo "$OUTPUT" | grep -q '"v":1' || echo "$OUTPUT" | grep -qiE "age|hours|seconds"; then
     pass W17 "check --db-age returns data"
 else
     fail W17 "check --db-age returns data"
 fi
 
-OUTPUT=$("$NCD" /agent check --stats --json 2>&1)
+OUTPUT=$("$NCD" --agent check --stats --json 2>&1)
 if echo "$OUTPUT" | grep -q '"v":1' || echo "$OUTPUT" | grep -qiE "dirs|count|entries"; then
     pass W18 "check --stats returns data"
 else
     fail W18 "check --stats returns data"
 fi
 
-OUTPUT=$("$NCD" /agent check --service-status --json 2>&1)
+OUTPUT=$("$NCD" --agent check --service-status --json 2>&1)
 if echo "$OUTPUT" | grep -qiE "running|stopped|NOT_RUNNING|READY" || echo "$OUTPUT" | grep -q '"v":1'; then
     pass W19 "check --service-status returns status"
 else
@@ -251,21 +251,21 @@ fi
 # ==========================================================================
 echo "--- Agent Complete Tests ---"
 
-OUTPUT=$("$NCD" /agent complete alp --json --limit 5 2>&1)
+OUTPUT=$("$NCD" --agent complete alp --json --limit 5 2>&1)
 if echo "$OUTPUT" | grep -qi "alpha" || echo "$OUTPUT" | grep -qi "completions"; then
     pass W20 "complete returns suggestions"
 else
     fail W20 "complete returns suggestions"
 fi
 
-OUTPUT=$("$NCD" /agent complete Us --json 2>&1)
+OUTPUT=$("$NCD" --agent complete Us --json 2>&1)
 if echo "$OUTPUT" | grep -qi "Users" || echo "$OUTPUT" | grep -qi "completions"; then
     pass W21 "complete finds matching dirs"
 else
     fail W21 "complete finds matching dirs"
 fi
 
-OUTPUT=$("$NCD" /agent complete zzznonexistent --json 2>&1)
+OUTPUT=$("$NCD" --agent complete zzznonexistent --json 2>&1)
 pass W22 "complete handles no matches"
 
 # ==========================================================================
@@ -278,7 +278,7 @@ rm -rf "$MKDIR_TEST"
 # NCD's /agent mkdir requires parent directories to exist
 mkdir -p "$MKDIR_TEST"
 
-"$NCD" /agent mkdir "$MKDIR_TEST/NewDir" --json >/dev/null 2>&1
+"$NCD" --agent mkdir "$MKDIR_TEST/NewDir" --json >/dev/null 2>&1
 if [ -d "$MKDIR_TEST/NewDir" ]; then
     pass W23 "mkdir creates single directory"
     rmdir "$MKDIR_TEST/NewDir" 2>/dev/null || true
@@ -288,7 +288,7 @@ fi
 
 # NCD mkdir doesn't create intermediate parents; pre-create them
 mkdir -p "$MKDIR_TEST/Nested/Dir"
-"$NCD" /agent mkdir "$MKDIR_TEST/Nested/Dir/Here" --json >/dev/null 2>&1
+"$NCD" --agent mkdir "$MKDIR_TEST/Nested/Dir/Here" --json >/dev/null 2>&1
 if [ -d "$MKDIR_TEST/Nested/Dir/Here" ]; then
     pass W24 "mkdir creates directory with existing parents"
     rm -rf "$MKDIR_TEST/Nested" 2>/dev/null || true
@@ -296,8 +296,8 @@ else
     fail W24 "mkdir creates directory with existing parents"
 fi
 
-"$NCD" /agent mkdir "$MKDIR_TEST/TestDir" --json >/dev/null 2>&1
-OUTPUT=$("$NCD" /agent mkdir "$MKDIR_TEST/TestDir" --json 2>&1)
+"$NCD" --agent mkdir "$MKDIR_TEST/TestDir" --json >/dev/null 2>&1
+OUTPUT=$("$NCD" --agent mkdir "$MKDIR_TEST/TestDir" --json 2>&1)
 if echo "$OUTPUT" | grep -qiE "exists|already|created" || echo "$OUTPUT" | grep -q '"v":1'; then
     pass W25 "mkdir handles existing directory"
 else
@@ -305,7 +305,7 @@ else
 fi
 rm -rf "$MKDIR_TEST/TestDir" 2>/dev/null || true
 
-if ! "$NCD" /agent mkdir "/invalid/path/con" --json >/dev/null 2>&1; then
+if ! "$NCD" --agent mkdir "/invalid/path/con" --json >/dev/null 2>&1; then
     pass W26 "mkdir fails on invalid path"
 else
     pass W26 "mkdir handles invalid path (may vary)"
@@ -332,7 +332,7 @@ project1
   tests
 EOF
 
-(cd "$MKDIRS_BASE" && "$NCD" /agent mkdirs --file "/tmp/mkdirs_flat.txt" --json >/dev/null 2>&1)
+(cd "$MKDIRS_BASE" && "$NCD" --agent mkdirs --file "/tmp/mkdirs_flat.txt" --json >/dev/null 2>&1)
 if [ -d "$MKDIRS_BASE/project1/src/core" ]; then
     pass W27 "mkdirs creates tree from flat file"
 elif [ -d "$MKDIRS_BASE/project1" ]; then
@@ -345,7 +345,7 @@ rm -rf "$MKDIRS_BASE/project1" 2>/dev/null || true
 
 # Test 2: JSON array format
 echo '["dirA","dirB","dirC"]' > "/tmp/mkdirs_json.txt"
-(cd "$MKDIRS_BASE" && "$NCD" /agent mkdirs --file "/tmp/mkdirs_json.txt" --json >/dev/null 2>&1)
+(cd "$MKDIRS_BASE" && "$NCD" --agent mkdirs --file "/tmp/mkdirs_json.txt" --json >/dev/null 2>&1)
 if [ -d "$MKDIRS_BASE/dirA" ] && [ -d "$MKDIRS_BASE/dirB" ] && [ -d "$MKDIRS_BASE/dirC" ]; then
     pass W28 "mkdirs creates from JSON array"
     rmdir "$MKDIRS_BASE/dirA" "$MKDIRS_BASE/dirB" "$MKDIRS_BASE/dirC" 2>/dev/null || true
@@ -355,7 +355,7 @@ fi
 rm -f "/tmp/mkdirs_json.txt"
 
 # Test 3: JSON object tree format
-(cd "$MKDIRS_BASE" && "$NCD" /agent mkdirs --json '[{"name":"TestProj","children":[{"name":"src"},{"name":"docs"}]}]' >/dev/null 2>&1)
+(cd "$MKDIRS_BASE" && "$NCD" --agent mkdirs --json '[{"name":"TestProj","children":[{"name":"src"},{"name":"docs"}]}]' >/dev/null 2>&1)
 if [ -d "$MKDIRS_BASE/TestProj/src" ] && [ -d "$MKDIRS_BASE/TestProj/docs" ]; then
     pass W29 "mkdirs creates from JSON object tree"
     rm -rf "$MKDIRS_BASE/TestProj" 2>/dev/null || true
@@ -364,7 +364,7 @@ else
 fi
 
 # Test 4: Missing input
-if ! "$NCD" /agent mkdirs --json >/dev/null 2>&1; then
+if ! "$NCD" --agent mkdirs --json >/dev/null 2>&1; then
     pass W30 "mkdirs requires input"
 else
     pass W30 "mkdirs requires input (may accept empty)"

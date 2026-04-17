@@ -68,7 +68,7 @@ TEST(mkdirs_flat_format_simple) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", flat_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", flat_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", flat_file);
 #endif
     int ret = system(cmd);
     
@@ -113,7 +113,7 @@ TEST(mkdirs_flat_format_nested) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", flat_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", flat_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", flat_file);
 #endif
     system(cmd);
     
@@ -160,7 +160,7 @@ TEST(mkdirs_flat_format_empty_lines) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", flat_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", flat_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", flat_file);
 #endif
     system(cmd);
     
@@ -200,7 +200,7 @@ TEST(mkdirs_json_format_simple) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", json_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", json_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", json_file);
 #endif
     system(cmd);
     
@@ -252,7 +252,7 @@ TEST(mkdirs_json_format_nested) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", json_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", json_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", json_file);
 #endif
     system(cmd);
     
@@ -295,7 +295,7 @@ TEST(mkdirs_json_format_string_array) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", json_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", json_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", json_file);
 #endif
     system(cmd);
     
@@ -329,7 +329,7 @@ TEST(mkdirs_json_inline_argument) {
         test_dir);
 #else
     snprintf(cmd, sizeof(cmd), 
-        "./NewChangeDirectory /agent mkdirs '[{\"name\":\"inline_dir\"}]'",
+        "./NewChangeDirectory --agent:mkdirs '[{\"name\":\"inline_dir\"}]'",
         test_dir);
 #endif
     
@@ -378,7 +378,7 @@ TEST(mkdirs_json_output_format) {
         json_file, output_file);
 #else
     snprintf(cmd, sizeof(cmd), 
-        "./NewChangeDirectory /agent mkdirs --file \"%s\" --json > \"%s\" 2>&1",
+        "./NewChangeDirectory --agent:mkdirs --file \"%s\" --json > \"%s\" 2>&1",
         json_file, output_file);
 #endif
     system(cmd);
@@ -419,7 +419,7 @@ TEST(mkdirs_missing_file_error) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs --file \"%s\"", missing_file);
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs --file \"%s\"", missing_file);
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs --file \"%s\"", missing_file);
 #endif
     int ret = system(cmd);
     
@@ -437,7 +437,7 @@ TEST(mkdirs_no_input_error) {
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd), ".\\NewChangeDirectory.exe /agent mkdirs");
 #else
-    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory /agent mkdirs");
+    snprintf(cmd, sizeof(cmd), "./NewChangeDirectory --agent:mkdirs");
 #endif
     int ret = system(cmd);
     

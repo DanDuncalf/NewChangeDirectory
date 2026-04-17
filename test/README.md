@@ -444,7 +444,7 @@ call :test_ncd_finds X1 "New feature works" "expected_path" search_term
 call :test_exit_fail X2 "Invalid input rejected" /invalid-flag
 
 :: X3: Output format
-call :test_output_has X3 "Output has JSON" '"status":' /agent check --json
+call :test_output_has X3 "Output has JSON" '"status":' --agent:check --json
 ```
 
 4. **Run the test:**
@@ -504,7 +504,7 @@ Invoke-NcdTest -TestName "My New Test" -TestScript {
 ### Test Isolation Requirements
 
 **MUST DO:**
-- ✅ Use `/r.` (subdirectory rescan) not `/r` (full scan)
+- ✅ Use `-r:.` (subdirectory rescan) not `-r` (full scan)
 - ✅ Set `NCD_TEST_MODE=1` before running tests
 - ✅ Redirect LOCALAPPDATA to temp location
 - ✅ Clean up temp files after tests
@@ -514,7 +514,7 @@ Invoke-NcdTest -TestName "My New Test" -TestScript {
 - ❌ Scan user drives (C:, D:, etc.)
 - ❌ Modify user metadata files
 - ❌ Leave test files in system directories
-- ❌ Run bare `/r` without path restrictions
+- ❌ Run bare `-r` without path restrictions
 
 ---
 
@@ -601,7 +601,7 @@ Run-Tests-Safe.bat --check
 Run-Tests-Safe.bat --repair
 
 :: Then rescan your real drives
-ncd /r
+ncd -r
 ```
 
 ### Tests hang or timeout

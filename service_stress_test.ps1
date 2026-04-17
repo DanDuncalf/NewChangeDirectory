@@ -55,12 +55,12 @@ function Test-ServiceCycle {
     $startTime = Get-Date
     $proc = Start-Process -FilePath ".\NCDService.exe" -ArgumentList "start","-log2" -PassThru -WindowStyle Hidden
     
-    # Wait for service to be ready (check via ncd /agent check)
+    # Wait for service to be ready (check via ncd --agent:check)
     $ready = $false
     $waitCount = 0
     while (-not $ready -and $waitCount -lt 20) {
         Start-Sleep -Milliseconds 100
-        $check = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+        $check = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
         if ($check -match "READY|STARTING") {
             $ready = $true
         }
@@ -79,12 +79,12 @@ function Test-ServiceCycle {
     
     # Run various NCD commands (non-TUI)
     $commands = @(
-        @("/agent", "check", "--service-status"),
-        @("/hl"),
-        @("/agent", "tree", ".", "--depth", "2"),
-        @("/agent", "check", "--stats"),
-        @("/fl"),  # frequent list
-        @("/gl")   # group list
+        @("--agent:check", "--service-status"),
+        @("-h:l"),
+        @("--agent:tree", ".", "--depth", "2"),
+        @("--agent:check", "--stats"),
+        @("-f:l"),  # frequent list
+        @("-g:l")   # group list
     )
     
     foreach ($cmd in $commands) {

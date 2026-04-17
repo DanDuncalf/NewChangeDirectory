@@ -1,0 +1,84 @@
+
+========================================
+NCD Client Tests - WSL (Standalone)
+========================================
+NCD: /mnt/e/llama/NewChangeDirectory/NewChangeDirectory
+Test Data: /tmp/ncd_ncd_test_433
+Test Root: /tmp/ncd_test_tree_433
+
+Ensuring service is NOT running...
+[INFO] Stopping any existing service processes...
+test/test_ncd_wsl_standalone.sh: line 180:   464 Killed                  "$PROJECT_ROOT/ncd_service" stop > /dev/null 2>&1
+[INFO] Confirmed: No service processes running.
+Setting up test environment...
+Verifying standalone mode...
+  Service status: NCD: unknown option: --service-status
+NCD: Invalid command line.  Run 'ncd -?' for help.
+
+  Created test directory tree
+Performing initial scan of test tree...
+  Scan complete.
+
+
+========================================
+Test Suite: Standalone Mode Operations
+========================================
+[TEST 1] Service is NOT running
+  [PASS] Service is NOT running
+[TEST 2] Help with -h
+  [PASS] Help with -h
+[TEST 3] Version with -v
+  [PASS] Version with -v
+[TEST 4] Service status shows NOT_RUNNING
+  [FAIL] Service status shows NOT_RUNNING
+        Reason: output: NCD: unknown option: --service-status
+NCD: Invalid command line.  Run 'ncd -?' for help.
+[TEST 5] Basic search finds directory
+  [FAIL] Basic search finds directory
+        Reason: output: NCD: unknown option: --limit
+NCD: Invalid command line.  Run 'ncd -?' for help.
+[TEST 6] Multi-component search
+  [FAIL] Multi-component search
+        Reason: output: NCD: unknown option: --limit
+NCD: Invalid command line.  Run 'ncd -?' for help.
+[TEST 7] Agent query command
+  [PASS] Agent query command
+[TEST 8] Agent check database age
+  [FAIL] Agent check database age
+        Reason: exit code 1
+[TEST 9] Agent check stats
+  [FAIL] Agent check stats
+        Reason: exit code 1
+[TEST 10] Rescan creates database
+  [FAIL] Rescan creates database
+        Reason: no database file found
+[TEST 11] Search after rescan
+  [FAIL] Search after rescan
+        Reason: output: NCD: unknown option: --limit
+NCD: Invalid command line.  Run 'ncd -?' for help.
+[TEST 12] No match returns error
+  [PASS] No match returns error
+[TEST 13] Database override -d
+  [FAIL] Database override -d
+        Reason: custom database not created
+[TEST 14] Agent ls command
+  [FAIL] Agent ls command
+        Reason: exit code 1
+[TEST 15] Standalone mode persists without service
+  [FAIL] Standalone mode persists without service
+        Reason: output: NCD: unknown option: --limit
+NCD: Invalid command line.  Run 'ncd -?' for help.
+
+========================================
+Test Summary
+========================================
+  Total:   15
+  Passed:  5
+  Failed:  10
+
+RESULT: FAILED
+
+========================================
+Cleanup
+========================================
+  Cleaned up test data

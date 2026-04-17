@@ -61,7 +61,7 @@ function Start-ServiceWithLog {
         }
         
         # Check service status via ncd
-        $check = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+        $check = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
         if ($check -match "READY") {
             $status = "READY"
             break
@@ -146,7 +146,7 @@ foreach ($delay in $delays) {
     if ($result.Status -eq "READY") {
         # Run a command
         Write-Host "`n  Running test command..." -ForegroundColor Gray
-        $cmdResult = & .\NewChangeDirectory.exe "/agent" "check" "--stats" 2>&1
+        $cmdResult = & .\NewChangeDirectory.exe "--agent:check" "--stats" 2>&1
         Write-Host "  Command result: $cmdResult" -ForegroundColor Gray
         
         # Stop

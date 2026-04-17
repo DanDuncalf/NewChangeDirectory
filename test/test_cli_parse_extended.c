@@ -28,7 +28,7 @@ TEST(history_pingpong_flag) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/0"};
+    const char *argv[] = {"ncd", "-0"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -41,11 +41,11 @@ TEST(history_index_1_to_9) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Test /1 through /9 */
+    /* Test -1 through -9 */
     for (int i = 1; i <= 9; i++) {
         init_options(&opts);
         char arg[4];
-        snprintf(arg, sizeof(arg), "/%d", i);
+        snprintf(arg, sizeof(arg), "-%d", i);
         const char *argv[] = {"ncd", arg};
         bool result = parse_args_wrapper(2, argv, &opts);
         
@@ -60,7 +60,7 @@ TEST(history_list_flag) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/hl"};
+    const char *argv[] = {"ncd", "-h:l"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -73,7 +73,7 @@ TEST(history_clear_flag) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/hc"};
+    const char *argv[] = {"ncd", "-h:c"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -86,11 +86,11 @@ TEST(cli_parse_history_remove_by_index) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Test /hc1 through /hc9 */
+    /* Test -h:c1 through -h:c9 */
     for (int i = 1; i <= 9; i++) {
         init_options(&opts);
-        char arg[5];
-        snprintf(arg, sizeof(arg), "/hc%d", i);
+        char arg[6];
+        snprintf(arg, sizeof(arg), "-h:c%d", i);
         const char *argv[] = {"ncd", arg};
         bool result = parse_args_wrapper(2, argv, &opts);
         
@@ -105,8 +105,8 @@ TEST(history_remove_invalid_index_rejected) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* /hc0 should fail (0 is not valid) */
-    const char *argv[] = {"ncd", "/hc0"};
+    /* -h:c0 should fail (0 is not valid) */
+    const char *argv[] = {"ncd", "-h:c0"};
     bool result = parse_args_wrapper(2, argv, &opts);
     ASSERT_FALSE(result);
     
@@ -119,8 +119,8 @@ TEST(group_set_requires_at_name) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/g", "@home"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-g:@home"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.group_set);
@@ -133,8 +133,8 @@ TEST(group_set_rejects_without_at) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/g", "home"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-g:home"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     /* Should fail because name doesn't start with @ */
     ASSERT_FALSE(result);
@@ -146,8 +146,8 @@ TEST(group_remove_requires_at_name) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/g-", "@work"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-G:@work"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.group_remove);
@@ -160,8 +160,8 @@ TEST(group_list_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Test -gl variant */
-    const char *argv[] = {"ncd", "-gl"};
+    /* Test -g:l variant */
+    const char *argv[] = {"ncd", "-g:l"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -174,8 +174,8 @@ TEST(group_list_uppercase) {
     NcdOptions opts;
     init_options(&opts);
     
-    /* Test /gL variant */
-    const char *argv[] = {"ncd", "/gL"};
+    /* Test -g:L variant */
+    const char *argv[] = {"ncd", "-g:L"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -190,8 +190,8 @@ TEST(exclusion_add_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-x", "*/node_modules"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-x:*/node_modules"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.exclusion_add);
@@ -204,8 +204,8 @@ TEST(exclusion_remove_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-x-", "*/node_modules"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-X:*/node_modules"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.exclusion_remove);
@@ -218,7 +218,7 @@ TEST(exclusion_list_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-xl"};
+    const char *argv[] = {"ncd", "-x:l"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -231,8 +231,8 @@ TEST(exclusion_add_slash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/x", "C:\\Windows"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "/x:C:\\Windows"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.exclusion_add);
@@ -247,7 +247,7 @@ TEST(timeout_with_no_space) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/t30"};
+    const char *argv[] = {"ncd", "-t:30"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -260,8 +260,8 @@ TEST(timeout_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-t", "60"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "-t:60"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_EQ_INT(60, opts.timeout_seconds);
@@ -275,8 +275,8 @@ TEST(retry_count_parsing) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/retry", "5"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "--retry:5"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.service_retry_set);
@@ -289,8 +289,8 @@ TEST(retry_count_dash_variant) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-retry", "3"};
-    bool result = parse_args_wrapper(3, argv, &opts);
+    const char *argv[] = {"ncd", "--retry:3"};
+    bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.service_retry_set);
@@ -305,7 +305,7 @@ TEST(separate_flags_i_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/i", "/z"};
+    const char *argv[] = {"ncd", "-i", "-z"};
     bool result = parse_args_wrapper(3, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -319,7 +319,7 @@ TEST(separate_flags_s_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/s", "/z"};
+    const char *argv[] = {"ncd", "-s", "-z"};
     bool result = parse_args_wrapper(3, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -333,7 +333,7 @@ TEST(separate_flags_i_s_z) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/i", "/s", "/z"};
+    const char *argv[] = {"ncd", "-i", "-s", "-z"};
     bool result = parse_args_wrapper(4, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -348,7 +348,7 @@ TEST(separate_flags_i_s_z_v) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/i", "/s", "/z", "/v"};
+    const char *argv[] = {"ncd", "-i", "-s", "-z", "-v"};
     bool result = parse_args_wrapper(5, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -356,6 +356,21 @@ TEST(separate_flags_i_s_z_v) {
     ASSERT_TRUE(opts.show_system);
     ASSERT_TRUE(opts.fuzzy_match);
     ASSERT_TRUE(opts.show_version);
+    
+    return 0;
+}
+
+TEST(bundled_flags_riz_sets_all_three) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-riz"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.show_hidden);
+    ASSERT_TRUE(opts.fuzzy_match);
     
     return 0;
 }
@@ -407,7 +422,7 @@ TEST(agent_mode_without_subcommand_rejected) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent"};
+    const char *argv[] = {"ncd", "--agent"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_FALSE(result);
@@ -419,8 +434,8 @@ TEST(agent_complete_with_limit) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "complete", "down", "--limit", "10"};
-    bool result = parse_args_wrapper(6, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:complete", "down", "--limit", "10"};
+    bool result = parse_args_wrapper(5, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -435,8 +450,8 @@ TEST(agent_mkdir_with_path) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "mkdir", "C:\\temp\\newdir"};
-    bool result = parse_args_wrapper(4, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:mkdir", "C:\\temp\\newdir"};
+    bool result = parse_args_wrapper(3, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -450,8 +465,8 @@ TEST(agent_mkdirs_with_file) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "mkdirs", "--file", "tree.txt"};
-    bool result = parse_args_wrapper(5, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:mkdirs", "--file", "tree.txt"};
+    bool result = parse_args_wrapper(4, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -465,8 +480,8 @@ TEST(agent_check_all_flags) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "check", "--db-age", "--stats", "--service-status", "--json"};
-    bool result = parse_args_wrapper(7, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:check", "--db-age", "--stats", "--service-status", "--json"};
+    bool result = parse_args_wrapper(6, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -483,8 +498,8 @@ TEST(agent_tree_with_flat_and_depth) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "tree", "C:\\temp", "--flat", "--depth", "5"};
-    bool result = parse_args_wrapper(7, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:tree", "C:\\temp", "--flat", "--depth", "5"};
+    bool result = parse_args_wrapper(6, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -499,8 +514,8 @@ TEST(agent_ls_with_dirs_only) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "ls", "C:\\temp", "--dirs-only"};
-    bool result = parse_args_wrapper(5, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:ls", "C:\\temp", "--dirs-only"};
+    bool result = parse_args_wrapper(4, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -514,13 +529,74 @@ TEST(agent_ls_with_files_only) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "/agent", "ls", "C:\\temp", "--files-only"};
-    bool result = parse_args_wrapper(5, argv, &opts);
+    const char *argv[] = {"ncd", "--agent:ls", "C:\\temp", "--files-only"};
+    bool result = parse_args_wrapper(4, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
     ASSERT_EQ_INT(AGENT_SUB_LS, opts.agent_subcommand);
     ASSERT_TRUE(opts.agent_files_only);
+    
+    return 0;
+}
+
+TEST(conf_flag_sets_conf_override) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-conf:C:\\custom.metadata"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(strlen(opts.conf_override) > 0);
+    ASSERT_EQ_STR("C:\\custom.metadata", opts.conf_override);
+    
+    return 0;
+}
+
+TEST(d_flag_sets_db_override) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-d:C:\\test.db"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(strlen(opts.db_override) > 0);
+    ASSERT_STR_CONTAINS(opts.db_override, "test.db");
+    
+    return 0;
+}
+
+TEST(rescan_specific_drive) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-r:cde"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    
+    return 0;
+}
+
+TEST(rescan_exclude_drives) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-r:-bc"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.skip_drive_mask['B' - 'A']);
+    ASSERT_TRUE(opts.skip_drive_mask['C' - 'A']);
+    ASSERT_EQ_INT(2, opts.skip_drive_count);
     
     return 0;
 }
@@ -560,6 +636,7 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(separate_flags_s_z);
     RUN_TEST(separate_flags_i_s_z);
     RUN_TEST(separate_flags_i_s_z_v);
+    RUN_TEST(bundled_flags_riz_sets_all_three);
     
     /* Edge cases */
     RUN_TEST(empty_string_arg_rejected);
@@ -573,6 +650,10 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(agent_tree_with_flat_and_depth);
     RUN_TEST(agent_ls_with_dirs_only);
     RUN_TEST(agent_ls_with_files_only);
+    RUN_TEST(conf_flag_sets_conf_override);
+    RUN_TEST(d_flag_sets_db_override);
+    RUN_TEST(rescan_specific_drive);
+    RUN_TEST(rescan_exclude_drives);
 }
 
 TEST_MAIN(

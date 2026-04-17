@@ -30,7 +30,7 @@ echo "Test 1: Config editor - cancel immediately"
 echo "  Keys: ESC"
 echo "  Expected: Config editor opens, then closes immediately"
 echo ""
-NCD_UI_KEYS="ESC" "$NCD" -conf "$CONFIG_FILE" /c || true
+NCD_UI_KEYS="ESC" "$NCD" -conf "$CONFIG_FILE" -c || true
 echo "  (Press Enter to continue)"
 read
 
@@ -39,7 +39,7 @@ echo "Test 2: Config editor - toggle hidden and save"
 echo "  Keys: SPACE (toggle), ENTER (save)"
 echo "  Expected: Hidden dirs option toggled on, config saved"
 echo ""
-NCD_UI_KEYS="SPACE,ENTER" "$NCD" -conf "$CONFIG_FILE" /c || true
+NCD_UI_KEYS="SPACE,ENTER" "$NCD" -conf "$CONFIG_FILE" -c || true
 echo ""
 
 # Verify config was created
@@ -58,7 +58,7 @@ echo "Test 3: Config editor - navigate and toggle multiple options"
 echo "  Keys: SPACE, DOWN, SPACE, DOWN, SPACE, ENTER"
 echo "  Expected: Toggle hidden, system, and fuzzy match, then save"
 echo ""
-NCD_UI_KEYS="SPACE,DOWN,SPACE,DOWN,SPACE,ENTER" "$NCD" -conf "$CONFIG_FILE" /c || true
+NCD_UI_KEYS="SPACE,DOWN,SPACE,DOWN,SPACE,ENTER" "$NCD" -conf "$CONFIG_FILE" -c || true
 echo "  (Press Enter to continue)"
 read
 
@@ -72,7 +72,7 @@ echo "DOWN,DOWN,SPACE,ENTER" > "$KEYS_FILE"
 echo "  Keys in file: $(cat "$KEYS_FILE")"
 echo "  Expected: Navigate to fuzzy match, toggle, save"
 echo ""
-NCD_UI_KEYS_FILE="$KEYS_FILE" "$NCD" -conf "$CONFIG_FILE" /c || true
+NCD_UI_KEYS_FILE="$KEYS_FILE" "$NCD" -conf "$CONFIG_FILE" -c || true
 echo ""
 
 echo "========================================"
@@ -82,13 +82,13 @@ echo ""
 echo "Summary of key injection methods:"
 echo ""
 echo "1. NCD_UI_KEYS - comma-separated key sequence"
-echo "   Example: NCD_UI_KEYS=\"SPACE,DOWN,ENTER\" ncd /c"
+echo "   Example: NCD_UI_KEYS=\"SPACE,DOWN,ENTER\" ncd -c"
 echo ""
 echo "2. NCD_UI_KEYS_FILE - file containing key sequence"
-echo "   Example: NCD_UI_KEYS_FILE=./keys.txt ncd /c"
+echo "   Example: NCD_UI_KEYS_FILE=./keys.txt ncd -c"
 echo ""
 echo "3. NCD_UI_KEYS_STRICT=1 - fail if keys run out (for testing)"
-echo "   Example: NCD_UI_KEYS=\"ESC\" NCD_UI_KEYS_STRICT=1 ncd /c"
+echo "   Example: NCD_UI_KEYS=\"ESC\" NCD_UI_KEYS_STRICT=1 ncd -c"
 echo ""
 echo "Available keys:"
 echo "  - Navigation: UP, DOWN, LEFT, RIGHT, HOME, END, PGUP, PGDN"

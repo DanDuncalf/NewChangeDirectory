@@ -18,7 +18,7 @@ echo ""
 echo "=== Scan from TESTROOT ==="
 cd "$TESTROOT"
 echo "Now in: $(pwd)"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r.
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:.
 echo "Exit code: $?"
 echo ""
 
@@ -31,8 +31,8 @@ echo "=== Search for Downloads (from TESTROOT) ==="
 echo "Exit code: $?"
 echo ""
 
-echo "=== Search with explicit /agent query ==="
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /agent query Downloads
+echo "=== Search with explicit --agent:query ==="
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory --agent:query Downloads
 echo "Exit code: $?"
 echo ""
 

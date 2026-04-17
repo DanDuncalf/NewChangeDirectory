@@ -1,0 +1,65 @@
+
+========================================
+WSL Service Tests (Isolation Mode)
+========================================
+Service: /mnt/e/llama/NewChangeDirectory/NCDService
+Test Data: /tmp/ncd_service_test_432
+
+[INFO] Performing aggressive service cleanup...
+[INFO] Using service built at: 2026-04-16 23:17:57.252263300 -0700
+[INFO] Confirmed: No service processes running.
+
+
+========================================
+Test Suite: Service Lifecycle
+========================================
+[TEST 1] Service status when stopped
+  [PASS] Service status when stopped
+[TEST 2] Service start
+  [PASS] Service start
+[TEST 3] Service IPC ping
+  [PASS] Service IPC ping
+[TEST 4] Service version query
+  [PASS] Service version query
+[TEST 5] Service state info
+  [PASS] Service state info
+[TEST 6] Service stop when running
+  [PASS] Service stop when running
+[TEST 7] Service double start handling
+  [PASS] Service double start
+[TEST 8] Service stop when already stopped
+  [PASS] Service stop when already stopped
+[TEST 9] Service restart
+  [PASS] Service restart
+[TEST 10] Service termination handling
+  [PASS] Service termination handling
+
+========================================
+Test Summary
+========================================
+  Total:   10
+  Passed:  10
+  Failed:  0
+
+
+Checking service log for errors...
+  [FAIL] Errors found in service log:
+[23:18:32] [137155236288832] [L2] Client connection closed or receive error
+[23:18:34] [137155236288832] [L2] Client connection closed or receive error
+[23:18:34] [137155236288832] [L2] Client connection closed or receive error
+[23:18:34] [137155236288832] [L2] Client connection closed or receive error
+[23:18:34] [137155236288832] [L2] Client connection closed or receive error
+
+========================================
+Test Summary
+========================================
+  Total:   10
+  Passed:  10
+  Failed:  1
+
+RESULT: FAILED
+
+========================================
+Cleanup
+========================================
+  Cleaned up test data

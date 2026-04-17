@@ -12,7 +12,7 @@ _ncd_completions()
 
     # Call NCD's completion subcommand
     local IFS=$'\n'
-    COMPREPLY=( $(NewChangeDirectory /agent complete "$cur" --limit 20 2>/dev/null) )
+    COMPREPLY=( $(NewChangeDirectory --agent:complete "$cur" --limit 20 2>/dev/null) )
 }
 
 complete -F _ncd_completions ncd

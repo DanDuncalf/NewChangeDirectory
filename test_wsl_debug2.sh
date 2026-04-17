@@ -13,7 +13,7 @@ echo "TESTROOT=$TESTROOT"
 
 echo "=== Scan from TESTROOT ==="
 cd "$TESTROOT"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r.
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:.
 echo "Scan exit code: $?"
 
 echo "=== Check created databases ==="

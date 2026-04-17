@@ -27,7 +27,7 @@ function Wait-ForServiceReady {
     
     $startTime = Get-Date
     while (((Get-Date) - $startTime).TotalMilliseconds -lt $TimeoutMs) {
-        $status = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+        $status = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
         if ($status -match "READY") { return $true }
         Start-Sleep -Milliseconds 100
     }
@@ -83,11 +83,11 @@ for ($i = 1; $i -le $Iterations; $i++) {
         
         # Run NCD commands
         $commands = @(
-            @("/agent", "check", "--service-status"),
-            @("/hl"),
-            @("/agent", "tree", ".", "--depth", "2"),
-            @("/agent", "check", "--stats"),
-            @("/gl")
+            @("--agent:check", "--service-status"),
+            @("-h:l"),
+            @("--agent:tree", ".", "--depth", "2"),
+            @("--agent:check", "--stats"),
+            @("-g:l")
         )
         
         foreach ($cmd in $commands) {

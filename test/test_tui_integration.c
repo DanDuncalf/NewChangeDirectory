@@ -61,7 +61,7 @@ TEST(tui_config_cancel) {
     setup_test_env();
     
     /* ESC to cancel */
-    int rc = run_ncd_with_keys("ESC", "/c");
+    int rc = run_ncd_with_keys("ESC", "-c");
     
     /* Should return 0 (cancel is not an error) */
     ASSERT_EQ_INT(0, rc);
@@ -75,7 +75,7 @@ TEST(tui_config_toggle_hidden) {
     setup_test_env();
     
     /* SPACE to toggle first item (hidden), ENTER to save */
-    int rc = run_ncd_with_keys("SPACE,ENTER", "/c");
+    int rc = run_ncd_with_keys("SPACE,ENTER", "-c");
     
     /* Should return 0 (success) */
     ASSERT_EQ_INT(0, rc);
@@ -94,7 +94,7 @@ TEST(tui_config_navigate_toggle) {
     setup_test_env();
     
     /* DOWN, DOWN (to fuzzy match), SPACE (toggle), ENTER (save) */
-    int rc = run_ncd_with_keys("DOWN,DOWN,SPACE,ENTER", "/c");
+    int rc = run_ncd_with_keys("DOWN,DOWN,SPACE,ENTER", "-c");
     
     /* Should succeed */
     ASSERT_EQ_INT(0, rc);
@@ -112,7 +112,7 @@ TEST(tui_config_adjust_timeout) {
     setup_test_env();
     
     /* DOWN, DOWN, DOWN (to timeout), PLUS, PLUS, ENTER */
-    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,PLUS,PLUS,ENTER", "/c");
+    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,PLUS,PLUS,ENTER", "-c");
     
     ASSERT_EQ_INT(0, rc);
     
@@ -128,7 +128,7 @@ TEST(tui_config_end_key) {
     setup_test_env();
     
     /* END (last item), SPACE (toggle), ENTER (save) */
-    int rc = run_ncd_with_keys("END,SPACE,ENTER", "/c");
+    int rc = run_ncd_with_keys("END,SPACE,ENTER", "-c");
     
     ASSERT_EQ_INT(0, rc);
     
@@ -141,7 +141,7 @@ TEST(tui_config_home_key) {
     setup_test_env();
     
     /* DOWN, DOWN, DOWN, HOME (back to first), ENTER */
-    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,HOME,ENTER", "/c");
+    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,HOME,ENTER", "-c");
     
     ASSERT_EQ_INT(0, rc);
     
@@ -154,7 +154,7 @@ TEST(tui_history_cancel) {
     setup_test_env();
     
     /* ESC to cancel */
-    int rc = run_ncd_with_keys("ESC", "/h");
+    int rc = run_ncd_with_keys("ESC", "-h");
     
     ASSERT_EQ_INT(0, rc);
     
@@ -199,7 +199,7 @@ TEST(tui_config_multiple_toggles) {
     setup_test_env();
     
     /* Toggle hidden, down, toggle system, down, toggle fuzzy, ENTER */
-    int rc = run_ncd_with_keys("SPACE,DOWN,SPACE,DOWN,SPACE,ENTER", "/c");
+    int rc = run_ncd_with_keys("SPACE,DOWN,SPACE,DOWN,SPACE,ENTER", "-c");
     
     ASSERT_EQ_INT(0, rc);
     
@@ -212,7 +212,7 @@ TEST(tui_config_type_numeric) {
     setup_test_env();
     
     /* Navigate to timeout, type '500', ENTER to confirm, then ENTER to save */
-    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,TEXT:500,ENTER,ENTER", "/c");
+    int rc = run_ncd_with_keys("DOWN,DOWN,DOWN,TEXT:500,ENTER,ENTER", "-c");
     
     ASSERT_EQ_INT(0, rc);
     

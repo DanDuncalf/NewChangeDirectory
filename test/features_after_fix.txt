@@ -1,0 +1,224 @@
+==========================================
+NCD Comprehensive Feature Tests [Windows]
+==========================================
+
+Setting up test environment...
+WARNING: Not running as administrator, using temp directory fallback
+Access is denied.
+  Created test directory tree
+  Created isolated metadata
+  Disabled auto-rescan.
+
+Performing initial scan of test tree...
+  Scan complete.
+
+========== Running Feature Tests ==========
+
+--- Category A: Help and Version ---
+  PASS  A1  Help with /h
+  PASS  A2  Help with /?
+  PASS  A3  Version /v
+--- Category B: Full Rescan ---
+  PASS  B1  Rescan test tree
+  FAIL  B2  Database file created
+        Reason: no ncd_*.database file in C:\Users\Dan\AppData\Local\Temp\ncd_test_data_12252\NCD
+  FAIL  B3  Rescan creates searchable DB
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  B4  Rescan with /t 10
+  PASS  B5  Rescan with /d override
+  FAIL  B6  Rescan finds newly added dir
+        Reason: NCD_STATUS='ERROR' expected OK
+--- Category C: Selective Rescan ---
+  PASS  C1  Rescan runs successfully
+  PASS  C2  Subdirectory rescan /r.
+  PASS  C3  Subdirectory rescan /r .
+  PASS  C4  Rescan test drive /rN-a
+  PASS  C5  Rescan test drive /r N
+  PASS  C6  Rescan /t5 shorthand
+--- Category D: Basic Search ---
+  FAIL  D1  Single component exact
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  D2  Single component prefix
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  D4  Case insensitive (lower)
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  D5  Case insensitive (UPPER)
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  D6  Multi-component search
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  D7  Three-level chain
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  D8  No match returns error
+  PASS  D9  Empty search handled
+--- Category E: Glob/Wildcard Search ---
+  FAIL  E1  Star suffix
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  E2  Star prefix
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  E3  Star both sides
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  E4  Question mark single
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  E5  Glob in multi-component
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  E6  No match glob
+  FAIL  E7  Star-only glob
+        Reason: exit code nonzero or timed out
+--- Category F: Fuzzy Match /z ---
+  FAIL  F1  Fuzzy exact term
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  F2  Fuzzy with typo
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  F3  Fuzzy word-to-digit
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  F4  Fuzzy combined with /i
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  F5  Fuzzy no match at all
+  PASS  F6  Fuzzy digit-heavy performance
+--- Category G: Hidden/System Filters ---
+  PASS  G1  Default hides hidden dirs
+  FAIL  G2  /i shows hidden dirs
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  G3  /s shows system dirs
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  G4  /a shows all (hidden)
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  G5  /a shows all (system)
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  G6  Default hides system dirs
+--- Category H: Groups/Bookmarks ---
+  PASS  H1  Create group @proj
+  PASS  H2  Create group @users
+  FAIL  H3  List groups /gl
+        Reason: exit code nonzero or timed out
+  PASS  H4  Navigate to @proj
+  PASS  H5  Navigate to @users
+  FAIL  H6a  Remove old @proj
+        Reason: exit code nonzero or timed out
+  FAIL  H6  Updated group points to Media
+        Reason: NCD_PATH='C:\Users\Dan\AppData\Local\Temp\ncd_test_tree_24710\Projects' missing 'Media'
+  FAIL  H7  Remove group /g- @users
+        Reason: exit code nonzero or timed out
+  FAIL  H8  List groups after remove
+        Reason: exit code nonzero or timed out
+  FAIL  H9  Removed group returns error
+        Reason: expected no match but got exit 0
+--- Category I: Exclusion Patterns ---
+  PASS  I1  Add exclusion
+  FAIL  I2  List exclusions
+        Reason: exit code nonzero or timed out
+  PASS  I3  Excluded dir not found
+  PASS  I4  Add second exclusion
+  FAIL  I5  List shows both
+        Reason: exit code nonzero or timed out
+  FAIL  I6  Remove exclusion
+        Reason: exit code nonzero or timed out
+  FAIL  I7  Removed exclusion listed
+        Reason: exit code nonzero or timed out
+  FAIL  I8  Rescan after remove finds Deep
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  I9  Remove nonexistent exclusion
+        Reason: exit code nonzero or timed out
+  PASS  I10a  Search excludes Deep
+  PASS  I10b  Agent tree excludes excluded directories
+--- Category J: History/Heuristics ---
+  PASS  J1  Search creates history entry
+  PASS  J2  History shows search term
+  PASS  J3  History after multiple searches
+  PASS  J4  Multiple searches in history
+  FAIL  J5  Clear history /fc
+        Reason: exit code nonzero or timed out
+  PASS  J6  History empty after clear
+--- Category K: Configuration /c ---
+  PASS  K1  Config edit runs without crash
+  PASS  K2  Config persists defaults
+  FAIL  K3  Flag overrides config
+        Reason: NCD_STATUS='ERROR' expected OK
+--- Category L: Database Override /d ---
+  FAIL  L1  Custom DB path
+        Reason: file not created
+  FAIL  L2  Search with custom DB
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  L3  Default DB still exists
+--- Category M: Timeout /t ---
+  PASS  M1  Short timeout rescan
+  FAIL  M2  /t with search
+        Reason: exit code nonzero or timed out
+  PASS  M3  /t no-space shorthand
+--- Category N: Navigator Mode ---
+  PASS  N1  Navigate current dir
+  PASS  N2  Navigate specific path
+  PASS  N3  Navigate drive root
+--- Category P: Edge Cases ---
+  PASS  P1  Spaces in dir name
+  FAIL  P2  Dashes in dir name
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  P3  ALLCAPS case-insensitive
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  P4  Deep nesting search
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  P5  Multiple results (src)
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  P6  Separate flags /r /i /s
+        Reason: exit code nonzero or timed out
+--- Category Q: Version Update Flow ---
+  SKIP  Q1  Corrupt version in DB (database file not found)
+  SKIP  Q2  Skip update flag (database file not found)
+  FAIL  Q3  Fresh rescan clears version issues
+--- Category R: Error Handling ---
+  PASS  R1  Invalid option /qqq
+  PASS  R2  /d missing path
+  PASS  R3  /g missing name
+--- Category S: Windows-Specific ---
+  SKIP  S1  Drive letter search (no VHD drive)
+  SKIP  S2  Rescan specific drive (no VHD drive)
+  SKIP  S3  Navigate drive root (no VHD drive)
+  FAIL  S4  Forward slash search
+        Reason: NCD_STATUS='ERROR' expected OK
+  FAIL  S5  Backslash search
+        Reason: NCD_STATUS='ERROR' expected OK
+  PASS  S6  Result file sets vars
+--- Category T: Batch Wrapper ---
+  SKIP  T1  Wrapper changes dir (dir may not have changed in test environment)
+  PASS  T2  Wrapper cleans vars
+  PASS  T3  Wrapper handles error (no crash)
+--- Category U: Circular Directory History ---
+  PASS  U1  Bare NCD ping-pong
+  PASS  U2  Bare NCD second swap
+  PASS  U3  /0 same as bare NCD
+  PASS  U4  /1 pushes current dir
+  PASS  U5  /1 shifts list down
+  PASS  U6  /2 goes back 2 dirs
+  PASS  U7  /3 goes back 3 dirs
+  PASS  U8  Circular list max 9 entries (no crash)
+  PASS  U9  /8 max index
+  PASS  U10  /9 out of range
+  PASS  U11  History persists across runs
+  PASS  U12  Empty history bare NCD
+--- Category V: Agent Tree ---
+  FAIL  V1  Agent tree --json returns valid JSON
+  FAIL  V2  Agent tree --flat shows relative paths
+  FAIL  V3  Agent tree default shows indented names
+  FAIL  V4  Agent tree --json --flat returns flat JSON
+  FAIL  V5  Agent tree --depth limits depth
+  PASS  V6  Agent tree fails on non-existent path
+  FAIL  V7  Agent tree --flat shows correct relative paths
+  FAIL  V8  Agent tree JSON has name and depth fields
+  FAIL  V9  Agent tree default shows only names
+  PASS  V10  Agent tree requires path argument
+
+==========================================
+Test Summary
+==========================================
+  Total:   124
+  Passed:  61
+  Failed:  57
+  Skipped: 6
+
+Cleaning up...
+  Removed subst drive N:
+  Removed test data directory
+  Cleanup complete.
+
+Log file: C:\Users\Dan\AppData\Local\Temp\ncd_test_log_29161.txt
+Some tests FAILED.

@@ -7,7 +7,7 @@ mkdir -p "$TESTROOT/Users/scott/Downloads"
 echo "CWD: $(pwd)"
 cd "$TESTROOT"
 echo "In: $(pwd)"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r.
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:.
 echo "Scan: $?"
 ls -la "$XDG_DATA_HOME/ncd/"
 /mnt/e/llama/NewChangeDirectory/NewChangeDirectory Downloads 2>&1

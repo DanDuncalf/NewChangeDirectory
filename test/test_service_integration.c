@@ -2,8 +2,8 @@
  * test_service_integration.c  --  NCD client service integration tests
  *
  * Tests:
- * - ncd /? shows correct service status (not running, starting, running)
- * - ncd /agent check --service-status returns correct status
+ * - ncd -? shows correct service status (not running, starting, running)
+ * - ncd --agent:check --service-status returns correct status
  * - Service status in help matches actual service state
  * - JSON and plain text output formats
  *
@@ -237,7 +237,7 @@ TEST(help_shows_standalone_when_service_stopped) {
     }
     
     char output[4096] = {0};
-    int exit_code = run_ncd_command("/?", output, sizeof(output));
+    int exit_code = run_ncd_command("-?", output, sizeof(output));
     
     /* Help should succeed regardless of service state */
     ASSERT_EQ_INT(0, exit_code);
@@ -293,7 +293,7 @@ TEST(help_shows_service_running_when_service_active) {
     platform_sleep_ms(500);
     
     char output[4096] = {0};
-    int exit_code = run_ncd_command("/?", output, sizeof(output));
+    int exit_code = run_ncd_command("-?", output, sizeof(output));
     
     /* Help should succeed */
     ASSERT_EQ_INT(0, exit_code);
@@ -328,7 +328,7 @@ TEST(agent_service_status_not_running) {
     }
     
     char output[256] = {0};
-    int exit_code = run_ncd_command("/agent check --service-status", output, sizeof(output));
+    int exit_code = run_ncd_command("--agent:check --service-status", output, sizeof(output));
     
     /* Should succeed and report not running */
     ASSERT_EQ_INT(0, exit_code);
@@ -358,7 +358,7 @@ TEST(agent_service_status_json_not_running) {
     }
     
     char output[512] = {0};
-    int exit_code = run_ncd_command("/agent check --service-status --json", output, sizeof(output));
+    int exit_code = run_ncd_command("--agent:check --service-status --json", output, sizeof(output));
     
     /* Debug: print output if test might fail */
     if (exit_code != 0 || strstr(output, "not_running") == NULL) {
@@ -396,7 +396,7 @@ TEST(agent_service_status_running) {
     platform_sleep_ms(2000);
     
     char output[256] = {0};
-    int exit_code = run_ncd_command("/agent check --service-status", output, sizeof(output));
+    int exit_code = run_ncd_command("--agent:check --service-status", output, sizeof(output));
     
     /* Should succeed */
     ASSERT_EQ_INT(0, exit_code);
@@ -442,7 +442,7 @@ TEST(agent_service_status_json_running) {
     platform_sleep_ms(1000);
     
     char output[256] = {0};
-    int exit_code = run_ncd_command("/agent check --service-status --json", output, sizeof(output));
+    int exit_code = run_ncd_command("--agent:check --service-status --json", output, sizeof(output));
     
     /* Debug: print output if test might fail */
     if (strstr(output, "not_running") != NULL) {
@@ -484,7 +484,7 @@ TEST(agent_service_status_after_stop) {
     ASSERT_TRUE(stopped);
     
     char output[256] = {0};
-    int exit_code = run_ncd_command("/agent check --service-status", output, sizeof(output));
+    int exit_code = run_ncd_command("--agent:check --service-status", output, sizeof(output));
     
     /* Should succeed and report not running */
     ASSERT_EQ_INT(0, exit_code);
@@ -511,7 +511,7 @@ TEST(ncd_search_works_without_service) {
     
     /* Run ncd with a search that won't match anything (just to verify it runs) */
     /* Use /agent mode to avoid interactive UI */
-    int exit_code = run_ncd_command("/agent query THIS_IS_A_TEST_QUERY_THAT_SHOULD_NOT_MATCH_12345", 
+    int exit_code = run_ncd_command("--agent:query THIS_IS_A_TEST_QUERY_THAT_SHOULD_NOT_MATCH_12345", 
                                      output, sizeof(output));
     
     /* Should complete without crashing (may return 1 if no matches) */
@@ -540,7 +540,7 @@ TEST(ncd_search_works_with_service) {
     char output[1024] = {0};
     
     /* Run ncd with a search that won't match anything */
-    int exit_code = run_ncd_command("/agent query THIS_IS_A_TEST_QUERY_THAT_SHOULD_NOT_MATCH_12345", 
+    int exit_code = run_ncd_command("--agent:query THIS_IS_A_TEST_QUERY_THAT_SHOULD_NOT_MATCH_12345", 
                                      output, sizeof(output));
     
     /* Should complete without crashing (may return 1 if no matches) */
@@ -560,15 +560,15 @@ TEST(help_includes_exclusion_and_agent_options) {
     }
 
     char output[8192] = {0};
-    int exit_code = run_ncd_command("/?", output, sizeof(output));
+    int exit_code = run_ncd_command("-?", output, sizeof(output));
 
     ASSERT_EQ_INT(0, exit_code);
     ASSERT_TRUE(strstr(output, "Exclusions:") != NULL);
-    ASSERT_TRUE(strstr(output, "/x <pat>") != NULL);
-    ASSERT_TRUE(strstr(output, "/x- <pat>") != NULL);
-    ASSERT_TRUE(strstr(output, "/xl") != NULL);
+    ASSERT_TRUE(strstr(output, "-x:<pat>") != NULL);
+    ASSERT_TRUE(strstr(output, "-X:<pat>") != NULL);
+    ASSERT_TRUE(strstr(output, "-x:l") != NULL);
     ASSERT_TRUE(strstr(output, "Agent Mode:") != NULL);
-    ASSERT_TRUE(strstr(output, "/agent <cmd>") != NULL);
+    ASSERT_TRUE(strstr(output, "--agent:<cmd>") != NULL);
 
     return 0;
 }
@@ -582,16 +582,16 @@ TEST(a_flag_is_not_agent_alias) {
     }
     
     char output[1024] = {0};
-    int exit_code = run_ncd_command("/a THIS_IS_A_PARSE_REGRESSION_TEST", output, sizeof(output));
+    int exit_code = run_ncd_command("-a THIS_IS_A_PARSE_REGRESSION_TEST", output, sizeof(output));
     
     /* /a should be parsed as include-all, not as /agent alias. */
     /* If it were parsed as /agent, we'd see these error messages: */
-    bool is_agent_error = (strstr(output, "unknown /agent subcommand") != NULL) ||
-                          (strstr(output, "/agent requires a subcommand") != NULL) ||
+    bool is_agent_error = (strstr(output, "unknown --agent subcommand") != NULL) ||
+                          (strstr(output, "--agent requires a subcommand") != NULL) ||
                           (strstr(output, "agent mode") != NULL);
     
     if (is_agent_error) {
-        printf("  FAIL: /a was incorrectly parsed as /agent alias\n");
+        printf("  FAIL: -a was incorrectly parsed as --agent alias\n");
         printf("  Output: %.200s\n", output);
     }
     ASSERT_FALSE(is_agent_error);
@@ -617,7 +617,7 @@ TEST(agentic_debug_mode_with_service_exits_cleanly) {
     platform_sleep_ms(1000);
     
     char output[16384] = {0};
-    int exit_code = run_ncd_command("/agdb", output, sizeof(output));
+    int exit_code = run_ncd_command("-agdb", output, sizeof(output));
     
     /* /agdb should complete successfully and not hit fatal allocator paths. */
     ASSERT_EQ_INT(0, exit_code);

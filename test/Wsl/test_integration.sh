@@ -67,7 +67,7 @@ fi
 # Test 3: Database scan (subdirectory only to avoid scanning all mounts)
 echo
 echo "Test 3: Database scan..."
-if (cd "$TEST_DIR" && "$NCD_EXE" /r.) >/dev/null 2>&1; then
+if (cd "$TEST_DIR" && "$NCD_EXE" -r .) >/dev/null 2>&1; then
     echo "  PASS: Database scan completed"
 else
     echo "  FAIL: Database scan failed"

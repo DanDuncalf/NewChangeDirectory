@@ -24,7 +24,7 @@ export PATH="$HOME/.local/bin:$PATH"
 echo ""
 echo "=== Version that will be used ==="
 which NewChangeDirectory
-NewChangeDirectory /v 2>&1
+NewChangeDirectory -v 2>&1
 
 echo ""
 echo "=== IMPORTANT ==="

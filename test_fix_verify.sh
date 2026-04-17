@@ -10,10 +10,10 @@ TESTROOT=/tmp/vtr_$$
 mkdir -p "$TESTROOT/Users/scott/Downloads"
 
 cd "$TESTROOT"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r. >/dev/null 2>&1
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:. >/dev/null 2>&1
 
 echo "=== Query result ==="
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /agent query Downloads 2>&1
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory --agent:query Downloads 2>&1
 
 echo ""
 echo "=== Exit code: $? ==="

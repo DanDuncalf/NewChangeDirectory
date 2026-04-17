@@ -32,14 +32,14 @@ TEST(no_args_show_help_default) {
     return 0;
 }
 
-TEST(h_flag_sets_show_help) {
+TEST(h_flag_sets_history_browse) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/h", &opts);
+    bool result = parse_single("-h", &opts);
     
     ASSERT_TRUE(result);
-    ASSERT_TRUE(opts.history_browse);  /* /h is history browse, not help! */
+    ASSERT_TRUE(opts.history_browse);  /* -h is history browse, not help! */
     
     return 0;
 }
@@ -48,7 +48,7 @@ TEST(question_flag_sets_show_help) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/?", &opts);
+    bool result = parse_single("-?", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_help);
@@ -60,7 +60,7 @@ TEST(v_flag_sets_show_version) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/v", &opts);
+    bool result = parse_single("-v", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_version);
@@ -72,7 +72,7 @@ TEST(r_flag_sets_force_rescan) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/r", &opts);
+    bool result = parse_single("-r", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.force_rescan);
@@ -84,7 +84,7 @@ TEST(r_dot_flag_sets_subdir_rescan) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/r.", &opts);
+    bool result = parse_single("-r:.", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.force_rescan);
@@ -97,7 +97,7 @@ TEST(i_flag_sets_show_hidden) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/i", &opts);
+    bool result = parse_single("-i", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_hidden);
@@ -109,7 +109,7 @@ TEST(s_flag_sets_show_system) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/s", &opts);
+    bool result = parse_single("-s", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_system);
@@ -121,7 +121,7 @@ TEST(a_flag_sets_both_hidden_and_system) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/a", &opts);
+    bool result = parse_single("-a", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_hidden);
@@ -134,7 +134,7 @@ TEST(z_flag_sets_fuzzy_match) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/z", &opts);
+    bool result = parse_single("-z", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.fuzzy_match);
@@ -146,7 +146,7 @@ TEST(f_flag_sets_show_history) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/f", &opts);
+    bool result = parse_single("-f", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.show_history);
@@ -158,7 +158,7 @@ TEST(fc_flag_sets_clear_history) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/fc", &opts);
+    bool result = parse_single("-f:c", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.clear_history);
@@ -170,7 +170,7 @@ TEST(gl_flag_sets_group_list) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/gl", &opts);
+    bool result = parse_single("-g:l", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.group_list);
@@ -182,8 +182,8 @@ TEST(d_flag_sets_db_override) {
     NcdOptions opts;
     init_options(&opts);
     
-    char *argv[] = {(char *)"ncd", (char *)"/d", (char *)"C:\\test.db"};
-    bool result = parse_args(3, argv, &opts);
+    char *argv[] = {(char *)"ncd", (char *)"-d:C:\\test.db"};
+    bool result = parse_args(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(strlen(opts.db_override) > 0);
@@ -196,8 +196,8 @@ TEST(t_flag_sets_timeout) {
     NcdOptions opts;
     init_options(&opts);
     
-    char *argv[] = {(char *)"ncd", (char *)"/t", (char *)"30"};
-    bool result = parse_args(3, argv, &opts);
+    char *argv[] = {(char *)"ncd", (char *)"-t:30"};
+    bool result = parse_args(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_EQ_INT(30, opts.timeout_seconds);
@@ -209,7 +209,7 @@ TEST(c_flag_sets_config_edit) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/c", &opts);
+    bool result = parse_single("-c", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.config_edit);
@@ -235,7 +235,7 @@ TEST(separate_flags_r_i_s_sets_all_three) {
     NcdOptions opts;
     init_options(&opts);
     
-    char *argv[] = {(char *)"ncd", (char *)"/r", (char *)"/i", (char *)"/s"};
+    char *argv[] = {(char *)"ncd", (char *)"-r", (char *)"-i", (char *)"-s"};
     bool result = parse_args(4, argv, &opts);
     
     ASSERT_TRUE(result);
@@ -246,12 +246,12 @@ TEST(separate_flags_r_i_s_sets_all_three) {
     return 0;
 }
 
-TEST(separate_flags_z_a_sets_fuzzy_and_all) {
+TEST(bundled_flags_asz_sets_all_system_fuzzy) {
     NcdOptions opts;
     init_options(&opts);
     
-    char *argv[] = {(char *)"ncd", (char *)"/z", (char *)"/a"};
-    bool result = parse_args(3, argv, &opts);
+    char *argv[] = {(char *)"ncd", (char *)"-asz"};
+    bool result = parse_args(2, argv, &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.fuzzy_match);
@@ -261,27 +261,11 @@ TEST(separate_flags_z_a_sets_fuzzy_and_all) {
     return 0;
 }
 
-TEST(dash_equivalent_to_slash) {
-    NcdOptions opts1, opts2;
-    init_options(&opts1);
-    init_options(&opts2);
-    
-    bool r1 = parse_single("/?", &opts1);
-    bool r2 = parse_single("-?", &opts2);
-    
-    ASSERT_TRUE(r1);
-    ASSERT_TRUE(r2);
-    ASSERT_TRUE(opts1.show_help);
-    ASSERT_TRUE(opts2.show_help);
-    
-    return 0;
-}
-
 TEST(invalid_option_returns_false) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/qqq", &opts);
+    bool result = parse_single("-qqq", &opts);
     
     /* Invalid options should cause parse_args to return false */
     ASSERT_FALSE(result);
@@ -289,11 +273,11 @@ TEST(invalid_option_returns_false) {
     return 0;
 }
 
-TEST(a_with_suffix_is_unknown_option) {
+TEST(bundle_with_unknown_char_is_unknown_option) {
     NcdOptions opts;
     init_options(&opts);
 
-    bool result = parse_single("/abc", &opts);
+    bool result = parse_single("-abc", &opts);
 
     ASSERT_FALSE(result);
     return 0;
@@ -303,7 +287,7 @@ TEST(u8_flag_sets_encoding_switch_utf8) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/u8", &opts);
+    bool result = parse_single("-u:8", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.encoding_switch);
@@ -316,7 +300,7 @@ TEST(u16_flag_sets_encoding_switch_utf16) {
     NcdOptions opts;
     init_options(&opts);
     
-    bool result = parse_single("/u16", &opts);
+    bool result = parse_single("-u:16", &opts);
     
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.encoding_switch);
@@ -325,50 +309,14 @@ TEST(u16_flag_sets_encoding_switch_utf16) {
     return 0;
 }
 
-TEST(dash_u8_equivalent_to_slash_u8) {
-    NcdOptions opts1, opts2;
-    init_options(&opts1);
-    init_options(&opts2);
-    
-    bool r1 = parse_single("/u8", &opts1);
-    bool r2 = parse_single("-u8", &opts2);
-    
-    ASSERT_TRUE(r1);
-    ASSERT_TRUE(r2);
-    ASSERT_TRUE(opts1.encoding_switch);
-    ASSERT_TRUE(opts2.encoding_switch);
-    ASSERT_EQ_INT(NCD_TEXT_UTF8, opts1.text_encoding);
-    ASSERT_EQ_INT(NCD_TEXT_UTF8, opts2.text_encoding);
-    
-    return 0;
-}
-
-TEST(dash_u16_equivalent_to_slash_u16) {
-    NcdOptions opts1, opts2;
-    init_options(&opts1);
-    init_options(&opts2);
-    
-    bool r1 = parse_single("/u16", &opts1);
-    bool r2 = parse_single("-u16", &opts2);
-    
-    ASSERT_TRUE(r1);
-    ASSERT_TRUE(r2);
-    ASSERT_TRUE(opts1.encoding_switch);
-    ASSERT_TRUE(opts2.encoding_switch);
-    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, opts1.text_encoding);
-    ASSERT_EQ_INT(NCD_TEXT_UTF16LE, opts2.text_encoding);
-    
-    return 0;
-}
-
 TEST(agent_query_all_depth_and_limit_parse) {
     NcdOptions opts;
     init_options(&opts);
 
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"query",
+    char *argv[] = {(char *)"ncd", (char *)"--agent:query",
                     (char *)"downloads", (char *)"--all", (char *)"--depth",
                     (char *)"--limit", (char *)"7"};
-    bool result = parse_args(8, argv, &opts);
+    bool result = parse_args(7, argv, &opts);
 
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -387,9 +335,9 @@ TEST(agent_ls_pattern_and_default_depth) {
     NcdOptions opts;
     init_options(&opts);
 
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"ls",
+    char *argv[] = {(char *)"ncd", (char *)"--agent:ls",
                     (char *)"C:\\temp", (char *)"--pattern", (char *)"*.c"};
-    bool result = parse_args(6, argv, &opts);
+    bool result = parse_args(5, argv, &opts);
 
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -404,8 +352,8 @@ TEST(agent_tree_default_depth_is_three) {
     NcdOptions opts;
     init_options(&opts);
 
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"tree", (char *)"C:\\temp"};
-    bool result = parse_args(4, argv, &opts);
+    char *argv[] = {(char *)"ncd", (char *)"--agent:tree", (char *)"C:\\temp"};
+    bool result = parse_args(3, argv, &opts);
 
     ASSERT_TRUE(result);
     ASSERT_TRUE(opts.agent_mode);
@@ -419,9 +367,9 @@ TEST(agent_ls_depth_zero_rejected) {
     NcdOptions opts;
     init_options(&opts);
 
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"ls",
+    char *argv[] = {(char *)"ncd", (char *)"--agent:ls",
                     (char *)"C:\\temp", (char *)"--depth", (char *)"0"};
-    bool result = parse_args(6, argv, &opts);
+    bool result = parse_args(5, argv, &opts);
 
     ASSERT_FALSE(result);
     return 0;
@@ -431,11 +379,101 @@ TEST(agent_tree_depth_zero_rejected) {
     NcdOptions opts;
     init_options(&opts);
 
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"tree",
+    char *argv[] = {(char *)"ncd", (char *)"--agent:tree",
                     (char *)"C:\\temp", (char *)"--depth", (char *)"0"};
-    bool result = parse_args(6, argv, &opts);
+    bool result = parse_args(5, argv, &opts);
 
     ASSERT_FALSE(result);
+    return 0;
+}
+
+TEST(group_set_with_at_name) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"-g:@proj"};
+    bool result = parse_args(2, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.group_set);
+    ASSERT_EQ_STR("proj", opts.group_name);
+
+    return 0;
+}
+
+TEST(group_remove_with_at_name) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"-G:@proj"};
+    bool result = parse_args(2, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.group_remove);
+    ASSERT_EQ_STR("proj", opts.group_name);
+
+    return 0;
+}
+
+TEST(history_list_short_val) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-h:l", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.history_list);
+    return 0;
+}
+
+TEST(history_clear_short_val) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-h:c", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.history_clear);
+    return 0;
+}
+
+TEST(history_remove_by_index_short_val) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-h:c3", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_EQ_INT(3, opts.history_remove);
+    return 0;
+}
+
+TEST(rescan_specific_drive) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-r:cde", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    return 0;
+}
+
+TEST(rescan_exclude_drives) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-r:-bc", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.skip_drive_mask['B' - 'A']);
+    ASSERT_TRUE(opts.skip_drive_mask['C' - 'A']);
+    ASSERT_EQ_INT(2, opts.skip_drive_count);
     return 0;
 }
 
@@ -443,7 +481,7 @@ TEST(agent_tree_depth_zero_rejected) {
 
 void suite_cli_parse(void) {
     RUN_TEST(no_args_show_help_default);
-    RUN_TEST(h_flag_sets_show_help);
+    RUN_TEST(h_flag_sets_history_browse);
     RUN_TEST(question_flag_sets_show_help);
     RUN_TEST(v_flag_sets_show_version);
     RUN_TEST(r_flag_sets_force_rescan);
@@ -460,19 +498,23 @@ void suite_cli_parse(void) {
     RUN_TEST(c_flag_sets_config_edit);
     RUN_TEST(search_term_captured);
     RUN_TEST(separate_flags_r_i_s_sets_all_three);
-    RUN_TEST(separate_flags_z_a_sets_fuzzy_and_all);
-    RUN_TEST(dash_equivalent_to_slash);
+    RUN_TEST(bundled_flags_asz_sets_all_system_fuzzy);
     RUN_TEST(invalid_option_returns_false);
-    RUN_TEST(a_with_suffix_is_unknown_option);
+    RUN_TEST(bundle_with_unknown_char_is_unknown_option);
     RUN_TEST(u8_flag_sets_encoding_switch_utf8);
     RUN_TEST(u16_flag_sets_encoding_switch_utf16);
-    RUN_TEST(dash_u8_equivalent_to_slash_u8);
-    RUN_TEST(dash_u16_equivalent_to_slash_u16);
     RUN_TEST(agent_query_all_depth_and_limit_parse);
     RUN_TEST(agent_ls_pattern_and_default_depth);
     RUN_TEST(agent_tree_default_depth_is_three);
     RUN_TEST(agent_ls_depth_zero_rejected);
     RUN_TEST(agent_tree_depth_zero_rejected);
+    RUN_TEST(group_set_with_at_name);
+    RUN_TEST(group_remove_with_at_name);
+    RUN_TEST(history_list_short_val);
+    RUN_TEST(history_clear_short_val);
+    RUN_TEST(history_remove_by_index_short_val);
+    RUN_TEST(rescan_specific_drive);
+    RUN_TEST(rescan_exclude_drives);
 }
 
 TEST_MAIN(

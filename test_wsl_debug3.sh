@@ -13,21 +13,21 @@ echo "TESTROOT=$TESTROOT"
 
 echo "=== Scan from TESTROOT ==="
 cd "$TESTROOT"
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /r.
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory -r:.
 echo "Scan exit code: $?"
 
 echo "=== Check created databases ==="
 ls -la "$XDG_DATA_HOME/ncd/"
 
 echo "=== Agent query Downloads (from TESTROOT) ==="
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /agent query Downloads
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory --agent:query Downloads
 echo "Agent query exit code: $?"
 
 echo "=== Agent tree (from TESTROOT) ==="
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /agent tree "$TESTROOT" --depth 2
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory --agent:tree "$TESTROOT" --depth 2
 
 echo "=== Agent check --stats ==="
-/mnt/e/llama/NewChangeDirectory/NewChangeDirectory /agent check --stats
+/mnt/e/llama/NewChangeDirectory/NewChangeDirectory --agent:check --stats
 
 # Cleanup
 rm -rf "$XDG_DATA_HOME" "$TESTROOT"

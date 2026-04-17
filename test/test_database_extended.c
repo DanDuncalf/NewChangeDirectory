@@ -2,6 +2,7 @@
 #include "test_framework.h"
 #include "../src/database.h"
 #include "../src/ncd.h"
+#include "platform.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>

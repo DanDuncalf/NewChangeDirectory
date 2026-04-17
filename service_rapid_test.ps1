@@ -28,12 +28,12 @@ for ($i = 1; $i -le $Iterations; $i++) {
     
     # Quick check
     Start-Sleep -Milliseconds 200
-    $check = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+    $check = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
     $result.StartOK = ($check -match "READY|STARTING")
     
     # Run a quick command
     if ($result.StartOK) {
-        $null = & .\NewChangeDirectory.exe "/agent" "check" "--stats" 2>&1
+        $null = & .\NewChangeDirectory.exe "--agent:check" "--stats" 2>&1
     }
     
     # Stop service

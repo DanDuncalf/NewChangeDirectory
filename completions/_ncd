@@ -9,7 +9,7 @@ _ncd() {
         return
     fi
 
-    completions=( ${(f)"$(NewChangeDirectory /agent complete "$cur" --limit 20 2>/dev/null)"} )
+    completions=( ${(f)"$(NewChangeDirectory --agent:complete "$cur" --limit 20 2>/dev/null)"} )
     compadd -a completions
 }
 

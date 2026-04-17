@@ -837,13 +837,13 @@ void db_dir_history_print(NcdMetadata *meta)
     }
     printf("\nUsage:\n");
     printf("  ncd       - ping-pong between last two directories\n");
-    printf("  ncd /0    - same as ncd (ping-pong)\n");
-    printf("  ncd /1    - jump to oldest directory\n");
-    printf("  ncd /%d   - jump to most recent directory\n", meta->dir_history.count);
-    printf("  ncd /h    - browse history (interactive)\n");
-    printf("  ncd /hl   - list history\n");
-    printf("  ncd /hc   - clear all history\n");
-    printf("  ncd /hc3  - remove entry #3 from history\n");
+    printf("  ncd -0    - same as ncd (ping-pong)\n");
+    printf("  ncd -1    - jump to oldest directory\n");
+    printf("  ncd -%d   - jump to most recent directory\n", meta->dir_history.count);
+    printf("  ncd -h    - browse history (interactive)\n");
+    printf("  ncd -h:l  - list history\n");
+    printf("  ncd -h:c  - clear all history\n");
+    printf("  ncd -h:c3 - remove entry #3 from history\n");
 }
 
 /* ============================================================= drive mgmt */

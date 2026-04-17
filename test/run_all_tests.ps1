@@ -134,7 +134,7 @@ function Test-ServiceStatusWsl($ExpectRunning) {
     $driveLetter = $PROJECT_ROOT[0].ToString().ToLower()
     $pathPart = $PROJECT_ROOT.Substring(2).Replace('\', '/')
     $projPath = "/mnt/$driveLetter$pathPart"
-    $wslCmd = 'cd ' + $projPath + ' ; ./NewChangeDirectory /agent check --service-status 2>&1'
+    $wslCmd = 'cd ' + $projPath + ' ; ./NewChangeDirectory --agent:check --service-status 2>&1'
     $status = & wsl bash -c $wslCmd 2>&1
     $isRunning = ($status -match "READY") -or ($status -match "STARTING") -or ($status -match "LOADING")
     

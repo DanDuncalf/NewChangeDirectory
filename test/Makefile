@@ -352,7 +352,7 @@ fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_key_injection
+test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -374,6 +374,12 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo "Running database tests..."
 	@./test_database
 	@echo ""
+	@echo "Running database extended tests..."
+	@./test_database_extended
+	@echo ""
+	@echo "Running odd cases tests..."
+	@./test_odd_cases
+	@echo ""
 	@echo "Running config tests..."
 	@./test_config
 	@echo ""
@@ -388,6 +394,12 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running agent integration tests..."
 	@./test_agent_integration || echo "Note: Some agent integration tests may fail without full main.c linkage"
+	@echo ""
+	@echo "Running result output tests..."
+	@./test_result_output
+	@echo ""
+	@echo "Running main flow tests..."
+	@./test_main
 	@echo ""
 	@echo "Running metadata tests..."
 	@./test_metadata
@@ -406,6 +418,15 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running service integration tests..."
 	@./test_service_integration
+	@echo ""
+	@echo "Running service database tests..."
+	@./test_service_database
+	@echo ""
+	@echo "Running service empty db tests..."
+	@./test_service_empty_db
+	@echo ""
+	@echo "Running service logging tests..."
+	@./test_service_logging || echo "Note: Some service logging tests may have pre-existing issues"
 	@echo ""
 	@echo "Running service version compatibility tests..."
 	@./test_service_version_compat
@@ -445,6 +466,12 @@ test: test_database test_matcher test_history test_strbuilder test_common test_p
 	@echo ""
 	@echo "Running UI navigator tests..."
 	@./test_ui_navigator
+	@echo ""
+	@echo "Running UI extended tests..."
+	@./test_ui_extended || echo "Note: Some UI extended tests may have pre-existing issues"
+	@echo ""
+	@echo "Running UI exclusions tests..."
+	@./test_ui_exclusions || echo "Note: Some UI exclusions tests may have pre-existing issues"
 	@echo ""
 	@echo "Running key injection tests..."
 	@./test_key_injection

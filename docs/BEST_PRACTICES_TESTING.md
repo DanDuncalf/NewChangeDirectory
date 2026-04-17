@@ -110,10 +110,10 @@ All tests **must** be completely isolated from user data:
 |----------|-----------|-----------|
 | Drives/Mounts | `C:`, `D:`, `/home` | VHD (Windows) or ramdisk/tmpfs (WSL) |
 | Metadata | `%LOCALAPPDATA%\NCD\ncd.metadata` | Temp dir via `-conf` or env override |
-| Databases | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `/d <path>` |
+| Databases | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `-d:path` |
 
 ### Critical Rules
-1. **Never use bare `/r`** — Always use `/r.` (subdirectory) or `/r<drive>` (specific drive)
+1. **Never use bare `-r`** — Always use `-r:.` (subdirectory) or `-r:<drive>` (specific drive)
 2. **Never scan user drives** — Only scan test VHDs/ramdisks/temp directories
 3. **Never modify user metadata** — Use `-conf <temp_path>` for custom metadata
 4. **Always set `NCD_TEST_MODE=1`** — Disables automatic background rescans
@@ -124,7 +124,7 @@ All tests **must** be completely isolated from user data:
 
 ### "LOCALAPPDATA points to test temp directory"
 
-**Symptoms:** NCD reports "No database found", `ncd /agent check --db-age` shows wrong location.
+**Symptoms:** NCD reports "No database found", `ncd --agent:check --db-age` shows wrong location.
 
 **Fix:**
 ```batch

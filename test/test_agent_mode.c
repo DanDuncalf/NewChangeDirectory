@@ -184,7 +184,7 @@ TEST(parse_agent_args_consumes_correctly) {
     memset(&opts, 0, sizeof(opts));
     
     /* Test that parse_agent_args properly advances the consumed counter */
-    char *argv[] = {(char *)"ncd", (char *)"/agent", (char *)"query", (char *)"downloads"};
+    char *argv[] = {(char *)"ncd", (char *)"--agent:query", (char *)"downloads"};
     int consumed = 0;
     
     /* We can't easily call parse_agent_args without the full agent mode setup */

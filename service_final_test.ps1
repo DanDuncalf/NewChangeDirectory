@@ -42,7 +42,7 @@ for ($i = 1; $i -le $Iterations; $i++) {
     $ready = $false
     $wait = 0
     while (-not $ready -and $wait -lt 30) {
-        $status = & .\NewChangeDirectory.exe "/agent" "check" "--service-status" 2>&1
+        $status = & .\NewChangeDirectory.exe "--agent:check" "--service-status" 2>&1
         if ($status -match "READY") { $ready = $true }
         Start-Sleep -Milliseconds 100
         $wait++
@@ -53,7 +53,7 @@ for ($i = 1; $i -le $Iterations; $i++) {
         Write-Host " READY (${wait}0ms)" -ForegroundColor Green
         
         # Run commands
-        $cmds = @("/hl", "/agent check --stats", "/gl")
+        $cmds = @("-h:l", "--agent:check --stats", "-g:l")
         foreach ($c in $cmds) {
             $cmdArray = $c -split " "
             $output = & .\NewChangeDirectory.exe $cmdArray 2>&1
