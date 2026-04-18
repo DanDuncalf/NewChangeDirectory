@@ -381,3 +381,21 @@ test_error.txt
 # NCD Service log file and logs directory
 ncd_service.log
 logs/
+
+# NCD extensionless Linux binaries built by GCC in WSL
+# Root executables
+/NewChangeDirectory
+/NCDService
+# Test executables (ignore binary, keep source)
+/test/ncd
+/test/ncd_service
+/test/test_*
+!/test/test_*.c
+!/test/test_*.h
+!/test/test_*.sh
+/test/ipc_*
+!/test/ipc_*.c
+/test/fuzz_*
+!/test/fuzz_*.c
+/test/bench_*
+!/test/bench_*.c
