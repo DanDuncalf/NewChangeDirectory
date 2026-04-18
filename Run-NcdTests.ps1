@@ -132,12 +132,7 @@ function Save-EnvironmentState {
         PATH = $env:PATH
         XDG_DATA_HOME = $env:XDG_DATA_HOME
         NCD_UI_KEYS = $env:NCD_UI_KEYS
-        NCD_UI_KEYS_FILE = $env:NCD_UI_KEYS_FILE
-        NCD_UI_KEYS_STRICT = $env:NCD_UI_KEYS_STRICT
         NCD_UI_KEY_TIMEOUT_MS = $env:NCD_UI_KEY_TIMEOUT_MS
-        NCD_TUI_TEST = $env:NCD_TUI_TEST
-        NCD_TUI_COLS = $env:NCD_TUI_COLS
-        NCD_TUI_ROWS = $env:NCD_TUI_ROWS
     }
     Write-Verbose "Environment state saved"
 }
@@ -156,12 +151,7 @@ function Restore-EnvironmentState {
         $env:PATH = $script:OriginalEnvironment.PATH
         $env:XDG_DATA_HOME = $script:OriginalEnvironment.XDG_DATA_HOME
         $env:NCD_UI_KEYS = $script:OriginalEnvironment.NCD_UI_KEYS
-        $env:NCD_UI_KEYS_FILE = $script:OriginalEnvironment.NCD_UI_KEYS_FILE
-        $env:NCD_UI_KEYS_STRICT = $script:OriginalEnvironment.NCD_UI_KEYS_STRICT
         $env:NCD_UI_KEY_TIMEOUT_MS = $script:OriginalEnvironment.NCD_UI_KEY_TIMEOUT_MS
-        $env:NCD_TUI_TEST = $script:OriginalEnvironment.NCD_TUI_TEST
-        $env:NCD_TUI_COLS = $script:OriginalEnvironment.NCD_TUI_COLS
-        $env:NCD_TUI_ROWS = $script:OriginalEnvironment.NCD_TUI_ROWS
         
         if (-not $Silent) {
             Write-Status "  LOCALAPPDATA: $env:LOCALAPPDATA" 'Normal'
@@ -179,12 +169,7 @@ function Clear-TuiEnvironmentVariables {
     # Clear all NCD_UI* and NCD_TUI* variables to prevent interference
     $tuiVars = @(
         'NCD_UI_KEYS',
-        'NCD_UI_KEYS_FILE',
-        'NCD_UI_KEYS_STRICT',
-        'NCD_UI_KEY_TIMEOUT_MS',
-        'NCD_TUI_TEST',
-        'NCD_TUI_COLS',
-        'NCD_TUI_ROWS'
+        'NCD_UI_KEY_TIMEOUT_MS'
     )
     
     foreach ($var in $tuiVars) {
@@ -388,7 +373,13 @@ function Build-Project {
         $wslAvailable = try { $null -ne (& wsl echo "wsl_ok" 2>&1 | Select-String "wsl_ok") } catch { $false }
         if ($wslAvailable) {
             & wsl bash -c "cd '$wslProjectPath' && chmod +x build.sh && ./build.sh"
+            if ($LASTEXITCODE -ne 0) {
+                throw "WSL build failed"
+            }
             & wsl bash -c "cd '$wslProjectPath/test' && make all"
+            if ($LASTEXITCODE -ne 0) {
+                throw "WSL test build failed"
+            }
         }
         else {
             Write-Warning "WSL not available, skipping WSL build"
@@ -593,34 +584,34 @@ function Run-WslIntegrationTests {
     # Test 1: WSL Service tests
     if (-not $NoService) {
         $result = Invoke-Test -Name "WSL Service Tests" -ScriptBlock {
-            & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER NCD_UI_KEYS_STRICT=1; cd '$wslPath' && chmod +x test/test_service_wsl.sh && test/test_service_wsl.sh"
+            & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER; cd '$wslPath' && chmod +x test/test_service_wsl.sh && test/test_service_wsl.sh"
         }
         $passed = $result -and $passed
     }
 
     # Test 2: WSL NCD standalone
     $result = Invoke-Test -Name "WSL NCD Standalone" -ScriptBlock {
-        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER NCD_UI_KEYS_STRICT=1; cd '$wslPath' && chmod +x test/test_ncd_wsl_standalone.sh && test/test_ncd_wsl_standalone.sh"
+        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER; cd '$wslPath' && chmod +x test/test_ncd_wsl_standalone.sh && test/test_ncd_wsl_standalone.sh"
     }
     $passed = $result -and $passed
 
     # Test 3: WSL NCD with service
     if (-not $NoService) {
         $result = Invoke-Test -Name "WSL NCD with Service" -ScriptBlock {
-            & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER NCD_UI_KEYS_STRICT=1; cd '$wslPath' && chmod +x test/test_ncd_wsl_with_service.sh && test/test_ncd_wsl_with_service.sh"
+            & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER; cd '$wslPath' && chmod +x test/test_ncd_wsl_with_service.sh && test/test_ncd_wsl_with_service.sh"
         }
         $passed = $result -and $passed
     }
 
     # Test 4: WSL Feature tests
     $result = Invoke-Test -Name "WSL Feature Tests" -ScriptBlock {
-        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER NCD_UI_KEYS_STRICT=1; cd '$wslPath' && chmod +x test/Wsl/test_features.sh && test/Wsl/test_features.sh"
+        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER; cd '$wslPath' && chmod +x test/Wsl/test_features.sh && test/Wsl/test_features.sh"
     }
     $passed = $result -and $passed
 
     # Test 5: WSL Agent command tests
     $result = Invoke-Test -Name "WSL Agent Command Tests" -ScriptBlock {
-        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER NCD_UI_KEYS_STRICT=1; cd '$wslPath' && chmod +x test/Wsl/test_agent_commands.sh && test/Wsl/test_agent_commands.sh"
+        & wsl bash -c "export NCD_TEST_MODE=1 NCD_UI_KEYS=ENTER; cd '$wslPath' && chmod +x test/Wsl/test_agent_commands.sh && test/Wsl/test_agent_commands.sh"
     }
     $passed = $result -and $passed
 
@@ -696,10 +687,9 @@ try {
     $env:NCD_TEST_MODE = "1"
 
     # Prevent TUI from blocking on multi-match: inject ENTER to auto-select
-    # the first match, and when the key queue is empty, return ESC immediately
-    # instead of waiting for console input.
+    # the first match. When NCD_TEST_MODE is set, the TUI returns ESC if the
+    # key queue is empty instead of waiting for console input.
     $env:NCD_UI_KEYS = "ENTER"
-    $env:NCD_UI_KEYS_STRICT = "1"
     
     # Create isolated temp directory for this test run
     $testRunId = "ncd_test_$([System.DateTime]::Now.ToString('yyyyMMdd_HHmmss'))_$([System.Random]::new().Next(1000, 9999))"

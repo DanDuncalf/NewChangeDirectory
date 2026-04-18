@@ -131,11 +131,12 @@ The project requires a shared platform abstraction library located at `../shared
 
 ### Windows (MSVC)
 
-```batch
-:: Automatic Visual Studio detection and build
-build.bat
+```powershell
+# Automatic Visual Studio detection and build
+# (Use cmd /c because the Shell tool runs PowerShell by default)
+cmd /c build.bat
 
-:: Or manually from Visual Studio x64 Native Tools Command Prompt:
+# Or manually from Visual Studio x64 Native Tools Command Prompt:
 cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc /I../shared ^
    src\main.c src\database.c src\scanner.c src\matcher.c src\ui.c ^
    src\platform.c ../shared/platform.c ../shared/strbuilder.c ../shared/common.c ^
@@ -177,44 +178,56 @@ NCD provides **three safe test runners** that all use PowerShell internally for 
 
 **Why PowerShell?** Pure batch files cannot trap Ctrl+C interrupts, which can leave your environment corrupted. These runners delegate to PowerShell which uses `try/finally` blocks that CAN trap Ctrl+C.
 
+> **⚠️ AI Agent Note - Running `.bat` files via the Shell tool:** The Shell tool runs PowerShell by default. PowerShell does **not** execute `.bat` files by bare name (e.g., `Build-And-Run-All-Tests.bat` fails with "not recognized as a cmdlet"). Always invoke batch files using one of these forms:
+> ```powershell
+> # Option A: Explicitly run via cmd.exe (recommended)
+> cmd /c Build-And-Run-All-Tests.bat
+>
+> # Option B: Use .\ prefix so PowerShell resolves the path
+> .\Build-And-Run-All-Tests.bat
+> ```
+>
+> **⚠️ AI Agent Note - Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 3-4 minutes. Use `run_in_background=true` with a longer timeout (e.g., 600s) when invoking the full suite, or run `Run-All-Tests.bat` if binaries are already built (faster).
+
 #### Option 1: Build and Run All Tests (Recommended for CI/Full Validation)
 
-```batch
-:: Full build + test cycle - builds everything then runs all tests
-Build-And-Run-All-Tests.bat
+```powershell
+# Full build + test cycle - builds everything then runs all tests
+# (Use cmd /c because the Shell tool runs PowerShell by default)
+cmd /c Build-And-Run-All-Tests.bat
 
-:: Options
-Build-And-Run-All-Tests.bat --windows-only    :: Windows only
-Build-And-Run-All-Tests.bat --quick           :: Skip fuzz/benchmarks
-Build-And-Run-All-Tests.bat --no-service      :: Skip service tests
+# Options
+cmd /c Build-And-Run-All-Tests.bat --windows-only    # Windows only
+cmd /c Build-And-Run-All-Tests.bat --quick           # Skip fuzz/benchmarks
+cmd /c Build-And-Run-All-Tests.bat --no-service      # Skip service tests
 ```
 
 #### Option 2: Run All Tests (Pre-built Binaries)
 
-```batch
-:: Run all tests WITHOUT building (binaries must already exist)
-Run-All-Tests.bat
+```powershell
+# Run all tests WITHOUT building (binaries must already exist)
+cmd /c Run-All-Tests.bat
 
-:: Options
-Run-All-Tests.bat --windows-only    :: Windows only
-Run-All-Tests.bat --quick           :: Skip fuzz/benchmarks
-Run-All-Tests.bat --skip-unit-tests :: Skip unit tests
+# Options
+cmd /c Run-All-Tests.bat --windows-only    # Windows only
+cmd /c Run-All-Tests.bat --quick           # Skip fuzz/benchmarks
+cmd /c Run-All-Tests.bat --skip-unit-tests # Skip unit tests
 ```
 
 #### Option 3: Run Specific Test Suites (Development)
 
-```batch
-:: Run specific test suites
-Run-Tests-Safe.bat unit              :: Unit tests only
-Run-Tests-Safe.bat integration       :: Integration tests (6 suites)
-Run-Tests-Safe.bat service           :: Service tests only
-Run-Tests-Safe.bat ncd               :: NCD standalone tests
-Run-Tests-Safe.bat windows           :: All Windows tests
-Run-Tests-Safe.bat wsl               :: All WSL tests
+```powershell
+# Run specific test suites
+cmd /c Run-Tests-Safe.bat unit              # Unit tests only
+cmd /c Run-Tests-Safe.bat integration       # Integration tests (6 suites)
+cmd /c Run-Tests-Safe.bat service           # Service tests only
+cmd /c Run-Tests-Safe.bat ncd               # NCD standalone tests
+cmd /c Run-Tests-Safe.bat windows           # All Windows tests
+cmd /c Run-Tests-Safe.bat wsl               # All WSL tests
 
-:: Environment management
-Run-Tests-Safe.bat --check           :: Check if environment is clean
-Run-Tests-Safe.bat --repair          :: Repair corrupted environment
+# Environment management
+cmd /c Run-Tests-Safe.bat --check           # Check if environment is clean
+cmd /c Run-Tests-Safe.bat --repair          # Repair corrupted environment
 ```
 
 **All three runners are Ctrl+C safe and restore your environment.**
@@ -226,11 +239,12 @@ This section describes the complete process to build NCD and run all tests on al
 #### Step 1: Build NCD
 
 **Windows (MSVC):**
-```batch
-:: From project root - auto-detects Visual Studio
-build.bat
+```powershell
+# From project root - auto-detects Visual Studio
+# (Use cmd /c because the Shell tool runs PowerShell by default)
+cmd /c build.bat
 
-:: Verify binaries exist
+# Verify binaries exist
 dir NewChangeDirectory.exe
 dir NCDService.exe
 ```
@@ -253,9 +267,10 @@ ls -la ncd_service
 #### Step 2: Build Test Executables
 
 **Windows:**
-```batch
+```powershell
 cd test
-build-tests.bat
+# (Use cmd /c because the Shell tool runs PowerShell by default)
+cmd /c build-tests.bat
 ```
 
 **Linux/WSL:**
@@ -270,50 +285,54 @@ make all
 
 Runs both unit tests and integration tests across all platforms:
 
-```batch
-:: From project root - Run all tests (pre-built binaries)
-Run-All-Tests.bat
+```powershell
+# From project root - Run all tests (pre-built binaries) - FASTEST
+# Use this when test executables already exist in test\ directory
+cmd /c Run-All-Tests.bat
 
-:: From project root - Build then run all tests
-Build-And-Run-All-Tests.bat
+# From project root - Build then run all tests - SLOWER
+# Use this only if binaries are missing or you need a fresh build
+cmd /c Build-And-Run-All-Tests.bat
 
-:: Windows only
-Run-All-Tests.bat --windows-only
-Build-And-Run-All-Tests.bat --windows-only
+# Windows only
+cmd /c Run-All-Tests.bat --windows-only
+cmd /c Build-And-Run-All-Tests.bat --windows-only
 
-:: Quick mode (skip fuzz/benchmarks)
-Run-All-Tests.bat --quick
-Build-And-Run-All-Tests.bat --quick
+# Quick mode (skip fuzz/benchmarks)
+cmd /c Run-All-Tests.bat --quick
+cmd /c Build-And-Run-All-Tests.bat --quick
 ```
+
+**Agent Decision Rule:** If `test\*.exe` files exist, prefer `Run-All-Tests.bat`. Only use `Build-And-Run-All-Tests.bat` if binaries are missing or the user explicitly requests a rebuild.
 
 **Option B: Run Only Unit Tests**
 
-```batch
-:: Windows - from test directory
+```powershell
+# Windows - from test directory
 cd test
-Run-All-Unit-Tests.bat
+cmd /c Run-All-Unit-Tests.bat
 
-:: Skip fuzz tests (faster)
-Run-All-Unit-Tests.bat --skip-fuzz
+# Skip fuzz tests (faster)
+cmd /c Run-All-Unit-Tests.bat --skip-fuzz
 
-:: Linux/WSL
+# Linux/WSL
 cd test
 make test
 ```
 
 **Option C: Run Only Integration Tests (6 Test Suites)**
 
-```batch
-:: All 6 test suites (use the main runners for safety)
-Run-All-Tests.bat --skip-unit-tests
-Build-And-Run-All-Tests.bat --skip-unit-tests
+```powershell
+# All 6 test suites (use the main runners for safety)
+cmd /c Run-All-Tests.bat --skip-unit-tests
+cmd /c Build-And-Run-All-Tests.bat --skip-unit-tests
 
-:: Individual suites (for development only)
-Test-Service-Windows.bat              :: Service isolated (Windows)
-Test-NCD-Windows-Standalone.bat       :: NCD standalone (Windows)
-Test-NCD-Windows-With-Service.bat     :: NCD with service (Windows)
+# Individual suites (for development only)
+cmd /c Test-Service-Windows.bat              # Service isolated (Windows)
+cmd /c Test-NCD-Windows-Standalone.bat       # NCD standalone (Windows)
+cmd /c Test-NCD-Windows-With-Service.bat     # NCD with service (Windows)
 
-:: WSL (from project root)
+# WSL (from project root)
 bash test/Test-Service-WSL.sh
 bash test/Test-NCD-WSL-Standalone.sh
 bash test/Test-NCD-WSL-With-Service.sh
@@ -345,6 +364,77 @@ bash test/Test-NCD-WSL-With-Service.sh
 
 **IMPORTANT:** For normal testing, always use the three primary runners at the project root. The individual test scripts in the `test\` directory should only be used when actively developing or debugging specific test scenarios, as they require proper environment setup that the primary runners handle automatically.
 
+### Test Suite Breakdown by Platform and Category
+
+When the user says "run tests" without specifying which tests, the default is to run all tests. Here is the complete breakdown of the 11 test suites executed by the primary runners:
+
+| # | Suite | Platform | Category | Typical Duration | Checks | Expected Result |
+|---|-------|----------|----------|------------------|--------|-----------------|
+| 1 | Unit Tests | Windows | Unit | < 1s | 356+ | PASS |
+| 2 | Service Tests (Isolated) | Windows | Integration | ~5s | ~10 | PASS |
+| 3 | NCD Standalone | Windows | Integration | ~3s | ~10 | PASS |
+| 4 | NCD with Service | Windows | Integration | ~5s | ~10 | PASS |
+| 5 | Windows Feature Tests | Windows | Integration | ~60s | ~68 | PASS |
+| 6 | Windows Agent Command Tests | Windows | Integration | ~10s | ~40 | PASS |
+| 7 | WSL Service Tests | WSL | Integration | ~25s | ~10 | PASS |
+| 8 | WSL NCD Standalone | WSL | Integration | ~3s | ~15 | PASS |
+| 9 | WSL NCD with Service | WSL | Integration | ~25s | ~16 | PASS |
+| 10 | WSL Feature Tests | WSL | Integration | ~46s | ~49 | PASS |
+| 11 | WSL Agent Command Tests | WSL | Integration | < 1s | ~31 | PASS |
+| | **Total** | | | **~3:00-4:00** | **~615** | **11/11 PASS** |
+
+**How to report results — MANDATORY FORMAT:**
+
+When reporting test results to the user, the **ONLY** acceptable format is a **complete per-test listing**. You **must** list every individual test by name with its exact status (`PASSED`, `FAILED`, or `SKIP`). Suite-level summary tables and totals alone are **NOT** acceptable.
+
+**Quick method:** Run `python test/generate_report.py` from the project root.
+
+This script includes its own environment isolation (mirroring the safe batch runners):
+- Creates an isolated temp directory for test data
+- Redirects `LOCALAPPDATA` and `XDG_DATA_HOME` to that temp dir
+- Sets `NCD_TEST_MODE=1`
+- Stops any running NCD services before testing
+- Restores environment and cleans up on exit (even on Ctrl+C)
+
+It then produces the complete per-test report by running each unit test executable and parsing per-test names/statuses, plus counting individual checks in integration test script sources.
+
+**Full build + test + report (recommended for CI):**
+1. Run `cmd /c Build-And-Run-All-Tests.bat` to build and run all tests safely
+2. Then run `python test/generate_report.py` for the detailed per-test breakdown
+
+**Manual method (if script is unavailable):**
+1. Run each unit test executable directly to capture full per-test output.
+2. For every executable, present a table showing each test name and its status.
+3. Finish with a module-level summary table (executable, tests run, passed, failed, skipped).
+4. For integration suites, list each suite with platform, duration, and PASS/FAIL.
+5. Count individual checks in integration scripts via `grep -c 'pass\|fail\|TEST'` on script sources.
+6. Report the pass/fail/not ran ratio for each suite.
+
+**Required elements in every report:**
+- Per-executable test tables with every test name and status
+- Module-level summary table (executable, run, passed, failed, skipped)
+- Integration suite table with **check counts** and platform
+- Grand total table combining unit + integration numbers
+
+**Example (unit tests):**
+```
+### test_database.exe (50 tests)
+| # | Test | Status |
+| 1 | create_and_free | [OK] PASSED |
+...
+**Ratio: 50/50 passed | 0 failed | 0 skipped**
+```
+
+**Example (integration suites):**
+```
+| # | Suite | Platform | Checks | Passed | Failed | Skipped | Status |
+| 1 | Service Tests (Isolated) | Windows | ~10 | ~10 | 0 | 0 | [PASS] |
+```
+
+**Do NOT** present only summary lines like `Total Suites: 11 | Passed: 11` without the full per-test breakdown.
+
+**Note:** Some WSL suites may emit bash warnings (e.g., "ignored null byte in input") or show aborted processes in agent command tests. These are typically expected for negative test cases and do **not** indicate failures as long as the harness reports `[PASS]`.
+
 ### Test Isolation (CRITICAL)
 
 All tests must be **completely isolated** from the user's real data:
@@ -370,16 +460,12 @@ The test runners automatically handle these environment variables:
 
 | Variable | Purpose | Set By |
 |----------|---------|--------|
-| `NCD_TEST_MODE=1` | Disables automatic background rescans | All test runners |
+| `NCD_TEST_MODE` | Disables automatic background rescans. In debug builds, also enables headless stdio TUI mode. Optionally set dimensions as `cols,rows` (e.g., `80,25`). | All test runners |
 | `LOCALAPPDATA` | Isolates metadata from user data (set to temp dir) | Windows test runners |
 | `XDG_DATA_HOME` | Isolates metadata on Linux/WSL (set to temp dir) | WSL test runners |
-| `NCD_UI_KEYS` | Comma-separated keys to inject into TUI | Manual testing/CI |
-| `NCD_UI_KEYS_FILE` | File containing keys to inject | Manual testing/CI |
-| `NCD_UI_KEYS_STRICT=1` | Exit TUI with ESC when keys exhausted | Automated testing |
+| `NCD_UI_KEYS` | Comma-separated keys to inject into TUI. Prefix with `@` to load from a file (e.g., `@keys.txt`). | Manual testing/CI |
 | `NCD_UI_KEY_TIMEOUT_MS` | Timeout for key injection (milliseconds) | Automated testing |
-| `NCD_TUI_TEST=1` | Enable headless TUI mode (stdout output) | Automated testing |
-| `NCD_TUI_COLS` | Terminal width for headless mode (default: 80) | Automated testing |
-| `NCD_TUI_ROWS` | Terminal height for headless mode (default: 25) | Automated testing |
+| `NCD_STRESS_ITERATIONS` | Reduces iteration count for stress tests | Development |
 
 **Environment Isolation Mechanism:**
 
@@ -413,8 +499,8 @@ The primary test runners implement multiple layers of isolation:
 | Individual `test\*.bat` files | Various | Various | ❌ No | ⚠️ Partial |
 
 **If your environment gets corrupted**, run:
-```batch
-Run-Tests-Safe.bat --repair
+```powershell
+cmd /c Run-Tests-Safe.bat --repair
 ```
 
 ### Running Unit Tests
@@ -584,7 +670,7 @@ make service-test
 
 # Windows - Service tests are included in build-and-run-tests.bat
 cd test
-build-and-run-tests.bat
+cmd /c build-and-run-tests.bat
 ```
 
 **Note:** Service tests require the service executable to be built:
@@ -608,13 +694,8 @@ NCD supports automated keystroke injection for testing and scripting the interac
 
 | Variable | Purpose |
 |----------|---------|
-| `NCD_UI_KEYS` | Comma-separated list of keys to inject (e.g., `DOWN,ENTER,TEXT:hello`) |
-| `NCD_UI_KEYS_FILE` | Path to a file containing keys to inject |
-| `NCD_UI_KEYS_STRICT` | If set to `1`, returns ESC when injected keys are exhausted (deterministic failure) |
+| `NCD_UI_KEYS` | Comma-separated list of keys to inject (e.g., `DOWN,ENTER,TEXT:hello`). Prefix with `@` to load from a file (e.g., `@keys.txt`). |
 | `NCD_UI_KEY_TIMEOUT_MS` | Timeout in milliseconds to wait for next key (default: waits indefinitely) |
-| `NCD_TUI_TEST` | Set to `1` to enable stdio backend for headless testing (dumps TUI to stdout) |
-| `NCD_TUI_COLS` | Number of columns for TUI display (headless mode, default: 80) |
-| `NCD_TUI_ROWS` | Number of rows for TUI display (headless mode, default: 25) |
 
 **Key Tokens:**
 
@@ -652,35 +733,28 @@ set "NCD_UI_KEYS="
 For automated testing without a real console, enable the stdio backend:
 
 ```batch
-:: Enable headless mode, set terminal size, inject keystrokes
-set "NCD_TUI_TEST=1"
-set "NCD_TUI_COLS=80"
-set "NCD_TUI_ROWS=25"
+:: Enable headless mode with custom dimensions, inject keystrokes
+set "NCD_TEST_MODE=80,25"
 set "NCD_UI_KEYS=DOWN,ENTER,TEXT:mydir,ENTER"
-set "NCD_UI_KEYS_STRICT=1"
 
 :: Run NCD - output goes to stdout instead of console
 ncd -c > tui_output.txt 2>&1
 
 :: Clean up
-set "NCD_TUI_TEST="
-set "NCD_TUI_COLS="
-set "NCD_TUI_ROWS="
+set "NCD_TEST_MODE="
 set "NCD_UI_KEYS="
-set "NCD_UI_KEYS_STRICT="
 ```
 
-In headless mode (`NCD_TUI_TEST=1`):
+In headless mode (`NCD_TEST_MODE` is set in a debug build):
 - TUI output is written to stdout as text instead of console control codes
-- Keystrokes are injected from `NCD_UI_KEYS` or `NCD_UI_KEYS_FILE`
-- Display size is controlled by `NCD_TUI_COLS`/`NCD_TUI_ROWS`
+- Keystrokes are injected from `NCD_UI_KEYS` (use `@file` to load from a file)
+- Display size defaults to 80x25, or parsed from `NCD_TEST_MODE` as `cols,rows`
 - Useful for CI/CD pipelines and automated testing
 
 **Notes:**
 - Key names are case-insensitive (`enter`, `ENTER`, `Enter` all work)
 - Keys are consumed from the queue in order
-- Once the queue is empty, normal console input resumes (unless `NCD_UI_KEYS_STRICT=1`)
-- Use `NCD_UI_KEYS_STRICT=1` to make the TUI exit with ESC when keys are exhausted (deterministic failure)
+- Once the queue is empty, the TUI returns ESC (deterministic failure) when `NCD_TEST_MODE` is set
 - Use `NCD_UI_KEY_TIMEOUT_MS=5000` to set a 5-second timeout waiting for keys
 
 ## Code Style Guidelines
@@ -784,13 +858,13 @@ typedef struct {
 **Cause:** Previous test was interrupted with Ctrl+C (batch file limitation)
 
 **Fix:**
-```batch
-:: Quick repair
-Run-Tests-Safe.bat --repair
+```powershell
+# Quick repair
+cmd /c Run-Tests-Safe.bat --repair
 
-:: Or manually
-set LOCALAPPDATA=%USERPROFILE%\AppData\Local
-set NCD_TEST_MODE=
+# Or manually
+$env:LOCALAPPDATA="$env:USERPROFILE\AppData\Local"
+$env:NCD_TEST_MODE=""
 ```
 
 #### "Tests interrupted and environment not cleaned up"
@@ -798,12 +872,12 @@ set NCD_TEST_MODE=
 **Cause:** Batch files cannot trap Ctrl+C
 
 **Prevention:**
-```batch
-:: Use PowerShell runner (Ctrl+C safe!)
-Run-Tests-Safe.bat
+```powershell
+# Use PowerShell runner (Ctrl+C safe!)
+cmd /c Run-Tests-Safe.bat
 
-:: Or use isolated mode (runs in subprocess)
-test\Run-Isolated.bat test\Test-Service-Windows.bat
+# Or use isolated mode (runs in subprocess)
+cmd /c test\Run-Isolated.bat test\Test-Service-Windows.bat
 ```
 
 **Repair:**
@@ -812,7 +886,7 @@ test\Run-Isolated.bat test\Test-Service-Windows.bat
 .\Check-Environment.ps1 -Repair
 
 # Or use the batch wrapper
-Run-Tests-Safe.bat --repair
+cmd /c Run-Tests-Safe.bat --repair
 ```
 
 #### "Cannot run PowerShell scripts"
@@ -825,7 +899,7 @@ Run-Tests-Safe.bat --repair
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Or use the batch wrapper (bypasses policy)
-Run-Tests-Safe.bat
+cmd /c Run-Tests-Safe.bat
 ```
 
 #### "Service tests timeout or hang"

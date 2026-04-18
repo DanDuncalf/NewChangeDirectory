@@ -32,6 +32,21 @@ cd /d E:\llama\NewChangeDirectory
 Run-Tests-Safe.bat
 ```
 
+### ⚠️ AI Agent Notes
+
+**Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 3-4 minutes. Use `run_in_background=true` with a longer timeout (e.g., 600s) when invoking the full suite.
+
+**Prefer Run-All-Tests.bat when binaries exist:** If `test\*.exe` files are already present, use `cmd /c Run-All-Tests.bat` instead of `Build-And-Run-All-Tests.bat` to avoid unnecessary rebuild time. Only build if binaries are missing or the user explicitly requests a rebuild.
+
+**Proper PowerShell syntax:** The Shell tool runs PowerShell. Do NOT use CMD redirection syntax like `2>nul` or pipes to `findstr`/`head` directly in PowerShell. Use native PowerShell cmdlets instead:
+```powershell
+# ❌ WRONG - PowerShell does not understand `2>nul` or `head`
+dir test\*.exe 2>nul | findstr /i "\.exe" | head -20
+
+# ✅ CORRECT - Use Get-ChildItem and Select-Object
+Get-ChildItem -Path "test" -Filter "*.exe" | Select-Object -First 20 Name
+```
+
 ### ❌ NEVER Do This
 ```batch
 :: WRONG - Environment will not be restored!
@@ -85,6 +100,66 @@ Run-Tests-Safe.bat --repair
 Run-Tests-Safe.bat --check           :: Check environment only
 Run-Tests-Safe.bat --repair          :: Repair corrupted environment
 ```
+
+---
+
+## Complete Test Suite Breakdown
+
+When running "all tests", the following 11 suites execute. Report results using this format:
+
+| # | Suite | Platform | Category | Typical Duration | Checks | Expected |
+|---|-------|----------|----------|------------------|--------|----------|
+| 1 | Unit Tests | Windows | Unit | < 1s | 356+ | PASS |
+| 2 | Service Tests (Isolated) | Windows | Integration | ~5s | ~10 | PASS |
+| 3 | NCD Standalone | Windows | Integration | ~3s | ~10 | PASS |
+| 4 | NCD with Service | Windows | Integration | ~5s | ~10 | PASS |
+| 5 | Windows Feature Tests | Windows | Integration | ~60s | ~68 | PASS |
+| 6 | Windows Agent Command Tests | Windows | Integration | ~10s | ~40 | PASS |
+| 7 | WSL Service Tests | WSL | Integration | ~25s | ~10 | PASS |
+| 8 | WSL NCD Standalone | WSL | Integration | ~3s | ~15 | PASS |
+| 9 | WSL NCD with Service | WSL | Integration | ~25s | ~16 | PASS |
+| 10 | WSL Feature Tests | WSL | Integration | ~46s | ~49 | PASS |
+| 11 | WSL Agent Command Tests | WSL | Integration | < 1s | ~31 | PASS |
+| | **Total** | | | **~3:00-4:00** | **~615** | **11/11 PASS** |
+
+### Expected Output Format — MANDATORY
+
+When reporting results to the user, the **ONLY** acceptable format is a **complete per-test listing** with **check counts and ratios per suite**.
+
+**Preferred method:** Run `python test/generate_report.py` from the project root.
+
+This script is self-isolating (safe to run standalone):
+- Creates a temp directory and redirects `LOCALAPPDATA` / `XDG_DATA_HOME`
+- Sets `NCD_TEST_MODE=1`
+- Stops any running NCD services before testing
+- Restores environment and cleans up on exit (even on Ctrl+C)
+
+It then produces the complete per-test report with check counts and ratios.
+
+**Full build + test + report (recommended for CI):**
+1. Run `cmd /c Build-And-Run-All-Tests.bat` for the safe full test cycle
+2. Then run `python test/generate_report.py` for the detailed per-test breakdown
+
+**Manual method (fallback):**
+1. **Unit tests:** Run each `test_*.exe` directly and present a per-test table for every executable (test name + status).
+2. **Integration tests:** List each suite with platform, duration, PASS/FAIL, and the **number of individual checks** performed in that suite.
+3. **Ratios:** For every suite, report `X/Y passed | Z failed | W skipped`.
+4. **Summaries:** Provide module-level and overall totals **only after** the full per-test listing.
+
+**What counts as a "check":**
+- Unit tests: each `TEST(name)` function is one check
+- Integration suites: each `pass()`/`fail()` call, `call :test_*` helper, or `[TEST N]` label is one check
+- Use `grep -cE 'pass|fail|TEST' <script>` to approximate check counts
+
+**Do NOT** present only:
+- `Total Suites: X | Passed: X | Failed: X`
+- Aggregate counts without the individual test names
+- Executable-level totals without breaking out each test inside
+- Integration suites without check counts and pass/fail ratios
+
+**Notes:**
+- Some WSL suites may emit bash warnings (e.g., "ignored null byte in input") or show aborted processes. These are typically expected for negative test cases and do **not** indicate failures as long as the harness reports `[PASS]`.
+- The total duration varies based on system load and WSL performance.
 
 ---
 
@@ -307,17 +382,22 @@ wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make all 2>&1 | tail -10
 ### Windows Integration Tests (All Should Pass)
 | Test Suite | Tests | Expected | Typical Duration |
 |------------|-------|----------|------------------|
-| Test-Service-Windows.bat | 1 suite | PASS | ~5 seconds |
-| Test-NCD-Windows-Standalone.bat | 12/12 | PASS | ~15 seconds |
-| Test-NCD-Windows-With-Service.bat | 12/12 | PASS | ~15 seconds |
-| **Total** | **100% pass rate** | **~35 seconds** |
+| Service Tests (Isolated) | 1 suite | PASS | ~5s |
+| NCD Standalone | 12/12 | PASS | ~3s |
+| NCD with Service | 12/12 | PASS | ~5s |
+| Windows Feature Tests | varies | PASS | ~60s |
+| Windows Agent Command Tests | varies | PASS | ~10s |
+| **Total** | **100% pass rate** | **~83 seconds** |
 
-### WSL Integration Tests (Most Should Pass)
-| Test Script | Tests | Expected | Notes |
-|-------------|-------|----------|-------|
-| test_integration.sh | 6/7 | Mostly PASS | 1 scan failure acceptable |
-| test_agent_commands.sh | varies | Check output | May need service |
-| test_features.sh | varies | Check output | May need root |
+### WSL Integration Tests (All Should Pass)
+| Test Suite | Tests | Expected | Typical Duration | Notes |
+|------------|-------|----------|------------------|-------|
+| WSL Service Tests | 1 suite | PASS | ~25s | |
+| WSL NCD Standalone | varies | PASS | ~3s | |
+| WSL NCD with Service | varies | PASS | ~25s | |
+| WSL Feature Tests | varies | PASS | ~46s | |
+| WSL Agent Command Tests | varies | PASS | < 1s | May show aborted processes (expected) |
+| **Total** | **100% pass rate** | **~100 seconds** | |
 
 ### WSL Unit Tests (Most Should Pass)
 | Test Suite | Expected | Notes |
@@ -409,13 +489,15 @@ set NCD_TEST_MODE=
 | Matcher | ✅ | ✅ | 23 tests |
 | Scanner | ✅ | ✅ | 9 tests |
 | CLI | ✅ | ✅ | 31 tests |
-| Service | ✅ | ⚠️ | Some timing issues in WSL |
+| Service | ✅ | ✅ | 13 lifecycle + 11 integration |
 | Platform | ✅ | ✅ | 12 tests |
-| UI | ✅ | ❌ | Extended tests may fail to compile |
+| UI | ✅ | ⚠️ | Extended tests may fail to compile in WSL |
 | Corruption | ✅ | ✅ | 13 tests |
 | Bugs | ✅ | ✅ | 15 tests |
 
-**Total:** 254+ unit tests + integration tests
+**Unit Tests Total:** 254+ tests across all modules
+**Integration Suites:** 11 suites (5 Windows + 5 WSL + 1 combined Unit Tests)
+**Overall:** 880+ tests total when including extended and integration tests
 
 ---
 
