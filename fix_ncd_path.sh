@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Fix NCD PATH to use new version
 
 echo "=== Fixing NCD PATH ==="

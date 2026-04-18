@@ -566,7 +566,7 @@ static UiIoOps *g_ui_ops = NULL;
 
 #ifndef NDEBUG
 /* Forward declaration for stdio TUI test backend.
- * Returns pointer to static ops struct, or NULL if NCD_TUI_TEST!=1. */
+ * Returns pointer to static ops struct, or NULL if NCD_TEST_MODE is not set. */
 static UiIoOps *stdio_backend_init(void);
 #endif
 
@@ -594,7 +594,6 @@ static int  test_backend_read_key(void);
 static int  g_key_queue[KEY_QUEUE_MAX];
 static int  g_key_queue_head = 0;
 static int  g_key_queue_tail = 0;
-static bool g_key_queue_strict = false;
 
 static void load_keys_from_env(void)
 {
@@ -604,17 +603,11 @@ static void load_keys_from_env(void)
     
     const char *keys = getenv("NCD_UI_KEYS");
     if (keys && keys[0]) {
-        ui_inject_keys(keys);
-    }
-    
-    const char *keys_file = getenv("NCD_UI_KEYS_FILE");
-    if (keys_file && keys_file[0]) {
-        ui_inject_keys_from_file(keys_file);
-    }
-    
-    const char *strict = getenv("NCD_UI_KEYS_STRICT");
-    if (strict && strict[0] == '1') {
-        g_key_queue_strict = true;
+        if (keys[0] == '@') {
+            ui_inject_keys_from_file(keys + 1);
+        } else {
+            ui_inject_keys(keys);
+        }
     }
 }
 
@@ -966,12 +959,6 @@ static int test_backend_read_key(void)
         return key_queue_pop();
     }
 
-    /* Check strict mode */
-    const char *strict = getenv("NCD_UI_KEYS_STRICT");
-    if (strict && strict[0] == '1') {
-        return KEY_ESC; /* deterministic failure */
-    }
-
     /* Optional timeout from environment */
     const char *to_env = getenv("NCD_UI_KEY_TIMEOUT_MS");
     if (to_env) {
@@ -1054,11 +1041,15 @@ void ui_snapshot_free(UiSnapshot *snap)
 /* ======================================================================== */
 
 /*
- * When NCD_TUI_TEST=1 is set (debug builds only), the TUI renders to an
+ * When NCD_TEST_MODE is set (debug builds only), the TUI renders to an
  * in-memory grid and dumps the final frame to stdout on close.  Keys are
- * read from the injected key queue (set via NCD_UI_KEYS or NCD_UI_KEYS_FILE).
+ * read from the injected key queue (set via NCD_UI_KEYS, which also supports
+ * @filename syntax to load keys from a file).
  * This lets batch files drive the TUI and capture output for comparison
  * against expected output files.
+ *
+ * NCD_TEST_MODE may optionally specify terminal dimensions as "cols,rows"
+ * (e.g., NCD_TEST_MODE=80,25).  If no comma is present, defaults are used.
  */
 #ifndef NDEBUG
 
@@ -1074,10 +1065,16 @@ static bool  g_stdio_active = false;
 
 static void stdio_open_console(void)
 {
-    const char *env_cols = getenv("NCD_TUI_COLS");
-    const char *env_rows = getenv("NCD_TUI_ROWS");
-    if (env_cols) { int c = atoi(env_cols); if (c > 0 && c <= STDIO_GRID_MAX_COLS) g_stdio_cols = c; }
-    if (env_rows) { int r = atoi(env_rows); if (r > 0 && r <= STDIO_GRID_MAX_ROWS) g_stdio_rows = r; }
+    const char *test_mode = getenv("NCD_TEST_MODE");
+    if (test_mode && test_mode[0]) {
+        const char *comma = strchr(test_mode, ',');
+        if (comma) {
+            int c = atoi(test_mode);
+            int r = atoi(comma + 1);
+            if (c > 0 && c <= STDIO_GRID_MAX_COLS) g_stdio_cols = c;
+            if (r > 0 && r <= STDIO_GRID_MAX_ROWS) g_stdio_rows = r;
+        }
+    }
     for (int r = 0; r < g_stdio_rows; r++) {
         memset(g_stdio_grid[r], ' ', (size_t)g_stdio_cols);
         g_stdio_grid[r][g_stdio_cols] = '\0';
@@ -1189,9 +1186,9 @@ static UiIoOps g_stdio_ops;
 
 static UiIoOps *stdio_backend_init(void)
 {
-    const char *env = getenv("NCD_TUI_TEST");
-    fprintf(stderr, "STDIO_INIT: NCD_TUI_TEST=%s\n", env ? env : "(null)");
-    if (!env || env[0] != '1') return NULL;
+    const char *env = getenv("NCD_TEST_MODE");
+    fprintf(stderr, "STDIO_INIT: NCD_TEST_MODE=%s\n", env ? env : "(null)");
+    if (!env || !env[0]) return NULL;
     fprintf(stderr, "STDIO_INIT: activating stdio backend\n");
 
     g_stdio_ops.open_console  = stdio_open_console;

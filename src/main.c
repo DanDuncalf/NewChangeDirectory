@@ -957,26 +957,26 @@ static void print_usage(void)
         "  -r:/                             Rescan root filesystem only (excludes /mnt/*)\r\n"
 #endif
         "  -r:.                             Rescan current subdirectory only\r\n"
-        "  -r:<drives>                      Rescan specific drives (e.g., -r:d or -r:bde)\r\n"
-        "  -r:-<drives>                     Rescan all drives except specified (e.g., -r:-c)\r\n"
+        "  -r:<drives>                      Rescan specific drives (-r:d, -r=d, or -r d)\r\n"
+        "  -r:-<drives>                     Rescan all except specified (-r:-c, -r=-c, or -r -c)\r\n"
         "\r\n"
         "Exclusions:\r\n"
 #if NCD_PLATFORM_WINDOWS
-        "  -x:<pat>                         Add exclusion pattern (e.g., -x:C:\\Windows)\r\n"
+        "  -x:<pat>                         Add exclusion pattern (-x:pat, -x=pat, or -x pat)\r\n"
 #else
-        "  -x:<pat>                         Add exclusion pattern (e.g., -x:/proc)\r\n"
+        "  -x:<pat>                         Add exclusion pattern (-x:pat, -x=pat, or -x pat)\r\n"
 #endif
-        "  -X:<pat>                         Remove exclusion pattern\r\n"
+        "  -X:<pat>                         Remove exclusion pattern (-X:pat, -X=pat, or -X pat)\r\n"
         "  -x:l                             List exclusion patterns\r\n"
         "\r\n"
         "Configuration & System:\r\n"
         "  -c, --config                     Edit default options interactively\r\n"
-        "  -d:<path>                        Use alternate database file\r\n"
-        "  -t:<sec>                         Scan timeout in seconds (default: 300)\r\n"
-        "  --retry:<n>                      Service busy retry count (0-255)\r\n"
-        "  -u:8 | -u:16                     Set text encoding (UTF-8 or UTF-16LE)\r\n"
+        "  -d:<path>                        Use alternate database file (-d:path, -d=path, or -d path)\r\n"
+        "  -t:<sec>                         Scan timeout in seconds (-t:30, -t=30, or -t 30)\r\n"
+        "  --retry:<n>                      Service busy retry count (--retry:5, --retry=5, or --retry 5)\r\n"
+        "  -u:8 | -u:16                     Set text encoding (-u:8, -u=8, -u 8, -u:16, -u=16, or -u 16)\r\n"
         "  -v, --version                    Print version\r\n"
-        "  --agent:<cmd>                    LLM integration mode (e.g., --agent:query <term>)\r\n"
+        "  --agent:<cmd>                    LLM integration mode (--agent:query, --agent=query, or --agent query)\r\n"
 #if NCD_PLATFORM_WINDOWS
         "\r\n"
         "Windows Note:\r\n"
@@ -1007,6 +1007,8 @@ static void print_usage(void)
         "  ncd -0                     Swap to previous directory\r\n"
         "  ncd -r                     Rescan all drives\r\n"
         "  ncd -r:bde                 Rescan drives B:, D:, E: only\r\n"
+        "  ncd -r bde                 Same as above (space-separated)\r\n"
+        "  ncd -r=bde                 Same as above (= separator)\r\n"
 #else
     ncd_print(
         "\r\n"
@@ -1022,6 +1024,8 @@ static void print_usage(void)
         "  ncd -0                     Swap to previous directory\r\n"
         "  ncd -r                     Rescan all mounted filesystems\r\n"
         "  ncd -r:/                   Rescan root filesystem only\r\n"
+        "  ncd -r /                   Same as above (space-separated)\r\n"
+        "  ncd -r=/                   Same as above (= separator)\r\n"
 #endif
         "\r\n"
         "Tab Completion:\r\n"
@@ -1793,9 +1797,11 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     platform_strncpy_s(search_path, sizeof(search_path), opts->search);
     
     /* Normalize path */
+#if NCD_PLATFORM_WINDOWS
     for (char *p = search_path; *p; p++) {
         if (*p == '/') *p = '\\';
     }
+#endif
 #if NCD_PLATFORM_WINDOWS
     /* Ensure drive letters have a trailing backslash (R: -> R:\) */
     size_t sp_len = strlen(search_path);
@@ -2064,8 +2070,10 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         if (db) {
             char search_path[NCD_MAX_PATH];
             platform_strncpy_s(search_path, sizeof(search_path), opts->search);
+#if NCD_PLATFORM_WINDOWS
             for (char *p = search_path; *p; p++)
                 if (*p == '/') *p = '\\';
+#endif
 #if NCD_PLATFORM_WINDOWS
             /* Ensure drive letters have a trailing backslash (R: -> R:\) */
             size_t sp_len = strlen(search_path);

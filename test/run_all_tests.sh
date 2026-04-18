@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==========================================================================
 # run_all_tests.sh -- Comprehensive NCD Test Runner (All 4 Environments)
 # ==========================================================================

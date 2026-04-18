@@ -1,7 +1,7 @@
 /* test_tui_integration.c -- TUI integration tests for NCD
  * 
  * Tests the actual NCD executable with injected key inputs.
- * Uses NCD_UI_KEYS_FILE environment variable to drive the TUI.
+ * Uses NCD_UI_KEYS environment variable (with @file syntax) to drive the TUI.
  */
 
 #include "test_framework.h"
@@ -49,7 +49,7 @@ static int run_ncd_with_keys(const char *keys, const char *args) {
     
     /* Build command with environment variables */
     snprintf(cmd, sizeof(cmd),
-        "NCD_UI_KEYS_FILE=%s NCD_UI_KEYS_STRICT=1 %s -conf %s %s 2>/dev/null",
+        "NCD_TEST_MODE=1 NCD_UI_KEYS=@%s %s -conf %s %s 2>/dev/null",
         KEYS_FILE, NCD_EXE, CONFIG_FILE, args);
     
     int rc = system(cmd);

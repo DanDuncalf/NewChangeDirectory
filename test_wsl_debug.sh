@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -x  # Enable trace
 
 export NCD_TEST_MODE=1

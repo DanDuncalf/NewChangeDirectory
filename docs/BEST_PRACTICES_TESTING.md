@@ -44,7 +44,7 @@ Run-Tests-Safe.bat wsl
 wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make test"
 
 :: Direct WSL integration tests (if you must)
-wsl bash -c "export NCD_TEST_MODE=1; export NCD_UI_KEYS=ENTER; export NCD_UI_KEYS_STRICT=1; cd /mnt/e/llama/NewChangeDirectory/test && bash test_service_wsl.sh"
+wsl bash -c "export NCD_TEST_MODE=1; export NCD_UI_KEYS=ENTER; cd /mnt/e/llama/NewChangeDirectory/test && bash test_service_wsl.sh"
 ```
 
 ---
@@ -58,7 +58,6 @@ When running WSL tests outside the PowerShell harness (not recommended, but some
 ```bash
 export NCD_TEST_MODE=1          # Prevents background rescans of real drives
 export NCD_UI_KEYS=ENTER        # Auto-selects first match in TUI
-export NCD_UI_KEYS_STRICT=1     # Returns ESC instead of hanging when keys exhausted
 export XDG_DATA_HOME=/tmp/ncd_test_$$  # Isolates metadata from real user data
 ```
 
@@ -152,7 +151,6 @@ pkill -9 -f 'NewChangeDirectory'
 # 2. Set UI keys
 export NCD_TEST_MODE=1
 export NCD_UI_KEYS=ENTER
-export NCD_UI_KEYS_STRICT=1
 ```
 
 ### "Execution of scripts is disabled" (PowerShell)

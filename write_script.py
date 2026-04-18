@@ -3,7 +3,6 @@ lines = [
     "set -e",
     "export NCD_TEST_MODE=1",
     "export NCD_UI_KEYS=ENTER",
-    "export NCD_UI_KEYS_STRICT=1",
     "export XDG_DATA_HOME=/tmp/ncd_unit_run_manual",
     'mkdir -p "$XDG_DATA_HOME"',
     "cd /mnt/e/llama/NewChangeDirectory/test",

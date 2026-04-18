@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -e
 export NCD_TEST_MODE=1
 export NCD_UI_KEYS=ENTER

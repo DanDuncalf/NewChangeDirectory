@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 set "NCD_TEST_MODE=1"
 set "NCD_UI_KEYS=ENTER"
-set "NCD_UI_KEYS_STRICT=1"
+
 set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
 set "TEST_DATA=%TEMP%\ncd_rem_debug_%RANDOM%"
 mkdir "%TEST_DATA%" 2>nul

@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 export NCD_TEST_MODE=1
 export XDG_DATA_HOME=/tmp/trace_test_$$
 mkdir -p "$XDG_DATA_HOME/ncd"

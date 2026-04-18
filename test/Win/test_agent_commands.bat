@@ -67,9 +67,8 @@ set "NCD=%PROJECT_ROOT%\NewChangeDirectory.exe"
 :: Disable NCD background rescans to prevent scanning user drives during tests
 set "NCD_TEST_MODE=1"
 
-:: Prevent TUI from blocking: auto-select first item, ESC if queue empty
+:: Prevent TUI from blocking: auto-select first item
 set "NCD_UI_KEYS=ENTER"
-set "NCD_UI_KEYS_STRICT=1"
 
 set "REAL_LOCALAPPDATA=%LOCALAPPDATA%"
 

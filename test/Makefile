@@ -70,7 +70,7 @@ fuzz_database: fuzz_database.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Agent 1 tests - Database Load Fuzzer
-fuzz_database_load: fuzz_database_load.c $(DB_SOURCES)
+fuzz_database_load: fuzz_database_load.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Benchmarks

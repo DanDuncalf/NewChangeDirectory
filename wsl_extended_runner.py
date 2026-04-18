@@ -5,7 +5,6 @@ def run_test(name, args, cwd="/mnt/e/llama/NewChangeDirectory/test", timeout=60)
     env = os.environ.copy()
     env["NCD_TEST_MODE"] = "1"
     env["NCD_UI_KEYS"] = "ENTER"
-    env["NCD_UI_KEYS_STRICT"] = "1"
     env["XDG_DATA_HOME"] = f"/tmp/ncd_test_{name}"
     
     try:

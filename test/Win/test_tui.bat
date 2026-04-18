@@ -3,7 +3,7 @@
 :: test_tui.bat -- Run TUI tests with stdio backend
 ::
 :: This script builds the TUI test driver in debug mode, runs each test
-:: case by feeding key scripts via NCD_UI_KEYS_FILE, captures stdout,
+:: case by feeding key scripts via NCD_UI_KEYS=@file, captures stdout,
 :: and compares against expected output files.
 ::
 :: Prerequisites:
@@ -164,10 +164,8 @@ if not exist tui\actual mkdir tui\actual
 set GENERATE_MODE=0
 if "%~1"=="generate" set GENERATE_MODE=1
 
-:: Set environment for stdio TUI backend
-set NCD_TUI_TEST=1
-set NCD_TUI_COLS=80
-set NCD_TUI_ROWS=25
+:: Set environment for stdio TUI backend (test mode with 80x25 dimensions)
+set NCD_TEST_MODE=80,25
 
 set PASS_COUNT=0
 set FAIL_COUNT=0
@@ -215,7 +213,7 @@ set TEST_MODE=%~2
 set TEST_DESC=%~3
 set /a TOTAL_COUNT+=1
 
-set NCD_UI_KEYS_FILE=tui\input\%TEST_NAME%.ioinp
+set NCD_UI_KEYS=@tui\input\%TEST_NAME%.ioinp
 
 :: Run the test driver, capture stdout
 tui_test_driver.exe %TEST_MODE% > tui\actual\%TEST_NAME%.out 2>nul

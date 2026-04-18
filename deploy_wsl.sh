@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 cd /mnt/e/llama/NewChangeDirectory
 mkdir -p ~/.local/bin
 cp NewChangeDirectory NCDService ncd ~/.local/bin/

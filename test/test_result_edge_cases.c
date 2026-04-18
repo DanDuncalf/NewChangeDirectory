@@ -197,7 +197,7 @@ TEST(result_batch_file_maximum_length) {
     
     /* Very long path */
     char long_path[NCD_MAX_PATH];
-    strcpy(long_path, "C:\\\");
+    strcpy(long_path, "C:\\");
     for (int i = 0; i < 200 && strlen(long_path) < NCD_MAX_PATH - 20; i++) {
         strcat(long_path, "verylongdirectoryname");
         if (i < 199) strcat(long_path, "\\");

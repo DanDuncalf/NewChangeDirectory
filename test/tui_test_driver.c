@@ -2,16 +2,16 @@
  * tui_test_driver.c -- Standalone TUI test driver for batch-file testing
  *
  * This program creates fake match data and runs the TUI selector,
- * allowing the stdio TUI backend (NCD_TUI_TEST=1) to capture output
- * for comparison against expected output files.
+ * allowing the stdio TUI backend (enabled via NCD_TEST_MODE) to capture
+ * output for comparison against expected output files.
  *
  * Build: Must be compiled WITHOUT /DNDEBUG (debug build) so the stdio
  *        backend is available.  Also needs /DNCD_TEST_BUILD for the
  *        test backend APIs used by some helpers.
  *
  * Usage:
- *   set NCD_TUI_TEST=1
- *   set NCD_UI_KEYS_FILE=tui\input\test_selector_basic.keys
+ *   set NCD_TEST_MODE=80,25
+ *   set NCD_UI_KEYS=@tui\input\test_selector_basic.keys
  *   tui_test_driver.exe selector > tui\actual\test_selector_basic.txt
  *
  * Test modes:

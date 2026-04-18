@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # TUI Key Injection Demo
 # 
 # This demonstrates how to use the NCD_UI_KEYS and NCD_UI_KEYS_FILE

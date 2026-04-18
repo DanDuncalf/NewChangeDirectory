@@ -314,9 +314,9 @@ set "DB_OVERRIDE=%TEST_DATA%\NCD\ncd_test.database"
 set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
 "%NCD%" %CONF_OVERRIDE% /c >nul 2>&1
 set "NCD_UI_KEYS=ENTER"
-:: Prevent TUI from blocking on multi-match: auto-select first item (ENTER),
-:: and if key queue is exhausted, return ESC instead of waiting for input.
-set "NCD_UI_KEYS_STRICT=1"
+:: Prevent TUI from blocking on multi-match: auto-select first item (ENTER).
+:: When NCD_TEST_MODE is set, the TUI returns ESC if the key queue is empty.
+set "NCD_TEST_MODE=1"
 echo   Disabled auto-rescan.
 echo.
 

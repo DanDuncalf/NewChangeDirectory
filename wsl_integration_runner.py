@@ -7,7 +7,6 @@ def run_shell_test(name, script_path, cwd="/mnt/e/llama/NewChangeDirectory/test"
     env = os.environ.copy()
     env["NCD_TEST_MODE"] = "1"
     env["NCD_UI_KEYS"] = "ENTER"
-    env["NCD_UI_KEYS_STRICT"] = "1"
     
     # Kill any lingering services first
     subprocess.run(["wsl", "bash", "-c", "pkill -9 -f 'ncd_service' 2>/dev/null; pkill -9 -f 'NCDService' 2>/dev/null; pkill -9 -f 'NewChangeDirectory' 2>/dev/null; sleep 1"], capture_output=True)

@@ -894,7 +894,7 @@ test_ncd_finds    "P4" "Deep nesting search"       "L10"                 L10
 # P5: Multi-match uses agent query (direct search would open TUI which
 # blocks when NCD can't get /dev/tty read access in piped scripts)
 test_custom "P5" "Multiple results (src)"
-OUTPUT=$("$NCD" --agent query src --limit 5 2>&1)
+OUTPUT=$(cd "$TESTROOT" && "$NCD" --agent query src --limit 5 2>&1)
 if echo "$OUTPUT" | grep -qi "src"; then
     pass "P5" "Multiple results (src)"
 else

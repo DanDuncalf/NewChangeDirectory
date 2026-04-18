@@ -477,6 +477,72 @@ TEST(rescan_exclude_drives) {
     return 0;
 }
 
+TEST(rescan_space_separated_drive) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"-r", (char *)"cde"};
+    bool result = parse_args(3, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    return 0;
+}
+
+TEST(rescan_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-r=cde", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    return 0;
+}
+
+TEST(database_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-d=C:\\test.db", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(strlen(opts.db_override) > 0);
+    ASSERT_EQ_STR("C:\\test.db", opts.db_override);
+    return 0;
+}
+
+TEST(timeout_space_separated) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    char *argv[] = {(char *)"ncd", (char *)"-t", (char *)"30"};
+    bool result = parse_args(3, argv, &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_EQ_INT(30, opts.timeout_seconds);
+    return 0;
+}
+
+TEST(timeout_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+
+    bool result = parse_single("-t=30", &opts);
+
+    ASSERT_TRUE(result);
+    ASSERT_EQ_INT(30, opts.timeout_seconds);
+    return 0;
+}
+
 /* ================================================================ Test Suite */
 
 void suite_cli_parse(void) {
@@ -515,6 +581,11 @@ void suite_cli_parse(void) {
     RUN_TEST(history_remove_by_index_short_val);
     RUN_TEST(rescan_specific_drive);
     RUN_TEST(rescan_exclude_drives);
+    RUN_TEST(rescan_space_separated_drive);
+    RUN_TEST(rescan_equal_separator);
+    RUN_TEST(database_equal_separator);
+    RUN_TEST(timeout_space_separated);
+    RUN_TEST(timeout_equal_separator);
 }
 
 TEST_MAIN(

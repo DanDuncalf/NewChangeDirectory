@@ -55,6 +55,15 @@ typedef struct {
 #define MAX_TOKENS 256
 #define MAX_SYNTH  1024
 
+/* Find first ':' or '=' separator in a string */
+static const char *find_value_sep(const char *s)
+{
+    for (const char *p = s; *p; p++) {
+        if (*p == ':' || *p == '=') return p;
+    }
+    return NULL;
+}
+
 /* Characters allowed in short-flag bundles (booleans only) */
 static bool is_bundle_bool(char c)
 {
@@ -91,7 +100,7 @@ static bool tokenize_args(int argc, char *argv[],
         if (arg[0] == '-' && arg[1] == '-') {
             /* Long flag or long flag with value */
             body = arg + 2;
-            const char *colon = strchr(body, ':');
+            const char *colon = find_value_sep(body);
             if (colon && colon != body) {
                 size_t name_len = (size_t)(colon - body);
                 char *name = synth_buf + synth_used;
@@ -148,8 +157,8 @@ static bool tokenize_args(int argc, char *argv[],
             continue;
         }
 
-        /* Check for colon form: -r:d or /r:d (value may be empty) */
-        const char *colon = strchr(body, ':');
+        /* Check for colon/equals form: -r:d, -r=d, /r:d (value may be empty) */
+        const char *colon = find_value_sep(body);
         if (colon && colon == body + 1) {
             tokens[tc].type = TOK_SHORT_VAL;
             tokens[tc].s = body[0];  /* preserve case to distinguish -g vs -G */

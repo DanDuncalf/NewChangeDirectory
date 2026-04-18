@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 #
 # deploy_system.sh - Deploy NCD to /usr/local/bin
 #

@@ -1,0 +1,36 @@
+
+==========================================
+WARNING: TEST HARNESS NOT DETECTED
+==========================================
+
+This script is running WITHOUT the test harness protection.
+
+This is NOT RECOMMENDED because:
+  - If you press Ctrl+C, environment cleanup may not run
+  - Your LOCALAPPDATA may be left pointing to temp directories
+  - This can cause NCD to malfunction until you restart your shell
+
+RECOMMENDED: Run through the test harness from project root:
+  Run-Tests-Safe.bat unit              (unit tests only)
+  Run-Tests-Safe.bat                   (all tests)
+
+For isolated execution without affecting your shell:
+  test\Run-Isolated.bat test\Run-All-Unit-Tests.bat
+
+If you continue and interrupt with Ctrl+C, run:
+  Run-Tests-Safe.bat --repair
+
+Waiting 5 seconds before continuing...
+==========================================
+
+
+========================================
+NCD Comprehensive Unit Test Runner
+========================================
+
+Environment:
+  NCD_TEST_MODE=1
+  LOCALAPPDATA=C:\Users\Dan\AppData\Local\Temp
+
+--- Running  ---
+SKIPPED:  (executable not found: 

@@ -360,16 +360,16 @@ TEST(separate_flags_i_s_z_v) {
     return 0;
 }
 
-TEST(bundled_flags_riz_sets_all_three) {
+TEST(bundled_flags_irz_sets_all_three) {
     NcdOptions opts;
     init_options(&opts);
     
-    const char *argv[] = {"ncd", "-riz"};
+    const char *argv[] = {"ncd", "-irz"};
     bool result = parse_args_wrapper(2, argv, &opts);
     
     ASSERT_TRUE(result);
-    ASSERT_TRUE(opts.force_rescan);
     ASSERT_TRUE(opts.show_hidden);
+    ASSERT_TRUE(opts.force_rescan);
     ASSERT_TRUE(opts.fuzzy_match);
     
     return 0;
@@ -601,6 +601,122 @@ TEST(rescan_exclude_drives) {
     return 0;
 }
 
+TEST(rescan_space_specific_drive) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-r", "cde"};
+    bool result = parse_args_wrapper(3, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    
+    return 0;
+}
+
+TEST(rescan_equal_specific_drive) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-r=cde"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.force_rescan);
+    ASSERT_TRUE(opts.scan_drive_mask['C' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['D' - 'A']);
+    ASSERT_TRUE(opts.scan_drive_mask['E' - 'A']);
+    ASSERT_EQ_INT(3, opts.scan_drive_count);
+    
+    return 0;
+}
+
+TEST(timeout_space_separated) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-t", "30"};
+    bool result = parse_args_wrapper(3, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_EQ_INT(30, opts.timeout_seconds);
+    
+    return 0;
+}
+
+TEST(timeout_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-t=30"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_EQ_INT(30, opts.timeout_seconds);
+    
+    return 0;
+}
+
+TEST(retry_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "--retry=5"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.service_retry_set);
+    ASSERT_EQ_INT(5, opts.service_retry_count);
+    
+    return 0;
+}
+
+TEST(group_space_separated) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-g", "@home"};
+    bool result = parse_args_wrapper(3, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.group_set);
+    ASSERT_EQ_STR("home", opts.group_name);
+    
+    return 0;
+}
+
+TEST(exclusion_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-x=*/node_modules"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(opts.exclusion_add);
+    ASSERT_EQ_STR("*/node_modules", opts.exclusion_pattern);
+    
+    return 0;
+}
+
+TEST(conf_equal_separator) {
+    NcdOptions opts;
+    init_options(&opts);
+    
+    const char *argv[] = {"ncd", "-conf=C:\\custom.metadata"};
+    bool result = parse_args_wrapper(2, argv, &opts);
+    
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(strlen(opts.conf_override) > 0);
+    ASSERT_EQ_STR("C:\\custom.metadata", opts.conf_override);
+    
+    return 0;
+}
+
 /* ================================================================ Test Suite */
 
 void suite_cli_parse_extended(void) {
@@ -636,7 +752,7 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(separate_flags_s_z);
     RUN_TEST(separate_flags_i_s_z);
     RUN_TEST(separate_flags_i_s_z_v);
-    RUN_TEST(bundled_flags_riz_sets_all_three);
+    RUN_TEST(bundled_flags_irz_sets_all_three);
     
     /* Edge cases */
     RUN_TEST(empty_string_arg_rejected);
@@ -654,6 +770,14 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(d_flag_sets_db_override);
     RUN_TEST(rescan_specific_drive);
     RUN_TEST(rescan_exclude_drives);
+    RUN_TEST(rescan_space_specific_drive);
+    RUN_TEST(rescan_equal_specific_drive);
+    RUN_TEST(timeout_space_separated);
+    RUN_TEST(timeout_equal_separator);
+    RUN_TEST(retry_equal_separator);
+    RUN_TEST(group_space_separated);
+    RUN_TEST(exclusion_equal_separator);
+    RUN_TEST(conf_equal_separator);
 }
 
 TEST_MAIN(
