@@ -169,7 +169,7 @@ static void log_init(void) {
         if (temp) {
             snprintf(logs_dir, sizeof(logs_dir), "%s", temp);
         } else {
-            snprintf(logs_dir, sizeof(logs_dir), "C:\\Windows\\Temp");
+            snprintf(logs_dir, sizeof(logs_dir), "C:" NCD_PATH_SEP "Windows" NCD_PATH_SEP "Temp");
         }
 #else
         const char *tmp = getenv("TMPDIR");
@@ -181,11 +181,7 @@ static void log_init(void) {
 #endif
     }
     
-#if NCD_PLATFORM_WINDOWS
-    snprintf(log_path, sizeof(log_path), "%s\\ncd_service.log", logs_dir);
-#else
-    snprintf(log_path, sizeof(log_path), "%s/ncd_service.log", logs_dir);
-#endif
+    snprintf(log_path, sizeof(log_path), "%s%sncd_service.log", logs_dir, NCD_PATH_SEP);
     
     log_lock_acquire();
     g_log_file = fopen(log_path, "a");

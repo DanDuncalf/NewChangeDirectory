@@ -330,7 +330,7 @@ static bool con_list_subdirs(const char *dir_path, NameList *out)
     char pattern[MAX_PATH];
     WIN32_FIND_DATAA fd;
     out->items = NULL; out->count = 0; out->cap = 0;
-    if (snprintf(pattern, sizeof(pattern), "%s\\*", dir_path) >= (int)sizeof(pattern))
+    if (snprintf(pattern, sizeof(pattern), "%s%s*", dir_path, NCD_PATH_SEP) >= (int)sizeof(pattern))
         return false;
     HANDLE h = FindFirstFileExA(pattern, FindExInfoBasic, &fd,
                                 FindExSearchLimitToDirectories, NULL,

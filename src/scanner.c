@@ -768,7 +768,7 @@ int scan_subdirectory(NcdDatabase   *db,
             platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
         } else {
             char mount_path[MAX_PATH];
-            snprintf(mount_path, sizeof(mount_path), "%c:\\", drive_letter);
+            snprintf(mount_path, sizeof(mount_path), "%c:%s", drive_letter, NCD_PATH_SEP);
             platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
         }
 #else
@@ -862,9 +862,9 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         if (frame->find_handle == INVALID_HANDLE_VALUE) {
             char pattern[MAX_PATH];
             size_t plen = strlen(frame->path);
-            bool needs_sep = (plen > 0 && frame->path[plen - 1] != '\\');
+            bool needs_sep = (plen > 0 && frame->path[plen - 1] != NCD_PATH_SEP_CHAR);
             if (snprintf(pattern, sizeof(pattern), "%s%s*", frame->path,
-                         needs_sep ? "\\" : "") >= (int)sizeof(pattern)) {
+                         needs_sep ? NCD_PATH_SEP : "") >= (int)sizeof(pattern)) {
                 /* Path too long, pop frame */
                 stack_top--;
                 continue;
@@ -906,9 +906,9 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             /* Build full path for exclusion check */
             char full_path[MAX_PATH];
             size_t mlen = strlen(frame->path);
-            bool needs_sep = (mlen > 0 && frame->path[mlen - 1] != '\\');
+            bool needs_sep = (mlen > 0 && frame->path[mlen - 1] != NCD_PATH_SEP_CHAR);
             snprintf(full_path, sizeof(full_path), "%s%s%s", frame->path,
-                     needs_sep ? "\\" : "", fd->cFileName);
+                     needs_sep ? NCD_PATH_SEP : "", fd->cFileName);
             
             /* Check exclusion list */
             if (scan_ctx_is_excluded(ctx, ctx->drv->letter, full_path)) {
@@ -925,9 +925,9 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             /* Build child path */
             char child[MAX_PATH];
             size_t child_mlen = strlen(frame->path);
-            bool child_needs_sep = (child_mlen > 0 && frame->path[child_mlen - 1] != '\\');
+            bool child_needs_sep = (child_mlen > 0 && frame->path[child_mlen - 1] != NCD_PATH_SEP_CHAR);
             if (snprintf(child, sizeof(child), "%s%s%s", frame->path,
-                         child_needs_sep ? "\\" : "", fd->cFileName) >= (int)sizeof(child)) {
+                         child_needs_sep ? NCD_PATH_SEP : "", fd->cFileName) >= (int)sizeof(child)) {
                 continue;  /* Path too long, skip */
             }
             

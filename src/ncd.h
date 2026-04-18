@@ -172,11 +172,15 @@ typedef struct {
 #define NCD_DB_NEWFILE   "ncd.database.new"  /* written during rescan        */
 #define NCD_DB_OLDFILE   "ncd.database.old"  /* previous version backup      */
 #if NCD_PLATFORM_WINDOWS
-#define NCD_RESULT_FILE  "ncd_result.bat"    /* written to %TEMP%            */
-#define NCD_PATH_SEP     "\\"
+#define NCD_RESULT_FILE   "ncd_result.bat"   /* written to %TEMP%            */
+#define NCD_PATH_SEP_CHAR '\\'
+#define NCD_PATH_SEP_STR  "\\"
+#define NCD_PATH_SEP      NCD_PATH_SEP_STR   /* backward compatible alias    */
 #else
-#define NCD_RESULT_FILE  "ncd_result.sh"     /* written to /tmp              */
-#define NCD_PATH_SEP     "/"
+#define NCD_RESULT_FILE   "ncd_result.sh"    /* written to /tmp              */
+#define NCD_PATH_SEP_CHAR '/'
+#define NCD_PATH_SEP_STR  "/"
+#define NCD_PATH_SEP      NCD_PATH_SEP_STR   /* backward compatible alias    */
 #endif
 
 #define NCD_VERSION       1

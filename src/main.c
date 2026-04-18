@@ -369,10 +369,10 @@ static bool match_path_exclusion(const char *path, const NcdExclusionEntry *entr
     platform_strncpy_s(norm_pattern, sizeof(norm_pattern), entry->pattern);
 #if NCD_PLATFORM_WINDOWS
     for (char *p = norm_path; *p; p++) {
-        if (*p == '/') *p = '\\';
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
     }
     for (char *p = norm_pattern; *p; p++) {
-        if (*p == '/') *p = '\\';
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
     }
 #endif
     
@@ -1249,12 +1249,12 @@ static int agent_mode_ls(const NcdOptions *opts)
 #if NCD_PLATFORM_WINDOWS
     /* Ensure drive letters have a trailing backslash (R: -> R:\) */
     if (len == 2 && path[1] == ':') {
-        path[2] = '\\';
+        path[2] = NCD_PATH_SEP_CHAR;
         path[3] = '\0';
         len = 3;
     }
     /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-    if (len >= 2 && path[len - 1] == '.' && path[len - 2] == '\\') {
+    if (len >= 2 && path[len - 1] == '.' && path[len - 2] == NCD_PATH_SEP_CHAR) {
         path[len - 1] = '\0';
         len--;
     }
@@ -1799,19 +1799,19 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     /* Normalize path */
 #if NCD_PLATFORM_WINDOWS
     for (char *p = search_path; *p; p++) {
-        if (*p == '/') *p = '\\';
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
     }
 #endif
 #if NCD_PLATFORM_WINDOWS
     /* Ensure drive letters have a trailing backslash (R: -> R:\) */
     size_t sp_len = strlen(search_path);
     if (sp_len == 2 && search_path[1] == ':') {
-        search_path[2] = '\\';
+        search_path[2] = NCD_PATH_SEP_CHAR;
         search_path[3] = '\0';
         sp_len = 3;
     }
     /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-    if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == '\\') {
+    if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == NCD_PATH_SEP_CHAR) {
         search_path[sp_len - 1] = '\0';
     }
 #endif
@@ -2072,18 +2072,18 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             platform_strncpy_s(search_path, sizeof(search_path), opts->search);
 #if NCD_PLATFORM_WINDOWS
             for (char *p = search_path; *p; p++)
-                if (*p == '/') *p = '\\';
+                if (*p == '/') *p = NCD_PATH_SEP_CHAR;
 #endif
 #if NCD_PLATFORM_WINDOWS
             /* Ensure drive letters have a trailing backslash (R: -> R:\) */
             size_t sp_len = strlen(search_path);
             if (sp_len == 2 && search_path[1] == ':') {
-                search_path[2] = '\\';
+                search_path[2] = NCD_PATH_SEP_CHAR;
                 search_path[3] = '\0';
                 sp_len = 3;
             }
             /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-            if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == '\\') {
+            if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == NCD_PATH_SEP_CHAR) {
                 search_path[sp_len - 1] = '\0';
             }
 #endif
@@ -4534,7 +4534,7 @@ int main(int argc, char *argv[])
                     const char *mounts[26];
                     char mount_bufs[26][MAX_PATH];
                     for (int i = 0; i < rescan_count; i++) {
-                        snprintf(mount_bufs[i], MAX_PATH, "%c:\\", rescan_drives[i]);
+                        snprintf(mount_bufs[i], MAX_PATH, "%c:%s", rescan_drives[i], NCD_PATH_SEP);
                         mounts[i] = mount_bufs[i];
                     }
                     int n = scan_mounts(scan_db, mounts, rescan_count, 
@@ -4854,7 +4854,7 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------ verify drive alive  */
 #if NCD_PLATFORM_WINDOWS
     {
-        char root[4] = { resolved_drive, ':', '\\', '\0' };
+        char root[4] = { resolved_drive, ':', NCD_PATH_SEP_CHAR, '\0' };
         UINT dtype = platform_get_drive_type(root);
         if (dtype == PLATFORM_DRIVE_NO_ROOT_DIR || dtype == PLATFORM_DRIVE_UNKNOWN) {
             result_error("Drive %c: is not mounted.", resolved_drive);

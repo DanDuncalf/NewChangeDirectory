@@ -48,7 +48,7 @@ bool ncd_platform_db_default_path(char *buf, size_t buf_size)
 #if NCD_PLATFORM_WINDOWS
     char local_app[MAX_PATH];
     if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;
-    int written = snprintf(buf, buf_size, "%s\\%s", local_app, NCD_DB_FILENAME);
+    int written = snprintf(buf, buf_size, "%s%s%s", local_app, NCD_PATH_SEP, NCD_DB_FILENAME);
     return written > 0 && (size_t)written < buf_size;
 #else
     const char *xdg = getenv("XDG_DATA_HOME");
@@ -78,9 +78,9 @@ bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
     char local_app[MAX_PATH];
     if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;
     char dir[MAX_PATH];
-    snprintf(dir, sizeof(dir), "%s\\NCD", local_app);
+    snprintf(dir, sizeof(dir), "%s%sNCD", local_app, NCD_PATH_SEP);
     platform_create_dir(dir);
-    int w = snprintf(buf, buf_size, "%s\\NCD\\ncd_%c.database", local_app, toupper((unsigned char)letter));
+    int w = snprintf(buf, buf_size, "%s%sNCD%sncd_%c.database", local_app, NCD_PATH_SEP, NCD_PATH_SEP, toupper((unsigned char)letter));
     return w > 0 && (size_t)w < buf_size;
 #else
     const char *xdg = getenv("XDG_DATA_HOME");
@@ -242,7 +242,7 @@ bool platform_build_mount_path(char letter, char *out_path, size_t out_size)
     
 #if NCD_PLATFORM_WINDOWS
     if (!isalpha((unsigned char)letter)) return false;
-    snprintf(out_path, out_size, "%c:\\", (char)toupper((unsigned char)letter));
+    snprintf(out_path, out_size, "%c:%s", (char)toupper((unsigned char)letter), NCD_PATH_SEP);
     return true;
 #else
     /* On Linux, find the mount point for this letter */

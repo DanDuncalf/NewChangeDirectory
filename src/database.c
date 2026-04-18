@@ -361,7 +361,7 @@ char *db_config_path(char *buf, size_t buf_size)
     
     size_t len = strlen(local);
     bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
-    snprintf(buf, buf_size, "%s%sncd\\ncd.config", local, has_sep ? "" : "\\");
+    snprintf(buf, buf_size, "%s%sncd%sncd.config", local, has_sep ? "" : NCD_PATH_SEP, NCD_PATH_SEP);
 #else
     char base[MAX_PATH] = {0};
     if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
@@ -920,7 +920,7 @@ char *db_full_path(const DriveData *drv, int dir_index,
         if (drv->label[0] && strstr(drv->label, ":\\")) {
             snprintf(buf, buf_size, "%s", drv->label);
         } else {
-            snprintf(buf, buf_size, "%c:\\", drv->letter);
+            snprintf(buf, buf_size, "%c:%s", drv->letter, NCD_PATH_SEP);
         }
         return buf;
     }
@@ -1019,7 +1019,7 @@ char *db_full_path(const DriveData *drv, int dir_index,
     if (drv->label[0] && strstr(drv->label, ":\\")) {
         pos += (size_t)snprintf(buf + pos, buf_size - pos, "%s", drv->label);
     } else {
-        pos += (size_t)snprintf(buf + pos, buf_size - pos, "%c:\\", drv->letter);
+        pos += (size_t)snprintf(buf + pos, buf_size - pos, "%c:%s", drv->letter, NCD_PATH_SEP);
     }
     for (int i = depth - 1; i >= 0 && pos < buf_size - 1; i--) {
         bool need_sep = (i < depth - 1);
@@ -2015,7 +2015,7 @@ char *db_metadata_path(char *buf, size_t buf_size)
     
     size_t len = strlen(local);
     bool has_sep = (len > 0 && (local[len - 1] == '\\' || local[len - 1] == '/'));
-    snprintf(buf, buf_size, "%s%sNCD\\%s", local, has_sep ? "" : "\\", NCD_META_FILENAME);
+    snprintf(buf, buf_size, "%s%sNCD%s%s", local, has_sep ? "" : NCD_PATH_SEP, NCD_PATH_SEP, NCD_META_FILENAME);
 #else
     char base[MAX_PATH] = {0};
     if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {
@@ -2254,7 +2254,7 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
     platform_strncpy_s(norm_path, sizeof(norm_path), dir_path);
 #if NCD_PLATFORM_WINDOWS
     for (char *p = norm_path; *p; p++) {
-        if (*p == '/') *p = '\\';
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
     }
 #endif
     
@@ -2286,7 +2286,7 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
 #if NCD_PLATFORM_WINDOWS
         /* Normalize forward slashes to backslashes on Windows */
         for (char *p = norm_pattern; *p; p++) {
-            if (*p == '/') *p = '\\';
+            if (*p == '/') *p = NCD_PATH_SEP_CHAR;
         }
 #endif
         const char *pattern = norm_pattern;
@@ -2383,7 +2383,7 @@ void db_exclusion_init_defaults(NcdMetadata *meta)
     /* $recycle.bin on all drives */
     db_exclusion_add(meta, "*:$recycle.bin");
     /* Windows directory on C: drive only, root only */
-    db_exclusion_add(meta, "C:\\Windows");
+    db_exclusion_add(meta, "C:" NCD_PATH_SEP "Windows");
 #else
     /* Linux default exclusions - pseudo-filesystems and system directories */
     db_exclusion_add(meta, "/proc");      /* Process information pseudo-filesystem */
