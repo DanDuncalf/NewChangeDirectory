@@ -567,7 +567,7 @@ TEST(help_includes_exclusion_and_agent_options) {
     ASSERT_TRUE(strstr(output, "-x:<pat>") != NULL);
     ASSERT_TRUE(strstr(output, "-X:<pat>") != NULL);
     ASSERT_TRUE(strstr(output, "-x:l") != NULL);
-    ASSERT_TRUE(strstr(output, "Agent Mode:") != NULL);
+    ASSERT_TRUE(strstr(output, "LLM integration mode") != NULL);
     ASSERT_TRUE(strstr(output, "--agent:<cmd>") != NULL);
 
     return 0;

@@ -283,6 +283,17 @@ Run-Tests-Safe.bat
 :: Environment restored. Safe to continue using NCD.
 ```
 
+### Generate Full Per-Test Report
+
+For a complete per-test listing with check counts and ratios, run the Python report generator. It is self-isolating and safe to run standalone:
+
+```batch
+:: From project root
+python test\generate_report.py
+```
+
+This produces a detailed breakdown of every unit test (pass/fail) and integration suite check counts.
+
 ### Individual Test Suites
 
 ```batch
@@ -316,6 +327,8 @@ Run-All-Unit-Tests.bat
 cd test
 make test
 ```
+
+After running unit tests, use `python test\generate_report.py` for a detailed per-test breakdown.
 
 ### With Options
 

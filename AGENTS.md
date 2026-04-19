@@ -230,6 +230,23 @@ cmd /c Run-Tests-Safe.bat --check           # Check if environment is clean
 cmd /c Run-Tests-Safe.bat --repair          # Repair corrupted environment
 ```
 
+#### Option 4: Generate Full Per-Test Report (Recommended for Results)
+
+After running tests (or if `test\*.exe` binaries already exist), use the Python report generator to produce a complete per-test breakdown with check counts and ratios:
+
+```powershell
+# From project root - produces detailed per-test report
+python test\generate_report.py
+```
+
+This script is self-isolating (safe to run standalone):
+- Creates a temp directory and redirects `LOCALAPPDATA` / `XDG_DATA_HOME`
+- Sets `NCD_TEST_MODE=1`
+- Stops any running NCD services before testing
+- Restores environment and cleans up on exit (even on Ctrl+C)
+
+It outputs a complete table of every unit test with pass/fail status, integration suite check counts, and grand totals.
+
 **All three runners are Ctrl+C safe and restore your environment.**
 
 ### Complete Build and Test Process

@@ -169,6 +169,17 @@ make bench      # Performance benchmarks
 make corruption # Corruption handling tests
 ```
 
+### Full Per-Test Report
+
+For a detailed breakdown of every individual unit test and integration check, run the Python report generator:
+
+```powershell
+:: From project root - produces complete per-test listing with pass/fail ratios
+python test\generate_report.py
+```
+
+This script is self-isolating and outputs a full table of all ~356 unit tests and ~272 integration checks.
+
 ### Test Runners Reference
 
 | Script | Purpose | Platform |
@@ -178,6 +189,7 @@ make corruption # Corruption handling tests
 | `test\Test-Service-Windows.bat` | Service tests (isolated) | Windows |
 | `test\Test-NCD-Windows-Standalone.bat` | NCD without service | Windows |
 | `test\Test-NCD-Windows-With-Service.bat` | NCD with service | Windows |
+| `test\generate_report.py` | Detailed per-test report generator | Windows/WSL |
 
 See `AGENTS.md` for complete testing documentation.
 

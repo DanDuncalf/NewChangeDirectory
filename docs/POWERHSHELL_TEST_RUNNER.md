@@ -275,3 +275,13 @@ PowerShell:
 | Detailed diagnostics | ❌ Limited | ✅ Comprehensive |
 
 **Recommendation**: Use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1` for all test runs.
+
+### Detailed Per-Test Reporting
+
+For a complete per-test breakdown of results (including individual unit test pass/fail status and integration check counts), run the Python report generator after testing:
+
+```batch
+python test\generate_report.py
+```
+
+This script is self-isolating and produces the full detailed report that the PowerShell runners summarize at the suite level.

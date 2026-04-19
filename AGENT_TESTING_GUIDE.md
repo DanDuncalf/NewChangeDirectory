@@ -140,6 +140,8 @@ It then produces the complete per-test report with check counts and ratios.
 1. Run `cmd /c Build-And-Run-All-Tests.bat` for the safe full test cycle
 2. Then run `python test/generate_report.py` for the detailed per-test breakdown
 
+> **Note:** The Python report generator can also be run standalone (it handles its own isolation) whenever you want the complete per-test listing without rebuilding.
+
 **Manual method (fallback):**
 1. **Unit tests:** Run each `test_*.exe` directly and present a per-test table for every executable (test name + status).
 2. **Integration tests:** List each suite with platform, duration, PASS/FAIL, and the **number of individual checks** performed in that suite.

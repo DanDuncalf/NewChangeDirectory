@@ -178,6 +178,9 @@ Run-Tests-Safe.bat --windows-only
 
 :: 4. Run WSL tests
 Run-Tests-Safe.bat wsl
+
+:: 5. Generate detailed per-test report
+python test\generate_report.py
 ```
 
 ### Development Loop (WSL)
