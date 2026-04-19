@@ -1,6 +1,35 @@
 # Agent Testing Guide for NCD
 
-**Last Updated:** 2026-04-12
+**Last Updated:** 2026-04-18
+
+## 🚨 Zero-Context Quick Reference
+
+If your context window is empty, run these commands from the repo root (`E:\llama\NewChangeDirectory`):
+
+```batch
+:: Full build + test cycle (Windows only — safest)
+cmd /c Build-And-Run-All-Tests.bat --windows-only
+
+:: If binaries already exist, skip the build
+cmd /c Run-All-Tests.bat --windows-only
+
+:: Quick unit-test only run
+cmd /c Run-Tests-Safe.bat unit
+
+:: Detailed per-test breakdown (after any test run)
+python test/generate_report.py
+```
+
+**Critical facts to avoid footguns:**
+- **ALWAYS** use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1`. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
+- **Shell tool runs PowerShell** — invoke batch files with `cmd /c File.bat`, never bare `File.bat`.
+- `test/build-tests.bat` is the Windows build script. `Run-NcdTests.ps1` calls it. If you add a new `test_*.c`, you **must** add its build rule there or it is **silently skipped**.
+- The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `build-tests.bat` as of 2026-04-18.
+- **Windows batch quoting trap:** `"T:\"` escapes the closing quote. Use `"T:\."` for drive roots; `main.c` normalizes the trailing dot back to `T:\`.
+- **PowerShell `Start-Process -ArgumentList` strips args starting with `-`** (like `-conf`). For tests that pass `-conf`, use direct batch invocation instead of `Start-Process`.
+- Full suite timeout is ~3–4 minutes. Use `run_in_background=true` with timeout `600` for the full suite.
+
+---
 
 This guide provides step-by-step instructions for AI agents to run comprehensive tests on the NewChangeDirectory (NCD) project.
 

@@ -24,6 +24,15 @@ Run-Tests-Safe.bat --repair
 
 **NEVER run test executables directly** (e.g., `test_database.exe`, `Test-*.bat`) as environment won't be restored on interruption.
 
+**Build System Notes:**
+- `test/build-tests.bat` compiles Windows unit-test executables. It is invoked by `Run-NcdTests.ps1`.
+- If you add a new `test_*.c` file, you **must** add its compile/link rule to `test/build-tests.bat` or the test runner will silently skip it.
+- The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) were added to `build-tests.bat` on 2026-04-18. Before that, they existed as source but were never compiled on Windows.
+
+**Common Windows Batch Pitfalls:**
+- **Drive-root quoting:** `"T:\"` escapes the closing quote. Use `"T:\."`; `src/main.c` normalizes `T:\.` back to `T:\`.
+- **PowerShell `-ArgumentList` mangling:** Batch variables containing `-conf "..."` break quoting when expanded inside PowerShell `-Command` strings. Prefer direct batch calls for simple non-TUI commands.
+
 ## Table of Contents
 
 1. [Quick Start - How to Run Tests](#quick-start---how-to-run-tests)

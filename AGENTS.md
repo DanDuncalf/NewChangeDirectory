@@ -1,5 +1,7 @@
 # NewChangeDirectory (NCD) - Agent Documentation
 
+> **Agent Quick Reference (Testing):** If you need to run tests with no context, see [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) § *Zero-Context Quick Reference*. The one-liner is `cmd /c Run-Tests-Safe.bat unit`.
+
 ## Project Overview
 
 NewChangeDirectory (NCD) is a cross-platform command-line directory navigation tool inspired by the classic Norton Commander (Norton Utilities) CD command. It maintains a database of directory paths across drives/mounts and provides fast, fuzzy search-based navigation with an interactive TUI.
