@@ -949,8 +949,8 @@ if not errorlevel 1 (call :pass V4 "Agent tree --json --flat returns flat JSON")
 del "%TEMP%\v4_out.txt" 2>nul
 
 :: V5: Tree depth limits entries
-"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%" --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
-"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%" --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%." --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%." --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
 for /f %%a in ('type "%TEMP%\v5_d1.txt" ^| find /c /v ""') do set V5_D1=%%a
 for /f %%a in ('type "%TEMP%\v5_d2.txt" ^| find /c /v ""') do set V5_D2=%%a
 if %V5_D2% gtr %V5_D1% (call :pass V5 "Agent tree --depth limits depth") else (call :fail V5 "Agent tree --depth limits depth")

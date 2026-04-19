@@ -410,9 +410,9 @@ del "%TEMP%\agent_tree2.txt" 2>nul
 
 
 
-"%NCD%" /agent tree "%TESTROOT%" --depth 1 > "%TEMP%\agent_tree3a.txt" 2>&1
+"%NCD%" /agent tree "%TESTROOT%." --depth 1 > "%TEMP%\agent_tree3a.txt" 2>&1
 
-"%NCD%" /agent tree "%TESTROOT%" --depth 3 > "%TEMP%\agent_tree3b.txt" 2>&1
+"%NCD%" /agent tree "%TESTROOT%." --depth 3 > "%TEMP%\agent_tree3b.txt" 2>&1
 
 for /f %%a in ('type "%TEMP%\agent_tree3a.txt" ^| find /c /v ""') do set T3A=%%a
 
