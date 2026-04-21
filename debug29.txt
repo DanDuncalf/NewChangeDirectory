@@ -1,0 +1,1 @@
+ERROR: --force is required to remove a directory tree. Use --dry-run to preview.

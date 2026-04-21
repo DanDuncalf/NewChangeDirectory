@@ -293,9 +293,63 @@ int state_backend_submit_metadata_update(NcdStateView *view,
 
     switch (update_type) {
         case NCD_META_UPDATE_GROUP_ADD: {
-            if (data_size >= sizeof(const char *) * 2) {
-                const char **args = (const char **)data;
-                changed = db_group_set(meta, args[0], args[1]);
+            /* Try newline-delimited format first: "name\npath" */
+            if (data && data_size > 0) {
+                const char *p = (const char *)data;
+                const char *nl = NULL;
+                for (size_t i = 0; i < data_size; i++) {
+                    if (p[i] == '\n') {
+                        nl = p + i;
+                        break;
+                    }
+                }
+                if (nl) {
+                    size_t name_len = nl - p;
+                    size_t path_len = data_size - name_len - 1;
+                    if (name_len > 0 && path_len > 0) {
+                        char *name = (char *)malloc(name_len + 1);
+                        char *path = (char *)malloc(path_len + 1);
+                        if (name && path) {
+                            memcpy(name, p, name_len);
+                            name[name_len] = '\0';
+                            memcpy(path, nl + 1, path_len);
+                            path[path_len] = '\0';
+                            changed = db_group_set(meta, name, path);
+                        }
+                        free(name);
+                        free(path);
+                        break;
+                    }
+                }
+            }
+            /* Try null-terminated concatenated format: "name\0path\0" */
+            if (!changed && data && data_size >= 2) {
+                const char *p = (const char *)data;
+                size_t name_len = 0;
+                while (name_len < data_size && p[name_len] != '\0') {
+                    name_len++;
+                }
+                if (name_len > 0 && name_len + 1 < data_size) {
+                    size_t path_len = 0;
+                    const char *path_start = p + name_len + 1;
+                    size_t path_max = data_size - name_len - 1;
+                    while (path_len < path_max && path_start[path_len] != '\0') {
+                        path_len++;
+                    }
+                    if (path_len > 0) {
+                        changed = db_group_set(meta, p, path_start);
+                    }
+                }
+            }
+            /* Fall back to binary length-prefixed format */
+            if (!changed && data_size >= 8) {
+                uint32_t name_len = *(uint32_t *)data;
+                uint32_t path_len = *(uint32_t *)((char *)data + 4);
+                if (name_len > 0 && path_len > 0 && data_size >= 8 + name_len + path_len) {
+                    const char *name = (const char *)data + 8;
+                    const char *path = (const char *)data + 8 + name_len;
+                    changed = db_group_set(meta, name, path);
+                }
             }
             break;
         }
@@ -345,10 +399,24 @@ int state_backend_submit_metadata_update(NcdStateView *view,
             break;
         }
         case NCD_META_UPDATE_DIR_HISTORY_ADD: {
-            if (data_size >= sizeof(const char *) + sizeof(char)) {
-                const char *path = *(const char **)data;
-                char drive = *((const char *)data + sizeof(const char *));
-                changed = db_dir_history_add(meta, path, drive);
+            if (data && data_size >= 1) {
+                const char *p = (const char *)data;
+                /* Find null terminator within bounds, or use full data_size */
+                size_t path_len = 0;
+                while (path_len < data_size && p[path_len] != '\0') {
+                    path_len++;
+                }
+                if (path_len > 0) {
+                    char path_buf[512];
+                    if (path_len >= sizeof(path_buf)) path_len = sizeof(path_buf) - 1;
+                    memcpy(path_buf, p, path_len);
+                    path_buf[path_len] = '\0';
+                    char drive = '\0';
+                    if (data_size >= path_len + 2) {
+                        drive = p[path_len + 1];
+                    }
+                    changed = db_dir_history_add(meta, path_buf, drive);
+                }
             }
             break;
         }

@@ -1,0 +1,1 @@
+{"v":1,"atomic":false,"dirs":[{"path":"test_mkdir_file1","result":"created","message":"Directory created"},{"path":"test_mkdir_file2","result":"created","message":"Directory created"}],"rollback":[],"summary":{"created":2,"exists":0,"failed":0}}

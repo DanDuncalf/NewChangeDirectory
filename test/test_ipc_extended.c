@@ -19,6 +19,8 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#define popen _popen
+#define pclose _pclose
 #else
 #include <unistd.h>
 #include <fcntl.h>

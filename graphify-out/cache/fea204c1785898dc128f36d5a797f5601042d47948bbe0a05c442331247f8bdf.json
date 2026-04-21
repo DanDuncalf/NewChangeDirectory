@@ -1,0 +1,1 @@
+{"nodes": [{"id": "src_result_h", "label": "result.h", "file_type": "code", "source_file": "src\\result.h", "source_location": "L1"}], "edges": [{"source": "src_result_h", "target": "ncd", "relation": "imports", "confidence": "EXTRACTED", "source_file": "src\\result.h", "source_location": "L15", "weight": 1.0}], "raw_calls": []}

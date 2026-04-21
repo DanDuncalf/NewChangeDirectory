@@ -194,8 +194,16 @@ static bool load_database_from_snapshot(NcdStateView *view) {
         
         /* Legacy fields */
         drv->letter = (char)(drv->mount_point[0]);  /* First char of mount point */
+#if NCD_PLATFORM_WINDOWS
+        /* mount_point is wchar_t on Windows, label is char */
+        int lbl_i;
+        for (lbl_i = 0; lbl_i < (int)sizeof(drv->label) - 1 && drv->mount_point[lbl_i]; lbl_i++)
+            drv->label[lbl_i] = (char)drv->mount_point[lbl_i];
+        drv->label[lbl_i] = '\0';
+#else
         shm_strncpy(drv->label, drv->mount_point, sizeof(drv->label) - 1);
-        drv->label[sizeof(drv->label) - 1] = 0;
+        drv->label[sizeof(drv->label) - 1] = '\0';
+#endif
         
         /* Set up directory entries - point directly into shared memory */
         drv->dir_count = (int)mount->dir_count;

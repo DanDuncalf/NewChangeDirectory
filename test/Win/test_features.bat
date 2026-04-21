@@ -170,7 +170,7 @@ echo.
 echo Setting up test environment...
 
 :: --- Try to find an unused drive letter for VHD ---
-for %%L in (Z Y X W V U T S R Q P O N M L K J I H G) do (
+for %%L in (Z Y X W V U T S R Q P O N M L K J I H G F E D B A) do (
     if not exist %%L:\ (
         set "TESTDRIVE=%%L"
         goto :found_letter
@@ -220,6 +220,7 @@ if not exist %TESTDRIVE%:\ (
 )
 
 set "USE_VHD=1"
+set "VHD_ATTACHED=1"
 set "TESTROOT=%TESTDRIVE%:"
 set "HAS_ISOLATED_DRIVE=1"
 echo   VHD mounted at %TESTDRIVE%:\
@@ -231,7 +232,7 @@ mkdir "%TESTROOT%" 2>nul
 
 :: Try to find a free drive letter and subst the test tree so /rDRIVE
 :: scans only the test tree instead of the entire real user drive.
-for %%L in (Z Y X W V U T S R Q P O N M L K J I H G) do (
+for %%L in (Z Y X W V U T S R Q P O N M L K J I H G F E D B A) do (
     if not exist %%L:\ (
         set "TESTDRIVE=%%L"
         goto :found_subst
@@ -810,6 +811,8 @@ echo --- Category T: Batch Wrapper ---
 
 set "NCD_BAT=%PROJECT_ROOT%\ncd.bat"
 if exist "%NCD_BAT%" (
+    :: Copy test DB to default per-drive location so wrapper script can find it
+    copy "%DB_OVERRIDE%" "%DB_DIR%\ncd_%TESTDRIVE%.database" >nul 2>&1
     :: T1: Wrapper changes dir (use unique search to avoid TUI hang)
     set "T1_BEFORE=%CD%"
     call "%NCD_BAT%" Reports >nul 2>&1
@@ -949,8 +952,8 @@ if not errorlevel 1 (call :pass V4 "Agent tree --json --flat returns flat JSON")
 del "%TEMP%\v4_out.txt" 2>nul
 
 :: V5: Tree depth limits entries
-"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%." --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
-"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%." --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
 for /f %%a in ('type "%TEMP%\v5_d1.txt" ^| find /c /v ""') do set V5_D1=%%a
 for /f %%a in ('type "%TEMP%\v5_d2.txt" ^| find /c /v ""') do set V5_D2=%%a
 if %V5_D2% gtr %V5_D1% (call :pass V5 "Agent tree --depth limits depth") else (call :fail V5 "Agent tree --depth limits depth")

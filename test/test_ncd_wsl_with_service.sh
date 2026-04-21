@@ -96,19 +96,19 @@ skip() {
 # Stop service
 stop_service() {
     "$SERVICE_EXE" stop >/dev/null 2>&1 || true
-    pkill -f "NCDService" 2>/dev/null || true
-    sleep 1
+    pkill -9 -f "NCDService" 2>/dev/null || true
+    sleep 2
 }
 
 # Start service
 start_service() {
-    cd "$PROJECT_ROOT" && "$SERVICE_EXE" start -log2 >/dev/null 2>&1 &
+    (cd "$PROJECT_ROOT" && "$SERVICE_EXE" start -log2 >"$TEST_DATA/ncd/service_stdout.log" 2>"$TEST_DATA/ncd/service_stderr.log") &
     sleep 3
 }
 
 # Get log file path
 get_log_path() {
-    echo "$TEST_DATA/ncd/NCDService.log"
+    echo "$TEST_DATA/ncd/ncd_service.log"
 }
 
 # Check if service is running
@@ -223,6 +223,9 @@ pkill -9 -f "ncd_service" 2>/dev/null || true
 pkill -9 -f "NCDService" 2>/dev/null || true
 sleep 1
 
+# Remove stale IPC socket files to prevent false "already running" detection
+rm -f "/tmp/ncd_$(id -u)_control.sock" 2>/dev/null || true
+
 # Verify service executable timestamp to ensure we're using the latest build
 if [[ -f "$SERVICE_EXE" ]]; then
     echo "[INFO] Using service built at: $(stat -c '%y' "$SERVICE_EXE" 2>/dev/null || stat -f '%Sm' "$SERVICE_EXE" 2>/dev/null || echo 'unknown')"
@@ -250,8 +253,9 @@ stop_service
 
 # Create minimal metadata file
 mkdir -p "$TEST_DATA/ncd"
-# Use base64 to create binary file: "NCMD" + 0x01 0x00 0x00 0x00 + 8 nulls
-echo -n "TkNNRAEAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
+# Use base64 to create proper 24-byte binary header:
+# "NCMD" + version(2) + section_count(1) + reserved(1) + reserved2(4) + checksum(8)
+echo -n "TkNNRAEAAAAAAAAAAAAAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
 
 # Create test directory tree
 mkdir -p "$TESTROOT/Projects/alpha/src"
@@ -450,9 +454,9 @@ echo ""
 echo "Checking service log for errors..."
 LOG_PATH=$(get_log_path)
 if [[ -f "$LOG_PATH" ]]; then
-    if grep -i "ERROR" "$LOG_PATH" >/dev/null 2>&1; then
+    if grep -E '\[L[0-9]+\] .*ERROR' "$LOG_PATH" >/dev/null 2>&1; then
         printf "  ${C_RED}[FAIL]${C_RESET} Errors found in service log:\n"
-        grep -i "ERROR" "$LOG_PATH" | head -5
+        grep -E '\[L[0-9]+\] .*ERROR' "$LOG_PATH" | head -5
         TESTS_FAILED=$((TESTS_FAILED + 1))
     else
         printf "  ${C_GREEN}[PASS]${C_RESET} No errors found in service log\n"

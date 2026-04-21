@@ -28,21 +28,14 @@
 
 /* --------------------------------------------------------- test utilities     */
 
-/* Service and NCD executable names */
-#if NCD_PLATFORM_WINDOWS
-#define SERVICE_EXE "..\\NCDService.exe"
-#define NCD_EXE "..\\NewChangeDirectory.exe"
-#else
-/* Look for executables in parent directory first */
-#define SERVICE_EXE "../ncd_service"
-#define NCD_EXE "../NewChangeDirectory"
-#endif
-
 /* Maximum time to wait for service state changes */
 #define SERVICE_TIMEOUT 10
 
 /* Timeout for graceful shutdown */
 #define GRACEFUL_SHUTDOWN_TIMEOUT 3
+
+static const char* get_service_exe(void);
+static const char* get_ncd_exe(void);
 
 /* Run command and capture output */
 static int run_command(const char *cmd, char *output, size_t output_size) {
@@ -112,14 +105,14 @@ static int run_command(const char *cmd, char *output, size_t output_size) {
 static int run_service_command(const char *cmd) {
     char full_cmd[512];
     char output[256] = {0};
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", SERVICE_EXE, cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_exe(), cmd);
     return run_command(full_cmd, output, sizeof(output));
 }
 
 /* Run ncd command and capture output */
 static int run_ncd_command(const char *args, char *output, size_t output_size) {
     char full_cmd[512];
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", NCD_EXE, args);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_ncd_exe(), args);
     return run_command(full_cmd, output, output_size);
 }
 
@@ -211,17 +204,43 @@ static void ensure_service_stopped(void) {
     wait_for_service_fully_exited(3);
 }
 
+/* Resolve service executable path */
+static const char* get_service_exe(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD attribs = GetFileAttributesA("NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "NCDService.exe";
+    return "..\\NCDService.exe";
+#else
+    if (access("ncd_service", X_OK) == 0) return "ncd_service";
+    return "../ncd_service";
+#endif
+}
+
+/* Resolve NCD executable path */
+static const char* get_ncd_exe(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD attribs = GetFileAttributesA("NewChangeDirectory.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "NewChangeDirectory.exe";
+    return "..\\NewChangeDirectory.exe";
+#else
+    if (access("NewChangeDirectory", X_OK) == 0) return "NewChangeDirectory";
+    return "../NewChangeDirectory";
+#endif
+}
+
 /* Check if executables exist */
 static bool executables_exist(void) {
 #if NCD_PLATFORM_WINDOWS
     DWORD attribs;
-    attribs = GetFileAttributesA(SERVICE_EXE);
+    attribs = GetFileAttributesA(get_service_exe());
     bool service_exists = (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
-    attribs = GetFileAttributesA(NCD_EXE);
+    attribs = GetFileAttributesA(get_ncd_exe());
     bool ncd_exists = (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
     return service_exists && ncd_exists;
 #else
-    return (access(SERVICE_EXE, X_OK) == 0) && (access(NCD_EXE, X_OK) == 0);
+    return (access(get_service_exe(), X_OK) == 0) && (access(get_ncd_exe(), X_OK) == 0);
 #endif
 }
 

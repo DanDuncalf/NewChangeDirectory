@@ -30,29 +30,36 @@
 
 /* --------------------------------------------------------- test utilities     */
 
-/* Service executable name */
-#if NCD_PLATFORM_WINDOWS
-#define SERVICE_EXE "..\\NCDService.exe"
-#else
-#define SERVICE_EXE "../ncd_service"
-#endif
-
 #define SERVICE_TIMEOUT 10
+
+/* Resolve service executable path */
+static const char* get_service_exe(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD attribs = GetFileAttributesA("NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "NCDService.exe";
+    return "..\\NCDService.exe";
+#else
+    if (access("ncd_service", X_OK) == 0) return "ncd_service";
+    return "../ncd_service";
+#endif
+}
 
 /* Check if service executable exists */
 static bool service_executable_exists(void) {
+    const char *exe = get_service_exe();
 #if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA(SERVICE_EXE);
+    DWORD attribs = GetFileAttributesA(exe);
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access(SERVICE_EXE, X_OK) == 0);
+    return (access(exe, X_OK) == 0);
 #endif
 }
 
 /* Run service command */
 static int run_service_command(const char *cmd) {
     char full_cmd[512];
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", SERVICE_EXE, cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_exe(), cmd);
     
 #if NCD_PLATFORM_WINDOWS
     STARTUPINFOA si = {sizeof(si)};

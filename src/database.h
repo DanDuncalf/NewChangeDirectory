@@ -174,6 +174,12 @@ int db_add_dir(DriveData *drv,
                bool        is_system);
 
 /*
+ * Remove a path from the database (best-effort).
+ * Returns true if the path was found and removed.
+ */
+bool db_remove_path(NcdDatabase *db, const char *path);
+
+/*
  * Reconstruct the full absolute path for a directory entry.
  * e.g. "C:\Users\Scott\Downloads"
  * Writes into buf (size NCD_MAX_PATH).  Returns buf.

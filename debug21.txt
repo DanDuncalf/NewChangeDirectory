@@ -1,0 +1,1 @@
+{"v":1,"path":"test_mv_dst","mode":"n/a","result":"error_unsupported","changed":0}

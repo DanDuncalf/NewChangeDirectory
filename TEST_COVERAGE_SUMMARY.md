@@ -273,6 +273,21 @@
 
 ---
 
+## CI Enforcement and test.results
+
+The project uses a unified test runner (`test/generate_report.py`) that:
+- Auto-builds Windows and Linux test binaries when sources change
+- Runs all unit tests on both platforms (Windows `.exe` + Linux ELF via WSL)
+- Enforces **zero failures** and **zero skips** (exits with code 1 otherwise)
+- Writes `test.results` with build timestamps and per-test statistics
+
+**GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR to `master`:**
+- `windows-latest` job: builds MSVC binaries, runs `generate_report.py`
+- `ubuntu-latest` job: builds GCC binaries, runs `generate_report.py`
+- Both jobs must show `OVERALL STATUS: PASS` with 0 failures and 0 skips
+
+**Developers must commit `test.results` alongside code changes.** This file serves as the ground-truth record of build timestamps and test outcomes for each commit.
+
 ## Maintenance Recommendations
 
 After achieving 95% coverage:
@@ -283,6 +298,7 @@ After achieving 95% coverage:
 4. **Performance Baselines:** Track test execution time trends
 5. **Coverage Reports:** Generate and review weekly
 6. **Test Debt:** Address coverage drops immediately
+7. **CI Compliance:** Never merge to `master` if `generate_report.py` reports any skipped tests
 
 ---
 

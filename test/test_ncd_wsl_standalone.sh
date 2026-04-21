@@ -90,8 +90,8 @@ skip() {
 
 # Stop service if running
 stop_service() {
-    pkill -f "NCDService" 2>/dev/null || true
-    sleep 1
+    pkill -9 -f "NCDService" 2>/dev/null || true
+    sleep 2
 }
 
 # Check if service is running
@@ -174,9 +174,9 @@ fi
 echo "Ensuring service is NOT running..."
 echo "[INFO] Stopping any existing service processes..."
 
-# Stop via command if possible (for the new binary name)
-if [[ -x "$PROJECT_ROOT/ncd_service" ]]; then
-    "$PROJECT_ROOT/ncd_service" stop >/dev/null 2>&1 || true
+# Stop via command if possible
+if [[ -x "$PROJECT_ROOT/NCDService" ]]; then
+    "$PROJECT_ROOT/NCDService" stop >/dev/null 2>&1 || true
 fi
 sleep 1
 
@@ -184,6 +184,9 @@ sleep 1
 pkill -9 -f "ncd_service" 2>/dev/null || true
 pkill -9 -f "NCDService" 2>/dev/null || true
 sleep 1
+
+# Remove stale IPC socket files to prevent false "already running" detection
+rm -f "/tmp/ncd_$(id -u)_control.sock" 2>/dev/null || true
 
 # Verify service is not running
 if is_service_running; then
@@ -211,9 +214,9 @@ echo "Setting up test environment..."
 # Create minimal metadata file FIRST (before any NCD commands)
 mkdir -p "$TEST_DATA/ncd"
 # Create metadata with proper binary magic (NCMD = 4E 43 4D 44) and version 1
-# Magic (4 bytes) + Version (4 bytes) + Reserved (8 bytes) = 16 bytes total
-# Use base64 to create binary file: "NCMD" + 0x01 0x00 0x00 0x00 + 8 nulls
-echo -n "TkNNRAEAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
+# Proper 24-byte header: magic(4) + version(2) + section_count(1) + reserved(1) + reserved2(4) + checksum(8)
+# Use base64 to create binary file
+echo -n "TkNNRAEAAAAAAAAAAAAAAAAAAAAAAAAA" | base64 -d > "$TEST_DATA/ncd/ncd.metadata"
 
 # Verify standalone mode
 echo "Verifying standalone mode..."

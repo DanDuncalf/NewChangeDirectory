@@ -63,6 +63,9 @@ struct ServiceState {
     
     /* Shutdown flag: when set, service is shutting down and should reject new operations */
     int shutdown_requested;
+    
+    /* Whether metadata was loaded from an existing file */
+    bool metadata_existed;
 };
 
 /* --------------------------------------------------------- mutex helpers      */
@@ -140,6 +143,9 @@ ServiceState *service_state_init(void) {
             free(state);
             return NULL;
         }
+        state->metadata_existed = false;
+    } else {
+        state->metadata_existed = true;
     }
     
     /* Create empty database (will be populated lazily) */
@@ -660,6 +666,13 @@ bool service_state_flush(ServiceState *state) {
     return success;
 }
 
+bool service_state_save_metadata(ServiceState *state) {
+    if (!state || !state->metadata) {
+        return false;
+    }
+    return db_metadata_save(state->metadata);
+}
+
 bool service_state_needs_flush(const ServiceState *state) {
     if (!state) {
         return false;
@@ -958,4 +971,8 @@ void service_state_clear_pending(ServiceState *state) {
 int service_state_get_pending_count(const ServiceState *state) {
     if (!state) return 0;
     return state->pending_count;
+}
+
+bool service_state_metadata_existed(const ServiceState *state) {
+    return state ? state->metadata_existed : false;
 }

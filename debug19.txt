@@ -1,0 +1,1 @@
+{"v":1,"src":"test_mv_src","dst":"test_mv_dst","result":"moved","message":"Directory moved"}

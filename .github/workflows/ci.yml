@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Windows main binaries
+        run: cmd /c build.bat
+        timeout-minutes: 10
+
+      - name: Build Windows test binaries
+        run: cmd /c "cd test && build-tests.bat"
+        timeout-minutes: 10
+
+      - name: Run unified test report
+        run: python test/generate_report.py
+        timeout-minutes: 15
+
+      - name: Verify test.results shows PASS
+        shell: powershell
+        run: |
+          $content = Get-Content test.results -Raw
+          if ($content -match "OVERALL STATUS: PASS") {
+            Write-Host "PASS confirmed in test.results"
+          } else {
+            Write-Error "test.results does not show OVERALL STATUS: PASS"
+            exit 1
+          }
+          if ($content -match "FAILED:\s*0") {
+            Write-Host "Zero failures confirmed"
+          } else {
+            Write-Error "test.results shows failures"
+            exit 1
+          }
+          if ($content -match "SKIPPED:\s*0") {
+            Write-Host "Zero skips confirmed"
+          } else {
+            Write-Error "test.results shows skipped tests"
+            exit 1
+          }
+
+      - name: Upload test.results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: test.results
+
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc make
+
+      - name: Build Linux main binaries
+        run: ./build.sh
+        timeout-minutes: 10
+
+      - name: Build Linux test binaries
+        run: make -C test all
+        timeout-minutes: 10
+
+      - name: Ensure ncd_service exists for tests
+        run: |
+          if [ -f NCDService ] && [ ! -f ncd_service ]; then
+            cp NCDService ncd_service
+          fi
+          if [ -f ncd_service ] && [ ! -x test/ncd_service ]; then
+            cp ncd_service test/ncd_service
+          fi
+
+      - name: Run unified test report
+        run: python test/generate_report.py
+        timeout-minutes: 15
+
+      - name: Verify test.results shows PASS
+        run: |
+          grep -q "OVERALL STATUS: PASS" test.results || { echo "FAIL: test.results does not show PASS"; exit 1; }
+          grep -q "FAILED: 0" test.results || { echo "FAIL: test.results shows failures"; exit 1; }
+          grep -q "SKIPPED: 0" test.results || { echo "FAIL: test.results shows skipped tests"; exit 1; }
+          echo "Linux tests passed with zero failures and zero skips"
+
+      - name: Upload test.results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: test.results

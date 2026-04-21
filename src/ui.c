@@ -783,6 +783,7 @@ UiIoOps *ui_create_test_backend(int cols, int rows)
     ops->ansi_enabled  = true;
 
     memset(&g_test_backend, 0, sizeof(g_test_backend));
+    ui_clear_injected_keys();
     if (cols > TEST_GRID_MAX_COLS) cols = TEST_GRID_MAX_COLS;
     if (rows > TEST_GRID_MAX_ROWS) rows = TEST_GRID_MAX_ROWS;
     if (cols < 1) cols = 80;
@@ -876,6 +877,8 @@ static int parse_key_token(const char *tok)
     if (strncasecmp(tok, "BACKSPACE", len) == 0) return KEY_BACKSPACE;
     if (strncasecmp(tok, "DELETE", len) == 0) return KEY_DELETE;
     if (strncasecmp(tok, "SPACE", len) == 0) return ' ';
+    if (strncasecmp(tok, "PLUS", len) == 0) return '+';
+    if (strncasecmp(tok, "MINUS", len) == 0) return '-';
 
     /* Single printable char */
     if (len == 1 && (unsigned char)tok[0] >= 32 && (unsigned char)tok[0] <= 126)
@@ -2577,6 +2580,20 @@ bool ui_edit_config(NcdMetadata *meta)
                     st.input_buf[0] = '\0';
                     break;
                 case KEY_ESC:
+                    /* If buffer is empty, save the dialog (convenient after +/- adjustments) */
+                    if (st.input_len == 0) {
+                        cfg->default_show_hidden = show_hidden;
+                        cfg->default_show_system = show_system;
+                        cfg->default_fuzzy_match = fuzzy_match;
+                        cfg->default_timeout = timeout;
+                        cfg->service_retry_count = (uint8_t)service_retry;
+                        cfg->rescan_interval_hours = (int16_t)rescan_interval;
+                        cfg->has_defaults = true;
+                        cfg->magic = NCD_CFG_MAGIC;
+                        cfg->version = NCD_CFG_VERSION;
+                        saved = true;
+                        goto config_done;
+                    }
                     /* Cancel input, restore original value */
                     *items[st.selected].int_value = st.input_orig_value;
                     st.input_mode = false;

@@ -1,0 +1,1 @@
+{"v":1,"path":"test_rmdir_nonempty","result":"error_not_empty","message":"Directory is not empty"}

@@ -676,8 +676,14 @@ ncd_run -x "*/Deep"
 rescan_testroot
 # I10a: Verify exclusion is in the list after re-adding
 test_output_has "I10a" "Re-added exclusion present" "Deep" -xl
-# I10b: Agent tree has a backslash path bug on Linux, skip tree verification
-skip "I10b" "Agent tree excludes excluded dirs" "NCD tree path separator bug on Linux"
+# I10b: Verify agent tree also doesn't show excluded directories
+test_custom "I10b" "Agent tree excludes excluded dirs"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT" --flat --depth 3 2>&1)
+if echo "$OUTPUT" | grep -q "Deep"; then
+    fail "I10b" "Agent tree excludes excluded dirs" "found 'Deep' in agent tree output"
+else
+    pass "I10b" "Agent tree excludes excluded dirs"
+fi
 
 # Clean up exclusions for subsequent tests
 ncd_run -x- "*/Deep"
@@ -1101,26 +1107,80 @@ rescan_testroot
 
 category "V: Agent Tree"
 
-# NCD's /agent tree command has a known bug on Linux/WSL where it converts
-# forward slashes to backslashes when looking up paths in the database,
-# causing "path not found in database" errors. All tree tests are skipped.
-# These tests pass on Windows where backslash paths are native.
+# Agent tree tests verify the different output formats for --agent tree command.
+# The tree command displays directory structures from the database.
 
-skip "V1"  "Agent tree --json"           "NCD tree path separator bug on Linux"
-skip "V2"  "Agent tree --flat"           "NCD tree path separator bug on Linux"
-skip "V3"  "Agent tree default indent"   "NCD tree path separator bug on Linux"
-skip "V4"  "Agent tree --json --flat"    "NCD tree path separator bug on Linux"
-skip "V5"  "Agent tree --depth limits"   "NCD tree path separator bug on Linux"
+test_custom "V1" "Agent tree --json"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Projects" --json --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '"v":1' && echo "$OUTPUT" | grep -q '"tree":'; then
+    pass "V1" "Agent tree --json"
+else
+    fail "V1" "Agent tree --json" "output missing JSON markers"
+fi
+
+test_custom "V2" "Agent tree --flat"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Projects" --flat --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '/'; then
+    pass "V2" "Agent tree --flat"
+else
+    fail "V2" "Agent tree --flat" "no path separators found"
+fi
+
+test_custom "V3" "Agent tree default indent"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Projects" --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '^ '; then
+    pass "V3" "Agent tree default indent"
+else
+    fail "V3" "Agent tree default indent" "no indentation found"
+fi
+
+test_custom "V4" "Agent tree --json --flat"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Projects" --json --flat --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '"v":1' && echo "$OUTPUT" | grep -q '"d":'; then
+    pass "V4" "Agent tree --json --flat"
+else
+    fail "V4" "Agent tree --json --flat" "missing JSON structure"
+fi
+
+test_custom "V5" "Agent tree --depth limits"
+DEPTH1_OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT" --depth 1 2>&1 | wc -l)
+DEPTH2_OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT" --depth 2 2>&1 | wc -l)
+if [[ $DEPTH2_OUTPUT -gt $DEPTH1_OUTPUT ]]; then
+    pass "V5" "Agent tree --depth limits"
+else
+    fail "V5" "Agent tree --depth limits" "depth 2 not showing more entries"
+fi
 
 # V6: Non-existent path should still fail (doesn't need DB lookup)
-test_exit_fail "V6" "Agent tree fails on non-existent path" -agent tree "/nonexistent/path" --json
+test_exit_fail "V6" "Agent tree fails on non-existent path" --agent tree "/nonexistent/path" --json
 
-skip "V7"  "Agent tree --flat paths"     "NCD tree path separator bug on Linux"
-skip "V8"  "Agent tree JSON fields"      "NCD tree path separator bug on Linux"
-skip "V9"  "Agent tree default names"    "NCD tree path separator bug on Linux"
+test_custom "V7" "Agent tree --flat paths"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Users" --flat --depth 2 2>&1)
+if echo "$OUTPUT" | grep -qE '(scott|admin).*(Downloads|Documents)'; then
+    pass "V7" "Agent tree --flat paths"
+else
+    fail "V7" "Agent tree --flat paths" "expected path patterns not found"
+fi
+
+test_custom "V8" "Agent tree JSON fields"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Media" --json --depth 1 2>&1)
+if echo "$OUTPUT" | grep -q '"n":"' && echo "$OUTPUT" | grep -q '"d":0'; then
+    pass "V8" "Agent tree JSON fields"
+else
+    fail "V8" "Agent tree JSON fields" "missing name or depth fields"
+fi
+
+test_custom "V9" "Agent tree default names"
+OUTPUT=$("$NCD" -d "$DB_FILE" --agent tree "$TESTROOT/Windows" --depth 2 2>&1)
+FIRST_LINE=$(echo "$OUTPUT" | head -1 | tr -d '[:space:]')
+if [[ "$FIRST_LINE" == "System32" ]]; then
+    pass "V9" "Agent tree default names"
+else
+    fail "V9" "Agent tree default names" "first line was '$FIRST_LINE', expected 'System32'"
+fi
 
 # V10: Tree requires a path argument
-test_exit_fail "V10" "Agent tree requires path argument" -agent tree
+test_exit_fail "V10" "Agent tree requires path argument" --agent tree
 
 # ==========================================================================
 # Summary

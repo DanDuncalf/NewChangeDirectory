@@ -546,6 +546,9 @@ TEST(odd_database_with_duplicate_directory_names) {
     /* All should be independently accessible */
     char path[MAX_PATH];
     db_full_path(drv, 2, path, sizeof(path));
+    ASSERT_TRUE(strstr(path, "common_name") != NULL);
+    
+    db_full_path(drv, 3, path, sizeof(path));
     ASSERT_TRUE(strstr(path, "another_parent") != NULL);
     
     db_free(db);

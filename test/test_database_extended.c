@@ -307,10 +307,10 @@ TEST(db_ext_heur_hash_collision_different_searches) {
     
     ASSERT_EQ_INT(3, meta->heuristics.count);
     
-    /* Verify all can be found */
-    ASSERT_EQ_INT(0, db_heur_find(meta, "downloads"));
+    /* Verify all can be found (insertion is at front, so reverse order) */
+    ASSERT_EQ_INT(2, db_heur_find(meta, "downloads"));
     ASSERT_EQ_INT(1, db_heur_find(meta, "documents"));
-    ASSERT_EQ_INT(2, db_heur_find(meta, "desktop"));
+    ASSERT_EQ_INT(0, db_heur_find(meta, "desktop"));
     
     db_metadata_free(meta);
     return 0;
@@ -383,7 +383,8 @@ TEST(db_ext_heur_hash_table_resize) {
     ASSERT_EQ_INT(64, meta->heuristics.hash_bucket_count);
     
     /* Add more entries - hash table handles it via chaining, not resize */
-    for (int i = 0; i < 100; i++) {
+    /* Already added 1 entry (test1), so only add 98 more to stay within NCD_HEUR_MAX_ENTRIES (100) */
+    for (int i = 0; i < 98; i++) {
         char search[32];
         char target[64];
         snprintf(search, sizeof(search), "entry_%d", i);
@@ -392,7 +393,7 @@ TEST(db_ext_heur_hash_table_resize) {
     }
     
     /* All should still be findable */
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 98; i++) {
         char search[32];
         snprintf(search, sizeof(search), "entry_%d", i);
         ASSERT_TRUE(db_heur_find(meta, search) >= 0);
@@ -841,7 +842,7 @@ TEST(db_ext_history_remove_from_middle_shifts_others) {
     db_dir_history_add(meta, "/path/four", 'F');
     ASSERT_EQ_INT(4, db_dir_history_count(meta));
     
-    /* Remove middle entry (index 1 - /path/two) */
+    /* Remove middle entry (index 1 - /path/three, since newest is at index 0) */
     ASSERT_TRUE(db_dir_history_remove(meta, 1));
     ASSERT_EQ_INT(3, db_dir_history_count(meta));
     
@@ -851,7 +852,7 @@ TEST(db_ext_history_remove_from_middle_shifts_others) {
     const NcdDirHistoryEntry *e2 = db_dir_history_get(meta, 2);
     
     ASSERT_TRUE(strstr(e0->path, "four") != NULL);   /* Most recent */
-    ASSERT_TRUE(strstr(e1->path, "three") != NULL);  /* Shifted down */
+    ASSERT_TRUE(strstr(e1->path, "two") != NULL);    /* Shifted down */
     ASSERT_TRUE(strstr(e2->path, "one") != NULL);    /* Oldest */
     
     db_metadata_free(meta);
@@ -958,7 +959,8 @@ TEST(db_ext_exclusion_very_long_pattern) {
     NcdMetadata *meta = db_metadata_create();
     ASSERT_NOT_NULL(meta);
     
-    char long_pattern[NCD_MAX_PATH];
+    char *long_pattern = (char *)malloc(2500);
+    ASSERT_NOT_NULL(long_pattern);
     strcpy(long_pattern, "*/");
     for (int i = 0; i < 100; i++) {
         strcat(long_pattern, "very/long/path/segment/");
@@ -970,6 +972,7 @@ TEST(db_ext_exclusion_very_long_pattern) {
     /* May succeed or fail depending on NCD_MAX_PATH, but should not crash */
     (void)result;
     
+    free(long_pattern);
     db_metadata_free(meta);
     return 0;
 }

@@ -976,7 +976,7 @@ static void print_usage(void)
         "  --retry:<n>                      Service busy retry count (--retry:5, --retry=5, or --retry 5)\r\n"
         "  -u:8 | -u:16                     Set text encoding (-u:8, -u=8, -u 8, -u:16, -u=16, or -u 16)\r\n"
         "  -v, --version                    Print version\r\n"
-        "  --agent:<cmd>                    LLM integration mode (--agent:query, --agent=query, or --agent query)\r\n"
+        "  --agent:<cmd>                    LLM integration mode (see --agent:help for commands)\r\n"
 #if NCD_PLATFORM_WINDOWS
         "\r\n"
         "Windows Note:\r\n"
@@ -1091,9 +1091,16 @@ static void agent_print_usage(void)
         "  ncd --agent:tree <path> [options]\r\n"
         "  ncd --agent:check <path> | --db-age | --stats | --service-status\r\n"
         "  ncd --agent:complete <partial> [--limit N] [--json]\r\n"
-        "  ncd --agent:mkdir <path> [--json]\r\n"
+        "  ncd --agent:mkdir <path> [options]\r\n"
         "  ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n"
+        "  ncd --agent:rmdir <path> [--force] [--json]\r\n"
+        "  ncd --agent:rmdirs <path> [--force] [--json]\r\n"
+        "  ncd --agent:mv <src> <dst> [--force] [--json]\r\n"
+        "  ncd --agent:ln <target> <link> [--json]\r\n"
+        "  ncd --agent:verify <path> [--empty] [--mode <octal>] [--tree <spec>] [--json]\r\n"
+        "  ncd --agent:chmod <path> [--mode <octal>] [--recursive] [--json]\r\n"
         "  ncd --agent:quit [--json]\r\n"
+        "  ncd --agent:help                Show this help\r\n"
         "\r\n"
         "Commands:\r\n"
         "  query <search>    Search the NCD index for directories\r\n"
@@ -1103,7 +1110,14 @@ static void agent_print_usage(void)
         "  complete <partial>  Shell tab-completion candidates\r\n"
         "  mkdir <path>        Create a directory and add to database\r\n"
         "  mkdirs <content>    Create directory tree from JSON or flat format\r\n"
+        "  rmdir <path>        Remove an empty directory\r\n"
+        "  rmdirs <path>       Remove a directory tree (requires --force)\r\n"
+        "  mv <src> <dst>      Move/rename a directory\r\n"
+        "  ln <target> <link>  Create a symbolic link\r\n"
+        "  verify <path>       Verify directory exists and optionally check properties\r\n"
+        "  chmod <path>        Change directory permissions (Linux only)\r\n"
         "  quit                Request graceful service shutdown\r\n"
+        "  help                Show this help message\r\n"
         "\r\n"
         "Query Options:\r\n"
         "  --json            JSON output instead of compact\r\n"
@@ -1136,10 +1150,15 @@ static void agent_print_usage(void)
         "\r\n"
         "mkdir Options:\r\n"
         "  --json            JSON output with result code\r\n"
+        "  --force           Recreate if empty directory already exists\r\n"
+        "  --mode <octal>    Set permissions (Linux only)\r\n"
+        "  --verify          Verify after creation\r\n"
         "\r\n"
         "mkdirs Options:\r\n"
         "  --file <path>     Read tree specification from file\r\n"
         "  --json            JSON output with per-directory results\r\n"
+        "  --atomic          All-or-nothing: rollback on any failure\r\n"
+        "  --verify          Verify tree after creation\r\n"
         "\r\n"
         "mkdirs Input Formats:\r\n"
         "  JSON: [{\"name\":\"dir\",\"children\":[{\"name\":\"subdir\"}]}]\r\n"
@@ -1149,10 +1168,43 @@ static void agent_print_usage(void)
         "          child2\r\n"
         "            grandchild\r\n"
         "\r\n"
+        "rmdir Options:\r\n"
+        "  --force           Remove non-empty directory\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "rmdirs Options:\r\n"
+        "  --force           Required flag to remove directory tree\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "mv Options:\r\n"
+        "  --force           Overwrite empty destination directory\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "ln Options:\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "verify Options:\r\n"
+        "  --empty           Check that directory is empty\r\n"
+        "  --mode <octal>    Verify permissions match (Linux only)\r\n"
+        "  --tree <spec>     Verify directory tree structure matches spec\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
+        "chmod Options:\r\n"
+        "  --mode <octal>    Permission mode (e.g., 0755)\r\n"
+        "  --recursive       Apply to entire directory tree\r\n"
+        "  --json            JSON output\r\n"
+        "\r\n"
         "Exit Codes:\r\n"
         "  0   Success / Found\r\n"
         "  1   Not found / Error\r\n"
     );
+}
+
+static int agent_mode_help(const NcdOptions *opts)
+{
+    (void)opts;
+    agent_print_usage();
+    return 0;
 }
 
 /* parse_agent_args and glob_match are defined in cli.c */
@@ -1160,6 +1212,14 @@ extern bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *
 extern bool glob_match(const char *pattern, const char *text);
 
 /* ============================================================ agent mode   */
+
+/* Forward declarations for new agent commands */
+static int agent_mode_rmdir(const NcdOptions *opts);
+static int agent_mode_rmdirs(const NcdOptions *opts);
+static int agent_mode_mv(const NcdOptions *opts);
+static int agent_mode_verify(const NcdOptions *opts);
+static int agent_mode_chmod(const NcdOptions *opts);
+static int agent_mode_ln(const NcdOptions *opts);
 
 /* Agent mode: query - Search the NCD index for directories */
 static int agent_mode_query(NcdDatabase *db, const NcdOptions *opts)
@@ -1247,16 +1307,16 @@ static int agent_mode_ls(const NcdOptions *opts)
     platform_strncpy_s(path, sizeof(path), opts->search);
     size_t len = strlen(path);
 #if NCD_PLATFORM_WINDOWS
+    /* Strip trailing dot (e.g., "T:\\." -> "T:\\" or "C:\\path." -> "C:\\path") to work around batch quoting */
+    if (len >= 2 && path[len - 1] == '.') {
+        path[len - 1] = '\0';
+        len--;
+    }
     /* Ensure drive letters have a trailing backslash (R: -> R:\) */
     if (len == 2 && path[1] == ':') {
         path[2] = NCD_PATH_SEP_CHAR;
         path[3] = '\0';
         len = 3;
-    }
-    /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-    if (len >= 2 && path[len - 1] == '.' && path[len - 2] == NCD_PATH_SEP_CHAR) {
-        path[len - 1] = '\0';
-        len--;
     }
 #endif
     
@@ -1803,16 +1863,17 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     }
 #endif
 #if NCD_PLATFORM_WINDOWS
-    /* Ensure drive letters have a trailing backslash (R: -> R:\) */
+    /* Strip trailing dot (e.g., "T:\\." -> "T:\\" or "C:\\path." -> "C:\\path") to work around batch quoting */
     size_t sp_len = strlen(search_path);
+    if (sp_len >= 2 && search_path[sp_len - 1] == '.') {
+        search_path[sp_len - 1] = '\0';
+        sp_len--;
+    }
+    /* Ensure drive letters have a trailing backslash (R: -> R:\) */
     if (sp_len == 2 && search_path[1] == ':') {
         search_path[2] = NCD_PATH_SEP_CHAR;
         search_path[3] = '\0';
         sp_len = 3;
-    }
-    /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-    if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == NCD_PATH_SEP_CHAR) {
-        search_path[sp_len - 1] = '\0';
     }
 #endif
     
@@ -1917,7 +1978,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         QueueItem cur = queue[qhead++];
         DirChildren *dc;
         if (cur.dir == -2) {
-            DirChildren virtual_root = { root_children, root_child_count };
+            DirChildren virtual_root = { root_children, root_child_count, root_child_count };
             dc = &virtual_root;
         } else {
             dc = &children_idx[cur.dir];
@@ -2075,16 +2136,17 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
                 if (*p == '/') *p = NCD_PATH_SEP_CHAR;
 #endif
 #if NCD_PLATFORM_WINDOWS
-            /* Ensure drive letters have a trailing backslash (R: -> R:\) */
+            /* Strip trailing dot (e.g., "T:\\." -> "T:\\" or "C:\\path." -> "C:\\path") to work around batch quoting */
             size_t sp_len = strlen(search_path);
+            if (sp_len >= 2 && search_path[sp_len - 1] == '.') {
+                search_path[sp_len - 1] = '\0';
+                sp_len--;
+            }
+            /* Ensure drive letters have a trailing backslash (R: -> R:\) */
             if (sp_len == 2 && search_path[1] == ':') {
                 search_path[2] = NCD_PATH_SEP_CHAR;
                 search_path[3] = '\0';
                 sp_len = 3;
-            }
-            /* Strip trailing dot after backslash (e.g., "T:\\." -> "T:\\") to work around batch quoting */
-            if (sp_len >= 2 && search_path[sp_len - 1] == '.' && search_path[sp_len - 2] == NCD_PATH_SEP_CHAR) {
-                search_path[sp_len - 1] = '\0';
             }
 #endif
             
@@ -2354,21 +2416,29 @@ static bool add_path_to_database(const char *path)
     int32_t parent_idx = -1;
     
     /* Build path map for O(1) lookups */
-    PathMap path_map;
-    path_map_init(&path_map, drv->dir_count);
-    build_path_map(&path_map, drv, drv->letter);
-    
-    if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-        parent_idx = path_map_get(&path_map, parent_path);
+    bool in_db = false;
+    if (drv->dir_count > 0) {
+        PathMap path_map;
+        path_map_init(&path_map, drv->dir_count);
+        build_path_map(&path_map, drv, drv->letter);
+        
+        if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
+            parent_idx = path_map_get(&path_map, parent_path);
+        }
+        
+        /* Check if directory already exists in database - O(1) lookup */
+        in_db = path_map_get(&path_map, norm_path) >= 0;
+        
+        path_map_free(&path_map);
+    } else {
+        parent_idx = -1;
+        in_db = false;
     }
-    
-    /* Check if directory already exists in database - O(1) lookup */
-    bool in_db = path_map_get(&path_map, norm_path) >= 0;
-    
-    path_map_free(&path_map);
     
     if (!in_db && leaf_name) {
         /* Add to database */
+        db_make_mutable(db);
+        drv = db_find_drive(db, target_drive);
         db_add_dir(drv, leaf_name, parent_idx, false, false);
         
         /* Mark database as dirty for deferred save */
@@ -2406,109 +2476,6 @@ static bool mkdir_create_parents(const char *path)
     return platform_create_dir(parent);
 }
 
-/* Agent mode: mkdir - Create a directory and add to database */
-static int agent_mode_mkdir(const NcdOptions *opts)
-{
-    if (!opts->has_search || !opts->search[0]) {
-        if (opts->agent_json) {
-            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
-        } else {
-            agent_print("ERROR: No path specified\r\n");
-        }
-        return 1;
-    }
-    
-    const char *path = opts->search;
-    AgentMkdirResult result = AGENT_MKDIR_ERROR_OTHER;
-    char result_msg[256] = {0};
-    
-    /* Check if path already exists */
-    if (platform_dir_exists(path)) {
-        result = AGENT_MKDIR_EXISTS;
-        platform_strncpy_s(result_msg, sizeof(result_msg), "Directory already exists");
-    } else {
-        /* Check if parent directory exists */
-        char parent_path[NCD_MAX_PATH];
-        if (!path_parent(path, parent_path, sizeof(parent_path))) {
-            result = AGENT_MKDIR_ERROR_PATH;
-            platform_strncpy_s(result_msg, sizeof(result_msg), "Invalid path");
-        } else if (!platform_dir_exists(parent_path)) {
-            if (mkdir_create_parents(parent_path)) {
-                /* Parents created, proceed to create target */
-            } else {
-                result = AGENT_MKDIR_ERROR_PARENT;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Parent directory does not exist");
-                goto mkdir_done;
-            }
-        }
-        /* Try to create the directory */
-        if (platform_create_dir(path)) {
-            result = AGENT_MKDIR_OK;
-            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created successfully");
-        } else {
-            /* Determine specific error based on errno or GetLastError */
-#if NCD_PLATFORM_WINDOWS
-            DWORD err = GetLastError();
-            if (err == ERROR_ACCESS_DENIED) {
-                result = AGENT_MKDIR_ERROR_PERMS;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-            } else {
-                result = AGENT_MKDIR_ERROR_OTHER;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-            }
-#else
-            if (errno == EACCES || errno == EPERM) {
-                result = AGENT_MKDIR_ERROR_PERMS;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-            } else {
-                result = AGENT_MKDIR_ERROR_OTHER;
-                platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-            }
-#endif
-        }
-    }
-    
-mkdir_done:
-    /* If successful, add to database */
-    if (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) {
-        add_path_to_database(path);
-    }
-    
-    /* Output result */
-    if (opts->agent_json) {
-        const char *result_str;
-        switch (result) {
-            case AGENT_MKDIR_OK:      result_str = "created"; break;
-            case AGENT_MKDIR_EXISTS:  result_str = "exists"; break;
-            case AGENT_MKDIR_ERROR_PERMS:  result_str = "error_perms"; break;
-            case AGENT_MKDIR_ERROR_PATH:   result_str = "error_path"; break;
-            case AGENT_MKDIR_ERROR_PARENT: result_str = "error_parent"; break;
-            default:                  result_str = "error"; break;
-        }
-        agent_print("{\"v\":1,\"path\":\"");
-        agent_json_escape(path);
-        agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
-        agent_json_escape(result_msg);
-        agent_print("\"}\r\n");
-    } else {
-        agent_print(result_msg);
-        agent_print("\r\n");
-    }
-    
-    return (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) ? 0 : 1;
-}
-
-/* Agent mkdirs result codes */
-typedef enum {
-    AGENT_MKDIRS_OK,
-    AGENT_MKDIRS_ERROR_PATH,
-    AGENT_MKDIRS_ERROR_PARENT,
-    AGENT_MKDIRS_ERROR_PERMS,
-    AGENT_MKDIRS_ERROR_PARSE,
-    AGENT_MKDIRS_ERROR_FILE,
-    AGENT_MKDIRS_ERROR_OTHER
-} AgentMkdirsResult;
-
 /* Structure to hold a directory tree node */
 typedef struct MkdirsNode {
     char name[NCD_MAX_NAME];
@@ -2531,7 +2498,6 @@ static void mkdirs_free_tree(MkdirsNode *node)
 static MkdirsNode* mkdirs_add_child(MkdirsNode *parent, const char *name)
 {
     if (!parent) return NULL;
-    
     if (parent->child_count >= parent->child_capacity) {
         int new_cap = parent->child_capacity ? parent->child_capacity * 2 : 4;
         MkdirsNode *new_children = (MkdirsNode*)realloc(parent->children, new_cap * sizeof(MkdirsNode));
@@ -2539,7 +2505,6 @@ static MkdirsNode* mkdirs_add_child(MkdirsNode *parent, const char *name)
         parent->children = new_children;
         parent->child_capacity = new_cap;
     }
-    
     MkdirsNode *child = &parent->children[parent->child_count++];
     memset(child, 0, sizeof(MkdirsNode));
     platform_strncpy_s(child->name, sizeof(child->name), name);
@@ -2585,34 +2550,28 @@ static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
     p = json_skip_ws(p);
     if (*p != '[') return NULL;
     p++;
-    
     while (1) {
         p = json_skip_ws(p);
         if (*p == ']') {
             p++;
             break;
         }
-        
         if (*p == '"') {
-            /* Simple string: "dirname" */
             p++;
             char name[NCD_MAX_NAME];
             p = json_parse_string(p, name, sizeof(name));
             if (!p) return NULL;
             mkdirs_add_child(parent, name);
         } else if (*p == '{') {
-            /* Object: {"name":"dirname", "children":[...]} */
             p++;
             char name[NCD_MAX_NAME] = {0};
             MkdirsNode *new_node = NULL;
-            
             while (1) {
                 p = json_skip_ws(p);
                 if (*p == '}') {
                     p++;
                     break;
                 }
-                
                 if (*p == '"') {
                     p++;
                     char key[NCD_MAX_NAME];
@@ -2622,7 +2581,6 @@ static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
                     if (*p == ':') {
                         p++;
                         p = json_skip_ws(p);
-                        
                         if (strcmp(key, "name") == 0 && *p == '"') {
                             p++;
                             p = json_parse_string(p, name, sizeof(name));
@@ -2633,7 +2591,6 @@ static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
                             p = json_parse_dirs(p, new_node);
                             if (!p) return NULL;
                         } else {
-                            /* Skip unknown value */
                             if (*p == '"') {
                                 p++;
                                 char skip[NCD_MAX_NAME];
@@ -2644,7 +2601,6 @@ static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
                         }
                     }
                 }
-                
                 p = json_skip_ws(p);
                 if (*p == ',') {
                     p++;
@@ -2652,14 +2608,12 @@ static const char* json_parse_dirs(const char *p, MkdirsNode *parent)
                 }
             }
         }
-        
         p = json_skip_ws(p);
         if (*p == ',') {
             p++;
             continue;
         }
     }
-    
     return p;
 }
 
@@ -2670,32 +2624,22 @@ static bool parse_flat_format(const char *content, MkdirsNode *root)
     MkdirsNode *stack[64];
     int stack_depth = 0;
     stack[0] = root;
-    
     char line[NCD_MAX_PATH];
     int line_num = 0;
-    
     while (*p) {
         line_num++;
-        
-        /* Read one line */
         int line_len = 0;
         while (*p && *p != '\n' && line_len < (int)sizeof(line) - 1) {
             line[line_len++] = *p++;
         }
         line[line_len] = '\0';
         if (*p == '\n') p++;
-        
-        /* Skip empty lines */
         char *line_p = line;
         while (*line_p == ' ' || *line_p == '\t') line_p++;
         if (*line_p == '\0' || *line_p == '\r') continue;
-        
-        /* Remove trailing whitespace */
         char *end = line_p + strlen(line_p) - 1;
         while (end > line_p && (*end == ' ' || *end == '\t' || *end == '\r'))
             *end-- = '\0';
-        
-        /* Count leading spaces for depth */
         int spaces = 0;
         const char *orig_line = line;
         while (*orig_line == ' ') {
@@ -2703,138 +2647,18 @@ static bool parse_flat_format(const char *content, MkdirsNode *root)
             orig_line++;
         }
         int depth = spaces / 2;
-        
-        /* Validate depth */
         if (depth > stack_depth + 1) {
-            /* Indentation too deep - invalid */
             return false;
         }
-        
-        /* Adjust stack */
         stack_depth = depth;
-        
-        /* Add directory to parent */
         MkdirsNode *parent = stack[depth];
         MkdirsNode *new_node = mkdirs_add_child(parent, orig_line);
         if (!new_node) return false;
-        
-        /* This node could be a parent for next level */
         if (stack_depth + 1 < 64) {
             stack[stack_depth + 1] = new_node;
         }
     }
-    
     return true;
-}
-
-/* Create directories recursively from tree */
-static int mkdirs_create_recursive(const char *base_path, MkdirsNode *node, 
-                                    AgentMkdirsResult *results, int *result_count,
-                                    int max_results, bool json_output, bool update_db)
-{
-    int created = 0;
-    char path[NCD_MAX_PATH];
-    
-    for (int i = 0; i < node->child_count && *result_count < max_results; i++) {
-        MkdirsNode *child = &node->children[i];
-        
-        /* Build full path */
-        if (base_path[0]) {
-            snprintf(path, sizeof(path), "%s%s%s", base_path, NCD_PATH_SEP, child->name);
-        } else {
-            platform_strncpy_s(path, sizeof(path), child->name);
-        }
-        
-        /* Try to create directory */
-        AgentMkdirsResult result = AGENT_MKDIRS_OK;
-        char result_msg[256] = {0};
-        
-        if (platform_dir_exists(path)) {
-            result = AGENT_MKDIRS_OK;
-            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory already exists");
-        } else {
-            /* Create parent if needed */
-            char parent_path[NCD_MAX_PATH];
-            if (path_parent(path, parent_path, sizeof(parent_path))) {
-                if (!platform_dir_exists(parent_path)) {
-                    if (!platform_create_dir(parent_path)) {
-                        result = AGENT_MKDIRS_ERROR_PARENT;
-                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create parent directory");
-                    }
-                }
-            }
-            
-            if (result == AGENT_MKDIRS_OK) {
-                if (platform_create_dir(path)) {
-                    result = AGENT_MKDIRS_OK;
-                    platform_strncpy_s(result_msg, sizeof(result_msg), "Directory created");
-                    created++;
-                } else {
-#if NCD_PLATFORM_WINDOWS
-                    DWORD err = GetLastError();
-                    if (err == ERROR_ACCESS_DENIED) {
-                        result = AGENT_MKDIRS_ERROR_PERMS;
-                        platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-                    } else {
-                        result = AGENT_MKDIRS_ERROR_OTHER;
-                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-                    }
-#else
-                    if (errno == EACCES || errno == EPERM) {
-                        result = AGENT_MKDIRS_ERROR_PERMS;
-                        platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
-                    } else {
-                        result = AGENT_MKDIRS_ERROR_OTHER;
-                        platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to create directory");
-                    }
-#endif
-                }
-            }
-        }
-        
-        /* Record result */
-        results[*result_count] = result;
-        (*result_count)++;
-        
-        /* Add to database if requested and operation was successful or dir exists */
-        if (update_db && (result == AGENT_MKDIRS_OK)) {
-            add_path_to_database(path);
-        }
-        
-        /* Output result */
-        if (json_output) {
-            const char *result_str;
-            switch (result) {
-                case AGENT_MKDIRS_OK: result_str = "created"; break;
-                case AGENT_MKDIRS_ERROR_PERMS: result_str = "error_perms"; break;
-                case AGENT_MKDIRS_ERROR_PARENT: result_str = "error_parent"; break;
-                case AGENT_MKDIRS_ERROR_PATH: result_str = "error_path"; break;
-                default: result_str = "error"; break;
-            }
-            if (*result_count == 1) {
-                agent_print("{\"v\":1,\"dirs\":[");
-            } else {
-                agent_print(",");
-            }
-            agent_print("{\"path\":\"");
-            agent_json_escape(path);
-            agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
-            agent_json_escape(result_msg);
-            agent_print("\"}");
-        } else {
-            agent_print(path);
-            agent_print(": ");
-            agent_print(result_msg);
-            agent_print("\r\n");
-        }
-        
-        /* Recurse into children */
-        if (child->child_count > 0) {
-            created += mkdirs_create_recursive(path, child, results, result_count, max_results, json_output, update_db);
-        }
-    }
-    
-    return created;
 }
 
 /* Read entire file into memory */
@@ -2842,39 +2666,736 @@ static char* read_file_contents(const char *path)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    
-    if (size < 0 || size > 1024 * 1024) { /* Max 1MB */
+    if (size < 0 || size > 1024 * 1024) {
         fclose(f);
         return NULL;
     }
-    
     char *buf = (char*)malloc(size + 1);
     if (!buf) {
         fclose(f);
         return NULL;
     }
-    
     size_t read = fread(buf, 1, size, f);
     fclose(f);
-    
     buf[read] = '\0';
     return buf;
 }
 
-/* Agent mode: mkdirs - Create directory tree from JSON or flat file */
+/* ------------------------------------------------------------------
+ * Additional result codes for agent_mode_mkdir
+ * ------------------------------------------------------------------ */
+#define AGENT_MKDIR_VERIFIED        6
+#define AGENT_MKDIR_ERROR_NOT_EMPTY 7
+
+/* ------------------------------------------------------------------
+ * AgentJsonBuffer  —  lightweight growable char buffer
+ * ------------------------------------------------------------------ */
+typedef struct {
+    char  *buf;
+    size_t len;
+    size_t cap;
+} AgentJsonBuffer;
+
+static void ajb_init(AgentJsonBuffer *b)
+{
+    b->cap = 1024;
+    b->buf = (char *)malloc(b->cap);
+    b->len = 0;
+    if (b->buf) b->buf[0] = '\0';
+}
+
+static void ajb_free(AgentJsonBuffer *b)
+{
+    free(b->buf);
+    b->buf = NULL;
+    b->len = 0;
+    b->cap = 0;
+}
+
+static bool ajb_ensure(AgentJsonBuffer *b, size_t need)
+{
+    if (!b->buf) return false;
+    if (b->len + need + 1 <= b->cap) return true;
+    size_t new_cap = b->cap * 2;
+    while (new_cap < b->len + need + 1) new_cap *= 2;
+    char *new_buf = (char *)realloc(b->buf, new_cap);
+    if (!new_buf) return false;
+    b->buf = new_buf;
+    b->cap = new_cap;
+    return true;
+}
+
+static void ajb_append(AgentJsonBuffer *b, const char *s)
+{
+    if (!b->buf) return;
+    size_t n = strlen(s);
+    if (!ajb_ensure(b, n)) return;
+    memcpy(b->buf + b->len, s, n);
+    b->len += n;
+    b->buf[b->len] = '\0';
+}
+
+static void ajb_appendf(AgentJsonBuffer *b, const char *fmt, ...)
+{
+    if (!b->buf) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (!ajb_ensure(b, (size_t)n + 1)) return;
+    va_start(ap, fmt);
+    vsnprintf(b->buf + b->len, b->cap - b->len, fmt, ap);
+    va_end(ap);
+    b->len += (size_t)n;
+    b->buf[b->len] = '\0';
+}
+
+static void ajb_append_json_escape(AgentJsonBuffer *b, const char *s)
+{
+    for (const char *p = s; *p; p++) {
+        switch (*p) {
+            case '\\': ajb_append(b, "\\\\"); break;
+            case '"':  ajb_append(b, "\\\""); break;
+            case '\b': ajb_append(b, "\\b"); break;
+            case '\f': ajb_append(b, "\\f"); break;
+            case '\n': ajb_append(b, "\\n"); break;
+            case '\r': ajb_append(b, "\\r"); break;
+            case '\t': ajb_append(b, "\\t"); break;
+            default:
+                if ((unsigned char)*p < 0x20) {
+                    char tmp[7];
+                    snprintf(tmp, sizeof(tmp), "\\u%04x", (unsigned char)*p);
+                    ajb_append(b, tmp);
+                } else {
+                    char tmp[2] = { *p, '\0' };
+                    ajb_append(b, tmp);
+                }
+                break;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------
+ * AgentTxn  —  tracks directories created during an atomic mkdirs
+ * ------------------------------------------------------------------ */
+typedef struct {
+    char **paths;
+    int    count;
+    int    capacity;
+} AgentTxn;
+
+static void agent_txn_init(AgentTxn *txn)
+{
+    txn->paths = NULL;
+    txn->count = 0;
+    txn->capacity = 0;
+}
+
+static void agent_txn_free(AgentTxn *txn)
+{
+    for (int i = 0; i < txn->count; i++) {
+        free(txn->paths[i]);
+    }
+    free(txn->paths);
+    txn->paths = NULL;
+    txn->count = 0;
+    txn->capacity = 0;
+}
+
+static void agent_txn_add(AgentTxn *txn, const char *path)
+{
+    if (txn->count >= txn->capacity) {
+        int new_cap = txn->capacity ? txn->capacity * 2 : 4;
+        char **new_paths = (char **)realloc(txn->paths, (size_t)new_cap * sizeof(char *));
+        if (!new_paths) return;
+        txn->paths = new_paths;
+        txn->capacity = new_cap;
+    }
+    txn->paths[txn->count] = ncd_strdup(path);
+    if (txn->paths[txn->count]) {
+        txn->count++;
+    }
+}
+
+static bool agent_txn_rollback(AgentTxn *txn)
+{
+    bool ok = true;
+    for (int i = txn->count - 1; i >= 0; i--) {
+        if (!platform_remove_dir(txn->paths[i])) {
+            ok = false;
+        }
+    }
+    agent_txn_free(txn);
+    return ok;
+}
+
+/* ------------------------------------------------------------------
+ * read_stdin_all  —  slurp entire stdin into a malloc'd string.
+ * ------------------------------------------------------------------ */
+static char *read_stdin_all(void)
+{
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+        if (len + 1 >= cap) {
+            size_t new_cap = cap * 2;
+            char *new_buf = (char *)realloc(buf, new_cap);
+            if (!new_buf) { free(buf); return NULL; }
+            buf = new_buf;
+            cap = new_cap;
+        }
+        buf[len++] = (char)c;
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
+/* ------------------------------------------------------------------
+ * MkdirsJsonBuilder  —  incremental JSON builder for mkdirs output.
+ * ------------------------------------------------------------------ */
+typedef struct {
+    AgentJsonBuffer buf;
+    int             dir_count;
+    int             rollback_count;
+    bool            rollback_started;
+    bool            use_json;
+} MkdirsJsonBuilder;
+
+static void mjb_init(MkdirsJsonBuilder *b, bool use_json, bool atomic)
+{
+    b->use_json = use_json;
+    b->dir_count = 0;
+    b->rollback_count = 0;
+    b->rollback_started = false;
+    if (use_json) {
+        ajb_init(&b->buf);
+        ajb_appendf(&b->buf, "{\"v\":1,\"atomic\":%s,\"dirs\":[",
+                    atomic ? "true" : "false");
+    }
+}
+
+static void mjb_add_dir(MkdirsJsonBuilder *b, const char *path,
+                        const char *result, const char *message)
+{
+    if (!b->use_json) return;
+    if (b->dir_count > 0) ajb_append(&b->buf, ",");
+    ajb_append(&b->buf, "{\"path\":\"");
+    ajb_append_json_escape(&b->buf, path);
+    ajb_append(&b->buf, "\",\"result\":\"");
+    ajb_append_json_escape(&b->buf, result);
+    ajb_append(&b->buf, "\"");
+    if (message && message[0]) {
+        ajb_append(&b->buf, ",\"message\":\"");
+        ajb_append_json_escape(&b->buf, message);
+        ajb_append(&b->buf, "\"");
+    }
+    ajb_append(&b->buf, "}");
+    b->dir_count++;
+}
+
+static void mjb_start_rollback(MkdirsJsonBuilder *b)
+{
+    if (!b->use_json) return;
+    ajb_append(&b->buf, "],\"rollback\":[");
+    b->rollback_started = true;
+}
+
+static void mjb_add_rollback(MkdirsJsonBuilder *b, const char *path)
+{
+    if (!b->use_json) return;
+    if (b->rollback_count > 0) ajb_append(&b->buf, ",");
+    ajb_append(&b->buf, "{\"path\":\"");
+    ajb_append_json_escape(&b->buf, path);
+    ajb_append(&b->buf, "\",\"result\":\"removed\"}");
+    b->rollback_count++;
+}
+
+static void mjb_finish(MkdirsJsonBuilder *b, int created, int existed,
+                       int failed, int rolled_back)
+{
+    if (!b->use_json) return;
+    if (b->rollback_count == 0 && !b->rollback_started) {
+        ajb_append(&b->buf, "],\"rollback\":[]");
+    } else if (b->rollback_started && b->rollback_count == 0) {
+        ajb_append(&b->buf, "]");
+    }
+    ajb_appendf(&b->buf, ",\"summary\":{\"created\":%d,\"exists\":%d,\"failed\":%d",
+                created, existed, failed);
+    if (rolled_back >= 0) {
+        ajb_appendf(&b->buf, ",\"rolled_back\":%d", rolled_back);
+    }
+    ajb_append(&b->buf, "}}\r\n");
+}
+
+static void mjb_emit(MkdirsJsonBuilder *b)
+{
+    if (b->use_json && b->buf.buf) {
+        agent_print(b->buf.buf);
+    }
+}
+
+static void mjb_free(MkdirsJsonBuilder *b)
+{
+    if (b->use_json) {
+        ajb_free(&b->buf);
+    }
+}
+
+/* ------------------------------------------------------------------
+ * MkdirsStats  —  simple accumulator used during tree traversal.
+ * ------------------------------------------------------------------ */
+typedef struct {
+    int  created;
+    int  existed;
+    int  failed;
+    bool stopped;
+} MkdirsStats;
+
+/* ------------------------------------------------------------------
+ * mkdirs_validate_atomic  —  first pass for --atomic.
+ * ------------------------------------------------------------------ */
+static bool mkdirs_validate_atomic(const char *base_path, MkdirsNode *node,
+                                   const NcdOptions *opts,
+                                   char *fail_path, size_t fail_path_size,
+                                   const char **fail_msg)
+{
+    for (int i = 0; i < node->child_count; i++) {
+        MkdirsNode *child = &node->children[i];
+        char path[NCD_MAX_PATH];
+        if (base_path[0]) {
+            snprintf(path, sizeof(path), "%s%s%s",
+                     base_path, NCD_PATH_SEP, child->name);
+        } else {
+            platform_strncpy_s(path, sizeof(path), child->name);
+        }
+
+        if (platform_file_exists(path)) {
+            platform_strncpy_s(fail_path, fail_path_size, path);
+            *fail_msg = "Path exists but is not a directory";
+            return false;
+        }
+
+        if (platform_dir_exists(path)) {
+            if (opts->agent_force) {
+                if (!platform_dir_is_empty(path)) {
+                    platform_strncpy_s(fail_path, fail_path_size, path);
+                    *fail_msg = "Directory exists and is not empty";
+                    return false;
+                }
+            }
+        }
+
+        if (child->child_count > 0) {
+            if (!mkdirs_validate_atomic(path, child, opts,
+                                        fail_path, fail_path_size, fail_msg)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------
+ * mkdirs_process  —  recursive worker for mkdirs.
+ * ------------------------------------------------------------------ */
+static bool mkdirs_process(const char *base_path, MkdirsNode *node,
+                           const NcdOptions *opts,
+                           MkdirsJsonBuilder *json,
+                           AgentTxn *txn,
+                           MkdirsStats *stats)
+{
+    for (int i = 0; i < node->child_count; i++) {
+        MkdirsNode *child = &node->children[i];
+        char path[NCD_MAX_PATH];
+        if (base_path[0]) {
+            snprintf(path, sizeof(path), "%s%s%s",
+                     base_path, NCD_PATH_SEP, child->name);
+        } else {
+            platform_strncpy_s(path, sizeof(path), child->name);
+        }
+
+        const char *result_code = "created";
+        const char *message = "Directory created";
+        bool success = true;
+        bool dir_existed = false;
+        bool was_created = false;
+
+        if (opts->agent_verify) {
+            if (platform_dir_exists(path)) {
+                if (opts->agent_mode_octal >= 0) {
+                    int actual = platform_get_mode(path);
+                    if (actual >= 0 && actual == opts->agent_mode_octal) {
+                        result_code = "exists";
+                        message = "Directory exists and mode matches";
+                        dir_existed = true;
+                    } else {
+                        result_code = "error";
+                        message = "Directory exists but mode does not match";
+                        success = false;
+                    }
+                } else {
+                    result_code = "exists";
+                    message = "Directory already exists";
+                    dir_existed = true;
+                }
+            } else {
+                result_code = "error";
+                message = "Directory does not exist";
+                success = false;
+            }
+        } else if (opts->agent_dry_run) {
+            if (platform_dir_exists(path)) {
+                if (opts->agent_force) {
+                    if (platform_dir_is_empty(path)) {
+                        result_code = "created";
+                        message = "Directory would be recreated";
+                    } else {
+                        result_code = "error_not_empty";
+                        message = "Directory exists and is not empty";
+                        success = false;
+                    }
+                } else {
+                    result_code = "exists";
+                    message = "Directory already exists";
+                    dir_existed = true;
+                }
+            } else {
+                char parent[NCD_MAX_PATH];
+                bool parent_ok = true;
+                if (path_parent(path, parent, sizeof(parent))) {
+                    if (!platform_dir_exists(parent) && opts->agent_parents_required) {
+                        parent_ok = false;
+                    }
+                }
+                if (parent_ok) {
+                    result_code = "created";
+                    message = "Directory would be created";
+                } else {
+                    result_code = "error_parent";
+                    message = "Parent directory does not exist";
+                    success = false;
+                }
+            }
+        } else {
+            /* ---- actual creation ---- */
+            if (platform_dir_exists(path)) {
+                if (opts->agent_force) {
+                    if (platform_dir_is_empty(path)) {
+                        if (platform_remove_dir(path) && platform_create_dir(path)) {
+                            result_code = "created";
+                            message = "Directory recreated";
+                            was_created = true;
+                            if (opts->agent_mode_octal >= 0)
+                                platform_set_mode(path, opts->agent_mode_octal);
+                        } else {
+                            result_code = "error";
+                            message = "Failed to recreate directory";
+                            success = false;
+                        }
+                    } else {
+                        result_code = "error_not_empty";
+                        message = "Directory exists and is not empty";
+                        success = false;
+                    }
+                } else {
+                    result_code = "exists";
+                    message = "Directory already exists";
+                    dir_existed = true;
+                }
+            } else {
+                char parent[NCD_MAX_PATH];
+                bool parent_ok = true;
+                if (path_parent(path, parent, sizeof(parent))) {
+                    if (!platform_dir_exists(parent)) {
+                        if (opts->agent_parents_required) {
+                            parent_ok = false;
+                        } else {
+                            if (!platform_create_dir(parent)) {
+                                parent_ok = false;
+                            }
+                        }
+                    }
+                }
+                if (parent_ok) {
+                    if (platform_create_dir(path)) {
+                        result_code = "created";
+                        message = "Directory created";
+                        was_created = true;
+                        if (opts->agent_mode_octal >= 0)
+                            platform_set_mode(path, opts->agent_mode_octal);
+                    } else {
+#if NCD_PLATFORM_WINDOWS
+                        DWORD err = GetLastError();
+                        if (err == ERROR_ACCESS_DENIED) {
+                            result_code = "error_perms";
+                            message = "Permission denied";
+                        } else {
+                            result_code = "error";
+                            message = "Failed to create directory";
+                        }
+#else
+                        if (errno == EACCES || errno == EPERM) {
+                            result_code = "error_perms";
+                            message = "Permission denied";
+                        } else {
+                            result_code = "error";
+                            message = "Failed to create directory";
+                        }
+#endif
+                        success = false;
+                    }
+                } else {
+                    result_code = "error_parent";
+                    message = "Parent directory does not exist";
+                    success = false;
+                }
+            }
+        }
+
+        if (was_created) {
+            stats->created++;
+            if (txn) {
+                agent_txn_add(txn, path);
+            } else {
+                add_path_to_database(path);
+            }
+        } else if (dir_existed) {
+            stats->existed++;
+        } else if (!success) {
+            stats->failed++;
+        }
+
+        if (json && json->use_json) {
+            mjb_add_dir(json, path, result_code, message);
+        } else if (!opts->agent_json) {
+            agent_print(path);
+            agent_print(": ");
+            agent_print(message);
+            agent_print("\r\n");
+        }
+
+        /* recurse */
+        if (child->child_count > 0) {
+            bool child_ok = mkdirs_process(path, child, opts, json, txn, stats);
+            if (!child_ok) {
+                stats->stopped = true;
+                return false;
+            }
+        }
+
+        if (!success && opts->agent_stop_on_error) {
+            stats->stopped = true;
+            return false;
+        }
+    }
+    return true;
+}
+
+/* ==================================================================
+ * agent_mode_mkdir  —  enhanced single-directory creation
+ * ================================================================== */
+static int agent_mode_mkdir(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+
+    const char *path = opts->search;
+    int    result = AGENT_MKDIR_ERROR_OTHER;
+    char   result_msg[256] = {0};
+    char   mode_str[16] = {0};
+
+    /* ---- --verify mode (read-only) ---- */
+    if (opts->agent_verify) {
+        if (platform_dir_exists(path)) {
+            if (opts->agent_mode_octal >= 0) {
+                int actual_mode = platform_get_mode(path);
+                if (actual_mode >= 0 && actual_mode == opts->agent_mode_octal) {
+                    result = AGENT_MKDIR_VERIFIED;
+                    platform_strncpy_s(result_msg, sizeof(result_msg),
+                                       "Directory exists and mode matches");
+                    snprintf(mode_str, sizeof(mode_str), "%04o",
+                             opts->agent_mode_octal);
+                } else {
+                    result = AGENT_MKDIR_ERROR_OTHER;
+                    platform_strncpy_s(result_msg, sizeof(result_msg),
+                                       "Directory exists but mode does not match");
+                    snprintf(mode_str, sizeof(mode_str), "%04o",
+                             opts->agent_mode_octal);
+                }
+            } else {
+                result = AGENT_MKDIR_VERIFIED;
+                platform_strncpy_s(result_msg, sizeof(result_msg),
+                                   "Directory exists");
+            }
+        } else {
+            result = AGENT_MKDIR_ERROR_OTHER;
+            platform_strncpy_s(result_msg, sizeof(result_msg),
+                               "Directory does not exist");
+        }
+
+        if (opts->agent_json) {
+            const char *rs = (result == AGENT_MKDIR_VERIFIED) ? "verified" : "error";
+            agent_print("{\"v\":1,\"path\":\"");
+            agent_json_escape(path);
+            agent_printf("\",\"result\":\"%s\",\"message\":\"", rs);
+            agent_json_escape(result_msg);
+            agent_print("\"");
+            if (mode_str[0]) {
+                agent_printf(",\"mode\":\"%s\"", mode_str);
+            }
+            agent_print("}\r\n");
+        } else {
+            agent_print(result_msg);
+            agent_print("\r\n");
+        }
+        return (result == AGENT_MKDIR_VERIFIED) ? 0 : 1;
+    }
+
+    /* ---- determine what would happen / do it ---- */
+    if (platform_dir_exists(path)) {
+        if (opts->agent_force) {
+            if (platform_dir_is_empty(path)) {
+                if (opts->agent_dry_run) {
+                    result = AGENT_MKDIR_OK;
+                    platform_strncpy_s(result_msg, sizeof(result_msg),
+                                       "Directory would be recreated");
+                } else {
+                    if (platform_remove_dir(path) && platform_create_dir(path)) {
+                        result = AGENT_MKDIR_OK;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Directory recreated");
+                        if (opts->agent_mode_octal >= 0)
+                            platform_set_mode(path, opts->agent_mode_octal);
+                    } else {
+                        result = AGENT_MKDIR_ERROR_OTHER;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Failed to recreate directory");
+                    }
+                }
+            } else {
+                result = AGENT_MKDIR_ERROR_NOT_EMPTY;
+                platform_strncpy_s(result_msg, sizeof(result_msg),
+                                   "Directory exists and is not empty");
+            }
+        } else {
+            result = AGENT_MKDIR_EXISTS;
+            platform_strncpy_s(result_msg, sizeof(result_msg),
+                               "Directory already exists");
+        }
+    } else {
+        char parent_path[NCD_MAX_PATH];
+        bool parent_exists = path_parent(path, parent_path, sizeof(parent_path))
+                          && platform_dir_exists(parent_path);
+
+        if (opts->agent_parents_required && !parent_exists) {
+            result = AGENT_MKDIR_ERROR_PARENT;
+            platform_strncpy_s(result_msg, sizeof(result_msg),
+                               "Parent directory does not exist");
+        } else {
+            if (opts->agent_dry_run) {
+                result = AGENT_MKDIR_OK;
+                platform_strncpy_s(result_msg, sizeof(result_msg),
+                                   "Directory would be created");
+            } else {
+                if (!parent_exists) {
+                    mkdir_create_parents(parent_path);
+                }
+                if (platform_create_dir(path)) {
+                    result = AGENT_MKDIR_OK;
+                    platform_strncpy_s(result_msg, sizeof(result_msg),
+                                       "Directory created successfully");
+                    if (opts->agent_mode_octal >= 0)
+                        platform_set_mode(path, opts->agent_mode_octal);
+                } else {
+#if NCD_PLATFORM_WINDOWS
+                    DWORD err = GetLastError();
+                    if (err == ERROR_ACCESS_DENIED) {
+                        result = AGENT_MKDIR_ERROR_PERMS;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Permission denied");
+                    } else {
+                        result = AGENT_MKDIR_ERROR_OTHER;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Failed to create directory");
+                    }
+#else
+                    if (errno == EACCES || errno == EPERM) {
+                        result = AGENT_MKDIR_ERROR_PERMS;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Permission denied");
+                    } else {
+                        result = AGENT_MKDIR_ERROR_OTHER;
+                        platform_strncpy_s(result_msg, sizeof(result_msg),
+                                           "Failed to create directory");
+                    }
+#endif
+                }
+            }
+        }
+    }
+
+    /* database update */
+    if (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS) {
+        add_path_to_database(path);
+    }
+
+    /* output */
+    if (opts->agent_json) {
+        const char *result_str;
+        switch (result) {
+            case AGENT_MKDIR_OK:         result_str = "created"; break;
+            case AGENT_MKDIR_EXISTS:     result_str = "exists"; break;
+            case AGENT_MKDIR_VERIFIED:   result_str = "verified"; break;
+            case AGENT_MKDIR_ERROR_PERMS:    result_str = "error_perms"; break;
+            case AGENT_MKDIR_ERROR_PATH:     result_str = "error_path"; break;
+            case AGENT_MKDIR_ERROR_PARENT:   result_str = "error_parent"; break;
+            case AGENT_MKDIR_ERROR_NOT_EMPTY: result_str = "error_not_empty"; break;
+            default:                     result_str = "error"; break;
+        }
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+        agent_json_escape(result_msg);
+        agent_print("\"");
+        if (opts->agent_mode_octal >= 0) {
+            agent_printf(",\"mode\":\"%04o\"", opts->agent_mode_octal);
+        }
+        agent_print("}\r\n");
+    } else {
+        agent_print(result_msg);
+        agent_print("\r\n");
+    }
+
+    return (result == AGENT_MKDIR_OK || result == AGENT_MKDIR_EXISTS
+            || result == AGENT_MKDIR_VERIFIED) ? 0 : 1;
+}
+
+/* ==================================================================
+ * agent_mode_mkdirs  —  enhanced tree creation
+ * ================================================================== */
 static int agent_mode_mkdirs(const NcdOptions *opts)
 {
     const char *content = NULL;
-    char *file_content = NULL;
-    bool is_json = false;
-    
-    /* Determine input source */
+    char       *file_content = NULL;
+    char       *stdin_content = NULL;
+    bool        is_json = false;
+
+    /* ---- determine input source ---- */
     if (opts->agent_mkdirs_file[0]) {
-        /* Read from file */
         file_content = read_file_contents(opts->agent_mkdirs_file);
         if (!file_content) {
             if (opts->agent_json) {
@@ -2885,43 +3406,37 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
             return 1;
         }
         content = file_content;
-        /* Detect JSON by checking first non-whitespace char */
         const char *p = content;
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
         is_json = (*p == '[' || *p == '{');
     } else if (opts->has_search) {
-        /* Content from command line */
         content = opts->search;
-        /* Detect JSON */
         const char *p = content;
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
         is_json = (*p == '[' || *p == '{');
     } else {
-        /* Try to read from stdin */
-        /* For now, error out */
-        if (opts->agent_json) {
-            agent_print("{\"v\":1,\"error\":\"no input provided (use --file or provide content)\",\"result\":\"error\"}\r\n");
-        } else {
-            agent_print("ERROR: No input provided. Use --file or provide content as argument.\r\n");
-            agent_print("Usage: ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n");
-            agent_print("\r\n");
-            agent_print("Flat file format (2 spaces = child):\r\n");
-            agent_print("  parent\r\n");
-            agent_print("    child1\r\n");
-            agent_print("    child2\r\n");
-            agent_print("      grandchild\r\n");
-            agent_print("\r\n");
-            agent_print("JSON format:\r\n");
-            agent_print("  [{\"name\":\"parent\",\"children\":[{\"name\":\"child\"}]}]\r\n");
+        /* read from stdin */
+        stdin_content = read_stdin_all();
+        if (!stdin_content || !stdin_content[0]) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"error\":\"no input provided\",\"result\":\"error\"}\r\n");
+            } else {
+                agent_print("ERROR: No input provided. Use --file, provide content as argument, or pipe via stdin.\r\n");
+            }
+            free(stdin_content);
+            return 1;
         }
-        return 1;
+        content = stdin_content;
+        const char *p = content;
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+        is_json = (*p == '[' || *p == '{');
     }
-    
-    /* Parse the directory tree */
+
+    /* ---- parse tree ---- */
     MkdirsNode root;
     memset(&root, 0, sizeof(root));
     platform_strncpy_s(root.name, sizeof(root.name), "");
-    
+
     bool parse_ok;
     if (is_json) {
         const char *p = json_skip_ws(content);
@@ -2929,11 +3444,10 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     } else {
         parse_ok = parse_flat_format(content, &root);
     }
-    
-    if (file_content) {
-        free(file_content);
-    }
-    
+
+    free(file_content);
+    free(stdin_content);
+
     if (!parse_ok) {
         mkdirs_free_tree(&root);
         if (opts->agent_json) {
@@ -2943,30 +3457,76 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
         }
         return 1;
     }
-    
-    /* Create directories */
-    AgentMkdirsResult results[256];
-    int result_count = 0;
-    
-    if (opts->agent_json) {
-        /* JSON output - mkdirs_create_recursive outputs as it goes */
-        (void)mkdirs_create_recursive("", &root, results, &result_count, 256, true, true);
-        if (result_count > 0) {
-            agent_print("]}\r\n");
-        } else {
-            agent_print("{\"v\":1,\"dirs\":[]}\r\n");
+
+    /* ---- prepare buffered JSON output ---- */
+    bool buffer_json = opts->agent_json || opts->agent_atomic;
+    MkdirsJsonBuilder json;
+    mjb_init(&json, buffer_json, opts->agent_atomic);
+
+    MkdirsStats stats = {0};
+    AgentTxn    txn;
+    agent_txn_init(&txn);
+
+    /* ---- atomic validation pass ---- */
+    if (opts->agent_atomic) {
+        char fail_path[NCD_MAX_PATH] = {0};
+        const char *fail_msg = NULL;
+        if (!mkdirs_validate_atomic("", &root, opts,
+                                    fail_path, sizeof(fail_path), &fail_msg)) {
+            mjb_add_dir(&json, fail_path, "error_not_empty", fail_msg);
+            stats.failed++;
+            mjb_start_rollback(&json);
+            mjb_finish(&json, 0, 0, 1, 0);
+            mjb_emit(&json);
+            mjb_free(&json);
+            mkdirs_free_tree(&root);
+            agent_txn_free(&txn);
+            return 1;
         }
-        mkdirs_free_tree(&root);
-        return 0;
-    } else {
-        /* Plain text output */
-        agent_print("Creating directory tree...\r\n\r\n");
-        (void)mkdirs_create_recursive("", &root, results, &result_count, 256, false, true);
-        mkdirs_free_tree(&root);
-        
-        agent_printf("\r\nCreated %d directories\r\n", result_count);
-        return 0;
     }
+
+    /* ---- process tree ---- */
+    mkdirs_process("", &root, opts, &json,
+                   opts->agent_atomic ? &txn : NULL, &stats);
+
+    /* ---- rollback on atomic failure ---- */
+    bool rolled_back = false;
+    if (opts->agent_atomic && stats.failed > 0) {
+        mjb_start_rollback(&json);
+        for (int i = txn.count - 1; i >= 0; i--) {
+            if (platform_remove_dir(txn.paths[i])) {
+                mjb_add_rollback(&json, txn.paths[i]);
+            }
+        }
+        rolled_back = true;
+    }
+
+    /* ---- database update (only on success or non-atomic) ---- */
+    if (!opts->agent_dry_run && !opts->agent_verify
+        && stats.failed == 0 && txn.count > 0) {
+        for (int i = 0; i < txn.count; i++) {
+            add_path_to_database(txn.paths[i]);
+        }
+    }
+
+    /* ---- emit output ---- */
+    if (buffer_json) {
+        mjb_finish(&json, stats.created, stats.existed, stats.failed,
+                   rolled_back ? txn.count : -1);
+        mjb_emit(&json);
+    } else {
+        agent_printf("\r\nCreated %d directories, %d existed, %d failed\r\n",
+                     stats.created, stats.existed, stats.failed);
+    }
+
+    mjb_free(&json);
+    agent_txn_free(&txn);
+    mkdirs_free_tree(&root);
+
+    if (opts->agent_verify) {
+        return (stats.failed == 0) ? 0 : 1;
+    }
+    return (stats.failed == 0 || opts->agent_dry_run) ? 0 : 1;
 }
 
 /* Agent mode: complete - Shell tab-completion candidates */
@@ -3057,6 +3617,939 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
 
     if (meta) db_metadata_free(meta);
     return 0;
+}
+
+/*
+ * Helper: Remove a path from the database (best-effort).
+ * Loads the per-drive database, removes the entry, and marks dirty.
+ */
+static bool remove_path_from_database(const char *path)
+{
+    if (!path || !path[0]) return false;
+
+    char target_drive = path_get_drive(path);
+    if (target_drive == 0 && path[0] != '\0') {
+        target_drive = (char)toupper((unsigned char)path[0]);
+    }
+
+    if (target_drive == 0) return false;
+
+    char target_db[NCD_MAX_PATH] = {0};
+    NcdDatabase *db = NULL;
+
+    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+        for (int i = 0; i < g_dirty_db_count; i++) {
+            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db) {
+                db = g_dirty_dbs[i].db;
+                break;
+            }
+        }
+        if (!db) {
+            db = db_load_auto(target_db);
+        }
+    }
+
+    if (!db) return false;
+
+    char norm_path[NCD_MAX_PATH];
+    platform_strncpy_s(norm_path, sizeof(norm_path), path);
+    path_normalize_separators(norm_path);
+
+    bool found = db_remove_path(db, norm_path);
+    if (found) {
+        db_mark_dirty_standalone(target_drive, target_db, db);
+    } else {
+        bool tracked = false;
+        for (int i = 0; i < g_dirty_db_count; i++) {
+            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db == db) {
+                tracked = true;
+                break;
+            }
+        }
+        if (!tracked) {
+            db_free(db);
+        }
+    }
+
+    return found;
+}
+
+/* Agent rmdir result codes */
+typedef enum {
+    AGENT_RMDIR_OK,
+    AGENT_RMDIR_NOT_FOUND,
+    AGENT_RMDIR_NOT_EMPTY,
+    AGENT_RMDIR_PERMS,
+    AGENT_RMDIR_ERROR
+} AgentRmdirResult;
+
+/* Directory list for rmdirs tree collection */
+typedef struct {
+    char **paths;
+    int count;
+    int capacity;
+} RmdirsList;
+
+static void rmdirs_list_init(RmdirsList *list)
+{
+    list->paths = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static void rmdirs_list_free(RmdirsList *list)
+{
+    if (!list) return;
+    for (int i = 0; i < list->count; i++) {
+        free(list->paths[i]);
+    }
+    free(list->paths);
+    list->paths = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static bool rmdirs_list_add(RmdirsList *list, const char *path)
+{
+    if (list->count >= list->capacity) {
+        int new_cap = list->capacity ? list->capacity * 2 : 16;
+        char **new_paths = (char **)realloc(list->paths, sizeof(char*) * (size_t)new_cap);
+        if (!new_paths) return false;
+        list->paths = new_paths;
+        list->capacity = new_cap;
+    }
+    list->paths[list->count] = ncd_strdup(path);
+    if (!list->paths[list->count]) return false;
+    list->count++;
+    return true;
+}
+
+/*
+ * Collect all directory paths under `path` into `list`.
+ * The root is added first, then children (pre-order).
+ */
+static bool rmdirs_collect_dirs(const char *path, RmdirsList *list)
+{
+    if (!rmdirs_list_add(list, path)) return false;
+
+#if NCD_PLATFORM_WINDOWS
+    char pattern[NCD_MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return true;
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            char child[NCD_MAX_PATH];
+            path_join(child, sizeof(child), path, fd.cFileName);
+            if (!rmdirs_collect_dirs(child, list)) {
+                FindClose(h);
+                return false;
+            }
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(path);
+    if (!d) return true;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+
+        char child[NCD_MAX_PATH];
+        path_join(child, sizeof(child), path, ent->d_name);
+
+        struct stat st;
+        if (stat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
+            if (!rmdirs_collect_dirs(child, list)) {
+                closedir(d);
+                return false;
+            }
+        }
+    }
+    closedir(d);
+#endif
+    return true;
+}
+
+static int agent_mode_rmdir(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+
+    const char *path = opts->search;
+    AgentRmdirResult result = AGENT_RMDIR_ERROR;
+    char result_msg[256] = {0};
+
+    if (!platform_dir_exists(path)) {
+        result = AGENT_RMDIR_NOT_FOUND;
+        platform_strncpy_s(result_msg, sizeof(result_msg), "Directory not found");
+    } else {
+        bool is_empty = platform_dir_is_empty(path);
+        if (!is_empty && !opts->agent_force) {
+            result = AGENT_RMDIR_NOT_EMPTY;
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory is not empty");
+        } else {
+            bool removed;
+            if (opts->agent_force) {
+                removed = platform_remove_tree(path);
+            } else {
+                removed = platform_remove_dir(path);
+            }
+
+            if (removed) {
+                result = AGENT_RMDIR_OK;
+                platform_strncpy_s(result_msg, sizeof(result_msg), "Directory removed");
+                remove_path_from_database(path);
+            } else {
+#if NCD_PLATFORM_WINDOWS
+                DWORD err = GetLastError();
+                if (err == ERROR_ACCESS_DENIED) {
+                    result = AGENT_RMDIR_PERMS;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                } else {
+                    result = AGENT_RMDIR_ERROR;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to remove directory");
+                }
+#else
+                if (errno == EACCES || errno == EPERM) {
+                    result = AGENT_RMDIR_PERMS;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Permission denied");
+                } else {
+                    result = AGENT_RMDIR_ERROR;
+                    platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to remove directory");
+                }
+#endif
+            }
+        }
+    }
+
+    if (opts->agent_json) {
+        const char *result_str;
+        switch (result) {
+            case AGENT_RMDIR_OK:         result_str = "removed"; break;
+            case AGENT_RMDIR_NOT_FOUND:  result_str = "error_not_found"; break;
+            case AGENT_RMDIR_NOT_EMPTY:  result_str = "error_not_empty"; break;
+            case AGENT_RMDIR_PERMS:      result_str = "error_perms"; break;
+            default:                     result_str = "error"; break;
+        }
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+        agent_json_escape(result_msg);
+        agent_print("\"}\r\n");
+    } else {
+        agent_print(result_msg);
+        agent_print("\r\n");
+    }
+
+    return (result == AGENT_RMDIR_OK) ? 0 : 1;
+}
+
+static int agent_mode_rmdirs(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+
+    const char *path = opts->search;
+
+    /* Preserve root check (default true per spec) */
+    {
+        bool is_root = false;
+#if NCD_PLATFORM_WINDOWS
+        size_t len = strlen(path);
+        if (len >= 2 && path[1] == ':') {
+            if (len == 2 || (len == 3 && (path[2] == '\\' || path[2] == '/')))
+                is_root = true;
+        }
+#else
+        if (strcmp(path, "/") == 0)
+            is_root = true;
+#endif
+        if (is_root) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"path\":\"");
+                agent_json_escape(path);
+                agent_print("\",\"result\":\"error\",\"message\":\"Cannot remove root directory\"}\r\n");
+            } else {
+                agent_print("ERROR: Cannot remove root directory\r\n");
+            }
+            return 1;
+        }
+    }
+
+    /* Safety guard: --force is required unless --dry-run */
+    if (!opts->agent_force && !opts->agent_dry_run) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"path\":\"");
+            agent_json_escape(path);
+            agent_print("\",\"result\":\"error\",\"message\":\"--force is required to remove a directory tree. Use --dry-run to preview.\"}\r\n");
+        } else {
+            agent_print("ERROR: --force is required to remove a directory tree. Use --dry-run to preview.\r\n");
+        }
+        return 1;
+    }
+
+    if (!platform_dir_exists(path)) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"path\":\"");
+            agent_json_escape(path);
+            agent_print("\",\"result\":\"error_not_found\",\"message\":\"Directory not found\"}\r\n");
+        } else {
+            agent_print("Directory not found\r\n");
+        }
+        return 1;
+    }
+
+    /* Collect all directories in the tree */
+    RmdirsList list;
+    rmdirs_list_init(&list);
+    if (!rmdirs_collect_dirs(path, &list)) {
+        rmdirs_list_free(&list);
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"result\":\"error\",\"message\":\"Failed to collect directories\"}\r\n");
+        } else {
+            agent_print("ERROR: Failed to collect directories\r\n");
+        }
+        return 1;
+    }
+
+    /* Perform the filesystem deletion (unless dry-run) */
+    bool delete_success = true;
+    if (!opts->agent_dry_run) {
+        delete_success = platform_remove_tree(path);
+    }
+
+    int removed_count = 0;
+    int failed_count = 0;
+
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"dirs\":[");
+    }
+
+    bool first_output = true;
+
+    /* Process from leaf to root (reverse of pre-order collection) */
+    for (int i = list.count - 1; i >= 0; i--) {
+        const char *dir_path = list.paths[i];
+        const char *result_str;
+        char result_msg[256] = {0};
+
+        if (opts->agent_dry_run) {
+            result_str = "would_remove";
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Would remove");
+        } else if (delete_success) {
+            result_str = "removed";
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Directory removed");
+            remove_path_from_database(dir_path);
+            removed_count++;
+        } else {
+            result_str = "error";
+            platform_strncpy_s(result_msg, sizeof(result_msg), "Failed to remove directory");
+            failed_count++;
+        }
+
+        if (opts->agent_json) {
+            if (!first_output) agent_print(",");
+            first_output = false;
+            agent_print("{\"path\":\"");
+            agent_json_escape(dir_path);
+            agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+            agent_json_escape(result_msg);
+            agent_print("\"}");
+        } else {
+            agent_print(dir_path);
+            agent_print(": ");
+            agent_print(result_msg);
+            agent_print("\r\n");
+        }
+    }
+
+    if (opts->agent_json) {
+        agent_printf("],\"summary\":{\"removed\":%d,\"failed\":%d}}\r\n", removed_count, failed_count);
+    }
+
+    rmdirs_list_free(&list);
+    return (failed_count > 0) ? 1 : 0;
+}
+
+static int agent_mode_mv(const NcdOptions *opts)
+{
+    const char *src = opts->search;
+    const char *dst = opts->agent_mkdirs_file;
+
+    if (!src || !src[0] || !dst || !dst[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"missing src or dst\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: Missing source or destination path\r\n");
+        }
+        return 1;
+    }
+
+    if (!platform_dir_exists(src)) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"src\":\"");
+            agent_json_escape(src);
+            agent_print("\",\"dst\":\"");
+            agent_json_escape(dst);
+            agent_print("\",\"result\":\"error_not_found\",\"message\":\"Source not found\"}\r\n");
+        } else {
+            agent_print("ERROR: Source not found\r\n");
+        }
+        return 1;
+    }
+
+    bool dst_exists = platform_dir_exists(dst) || platform_file_exists(dst);
+    if (dst_exists) {
+        if (!opts->agent_force) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"src\":\"");
+                agent_json_escape(src);
+                agent_print("\",\"dst\":\"");
+                agent_json_escape(dst);
+                agent_print("\",\"result\":\"error_exists\",\"message\":\"Destination already exists\"}\r\n");
+            } else {
+                agent_print("ERROR: Destination already exists\r\n");
+            }
+            return 1;
+        }
+
+        /* Force: only overwrite if empty directory */
+        if (platform_file_exists(dst) || !platform_dir_is_empty(dst)) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"src\":\"");
+                agent_json_escape(src);
+                agent_print("\",\"dst\":\"");
+                agent_json_escape(dst);
+                agent_print("\",\"result\":\"error_exists\",\"message\":\"Destination is not empty\"}\r\n");
+            } else {
+                agent_print("ERROR: Destination is not empty\r\n");
+            }
+            return 1;
+        }
+
+        /* Remove empty dst directory */
+        if (!platform_remove_dir(dst)) {
+            if (opts->agent_json) {
+                agent_print("{\"v\":1,\"src\":\"");
+                agent_json_escape(src);
+                agent_print("\",\"dst\":\"");
+                agent_json_escape(dst);
+                agent_print("\",\"result\":\"error_perms\",\"message\":\"Cannot remove destination\"}\r\n");
+            } else {
+                agent_print("ERROR: Cannot remove destination\r\n");
+            }
+            return 1;
+        }
+    }
+
+    /* Perform the move */
+    if (!platform_move_dir(src, dst)) {
+        const char *result_str = "error";
+        const char *msg = "Failed to move directory";
+#if NCD_PLATFORM_WINDOWS
+        DWORD err = GetLastError();
+        if (err == ERROR_ACCESS_DENIED) {
+            result_str = "error_perms";
+            msg = "Permission denied";
+        }
+#else
+        if (errno == EACCES || errno == EPERM) {
+            result_str = "error_perms";
+            msg = "Permission denied";
+        }
+#endif
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"src\":\"");
+            agent_json_escape(src);
+            agent_print("\",\"dst\":\"");
+            agent_json_escape(dst);
+            agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+            agent_json_escape(msg);
+            agent_print("\"}\r\n");
+        } else {
+            agent_printf("ERROR: %s\r\n", msg);
+        }
+        return 1;
+    }
+
+    /* Update database: remove old path, add new path */
+    {
+        char src_drive = path_get_drive(src);
+        if (src_drive == 0 && src[0] != '\0') {
+            src_drive = (char)toupper((unsigned char)src[0]);
+        }
+
+        /* Load source drive database and remove old path */
+        char db_path[NCD_MAX_PATH] = {0};
+        NcdDatabase *db = NULL;
+        if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
+            for (int i = 0; i < g_dirty_db_count; i++) {
+                if (g_dirty_dbs[i].drive == src_drive && g_dirty_dbs[i].db) {
+                    db = g_dirty_dbs[i].db;
+                    break;
+                }
+            }
+            if (!db) {
+                db = db_load_auto(db_path);
+            }
+        }
+        if (!db) {
+            db = db_create();
+            db->last_scan = time(NULL);
+        }
+
+        db_remove_path(db, src);
+
+        /* Ensure db is tracked for saving */
+        if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
+            db_mark_dirty_standalone(src_drive, db_path, db);
+        }
+
+        /* Add new path to database */
+        add_path_to_database(dst);
+
+        /* Flush dirty databases immediately */
+        flush_all_dirty_dbs();
+    }
+
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"src\":\"");
+        agent_json_escape(src);
+        agent_print("\",\"dst\":\"");
+        agent_json_escape(dst);
+        agent_print("\",\"result\":\"moved\",\"message\":\"Directory moved\"}\r\n");
+    } else {
+        agent_print("Directory moved\r\n");
+    }
+    return 0;
+}
+
+static int agent_mode_ln(const NcdOptions *opts)
+{
+    const char *target = opts->search;
+    const char *link = opts->agent_mkdirs_file;
+
+    if (!target || !target[0] || !link || !link[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"missing target or link\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: Missing target or link path\r\n");
+        }
+        return 1;
+    }
+
+    if (platform_dir_exists(link) || platform_file_exists(link)) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"target\":\"");
+            agent_json_escape(target);
+            agent_print("\",\"link\":\"");
+            agent_json_escape(link);
+            agent_print("\",\"result\":\"error_exists\",\"message\":\"Link path already exists\"}\r\n");
+        } else {
+            agent_print("ERROR: Link path already exists\r\n");
+        }
+        return 1;
+    }
+
+    if (!platform_create_symlink(target, link)) {
+        const char *result_str = "error";
+        const char *msg = "Failed to create symbolic link";
+#if NCD_PLATFORM_WINDOWS
+        DWORD err = GetLastError();
+        if (err == ERROR_PRIVILEGE_NOT_HELD) {
+            result_str = "error_unsupported";
+            msg = "Symbolic links require developer mode or administrator privilege";
+        } else if (err == ERROR_ACCESS_DENIED) {
+            result_str = "error_perms";
+            msg = "Permission denied";
+        }
+#else
+        if (errno == EACCES || errno == EPERM) {
+            result_str = "error_perms";
+            msg = "Permission denied";
+        } else if (errno == EEXIST) {
+            result_str = "error_exists";
+            msg = "Link path already exists";
+        } else if (errno == ENOSYS || errno == EOPNOTSUPP) {
+            result_str = "error_unsupported";
+            msg = "Symbolic links not supported on this filesystem";
+        }
+#endif
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"target\":\"");
+            agent_json_escape(target);
+            agent_print("\",\"link\":\"");
+            agent_json_escape(link);
+            agent_printf("\",\"result\":\"%s\",\"message\":\"", result_str);
+            agent_json_escape(msg);
+            agent_print("\"}\r\n");
+        } else {
+            agent_printf("ERROR: %s\r\n", msg);
+        }
+        return 1;
+    }
+
+    /* Update database if target is a directory */
+    if (platform_dir_exists(target)) {
+        add_path_to_database(link);
+        flush_all_dirty_dbs();
+    }
+
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"target\":\"");
+        agent_json_escape(target);
+        agent_print("\",\"link\":\"");
+        agent_json_escape(link);
+        agent_print("\",\"result\":\"created\",\"message\":\"Symbolic link created\"}\r\n");
+    } else {
+        agent_print("Symbolic link created\r\n");
+    }
+    return 0;
+}
+
+/* Check whether a directory contains any entries other than . and .. */
+static bool verify_dir_is_empty(const char *path)
+{
+    if (!path) return false;
+#if NCD_PLATFORM_WINDOWS
+    char search_path[NCD_MAX_PATH];
+    size_t len = strlen(path);
+    if (len > 0 && (path[len - 1] == '\\' || path[len - 1] == '/')) {
+        snprintf(search_path, sizeof(search_path), "%s*", path);
+    } else {
+        snprintf(search_path, sizeof(search_path), "%s\\*", path);
+    }
+    WIN32_FIND_DATAA find_data;
+    HANDLE h = FindFirstFileA(search_path, &find_data);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool empty = true;
+    do {
+        const char *name = find_data.cFileName;
+        if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0) {
+            empty = false;
+            break;
+        }
+    } while (FindNextFileA(h, &find_data));
+    FindClose(h);
+    return empty;
+#else
+    DIR *dir = opendir(path);
+    if (!dir) return false;
+    struct dirent *ent;
+    bool empty = true;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
+            empty = false;
+            break;
+        }
+    }
+    closedir(dir);
+    return empty;
+#endif
+}
+
+/* Recursively verify that every node in 'node' exists as a directory
+ * under 'base_path'.  The tree spec root is a dummy; its children are
+ * the first level to verify. */
+static bool verify_tree_recursive(const char *base_path, const MkdirsNode *node)
+{
+    if (!node || !base_path) return true;
+
+    char base[NCD_MAX_PATH];
+    platform_strncpy_s(base, sizeof(base), base_path);
+    size_t base_len = strlen(base);
+    while (base_len > 0 && (base[base_len - 1] == '\\' || base[base_len - 1] == '/')) {
+        base[base_len - 1] = '\0';
+        base_len--;
+    }
+
+    for (int i = 0; i < node->child_count; i++) {
+        const MkdirsNode *child = &node->children[i];
+        char path[NCD_MAX_PATH];
+        snprintf(path, sizeof(path), "%s%s%s", base, NCD_PATH_SEP, child->name);
+        if (!platform_dir_exists(path))
+            return false;
+        if (!verify_tree_recursive(path, child))
+            return false;
+    }
+    return true;
+}
+
+static int agent_mode_verify(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"verified\":false}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+
+    const char *path = opts->search;
+    bool all_passed = true;
+    int check_count = 0;
+
+    #define MAX_CHECKS 8
+    struct {
+        const char *name;
+        bool passed;
+        const char *expected;
+        const char *actual;
+    } checks[MAX_CHECKS];
+
+    #define ADD_CHECK(n, p, e, a) do { \
+        if (check_count < MAX_CHECKS) { \
+            checks[check_count].name = (n); \
+            checks[check_count].passed = (p); \
+            checks[check_count].expected = (e); \
+            checks[check_count].actual = (a); \
+            check_count++; \
+            if (!(p)) all_passed = false; \
+        } \
+    } while (0)
+
+    /* 1. Exists */
+    bool exists = platform_dir_exists(path);
+    ADD_CHECK("exists", exists, "true", exists ? "true" : "false");
+
+    /* 2. Is directory */
+    ADD_CHECK("is_directory", exists, "true", exists ? "true" : "false");
+
+    if (!exists) {
+        all_passed = false;
+    } else {
+        /* 3. Empty */
+        if (opts->agent_dirs_only) { /* --empty reuses agent_dirs_only */
+            bool empty = verify_dir_is_empty(path);
+            ADD_CHECK("empty", empty, "true", empty ? "true" : "false");
+        }
+
+        /* 4. Mode */
+        if (opts->agent_mode_octal >= 0) {
+#if NCD_PLATFORM_WINDOWS
+            ADD_CHECK("mode", true, "n/a", "n/a");
+#else
+            int actual_mode = platform_get_mode(path);
+            char expected_str[8];
+            char actual_str[8];
+            snprintf(expected_str, sizeof(expected_str), "%04o", opts->agent_mode_octal);
+            snprintf(actual_str, sizeof(actual_str), "%04o", actual_mode);
+            bool mode_ok = (actual_mode == opts->agent_mode_octal);
+            ADD_CHECK("mode", mode_ok, expected_str,
+                      actual_mode >= 0 ? actual_str : "error");
+#endif
+        }
+
+        /* 5. Tree structure */
+        if (opts->agent_tree_file[0]) {
+            char *file_content = read_file_contents(opts->agent_tree_file);
+            if (!file_content) {
+                ADD_CHECK("tree_structure", false, "readable spec",
+                          "failed to read file");
+            } else {
+                MkdirsNode root;
+                memset(&root, 0, sizeof(root));
+
+                const char *p = file_content;
+                while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+                bool is_json = (*p == '[' || *p == '{');
+
+                bool parse_ok;
+                if (is_json) {
+                    const char *jp = json_skip_ws(file_content);
+                    parse_ok = (json_parse_dirs(jp, &root) != NULL);
+                } else {
+                    parse_ok = parse_flat_format(file_content, &root);
+                }
+
+                free(file_content);
+
+                if (!parse_ok) {
+                    ADD_CHECK("tree_structure", false, "valid spec", "parse error");
+                } else {
+                    bool tree_ok = verify_tree_recursive(path, &root);
+                    ADD_CHECK("tree_structure", tree_ok, "matches spec",
+                              tree_ok ? "matches" : "mismatch");
+                    mkdirs_free_tree(&root);
+                }
+            }
+        }
+    }
+
+    #undef ADD_CHECK
+    #undef MAX_CHECKS
+
+    /* Output */
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_printf("\",\"verified\":%s,\"checks\":[", all_passed ? "true" : "false");
+        for (int i = 0; i < check_count; i++) {
+            if (i > 0) agent_print(",");
+            agent_print("{\"check\":\"");
+            agent_json_escape(checks[i].name);
+            agent_printf("\",\"passed\":%s", checks[i].passed ? "true" : "false");
+            if (checks[i].expected) {
+                agent_print(",\"expected\":\"");
+                agent_json_escape(checks[i].expected);
+                agent_print("\"");
+            }
+            if (checks[i].actual) {
+                agent_print(",\"actual\":\"");
+                agent_json_escape(checks[i].actual);
+                agent_print("\"");
+            }
+            agent_print("}");
+        }
+        agent_print("]}\r\n");
+    } else {
+        agent_printf("Verify: %s\r\n", all_passed ? "PASSED" : "FAILED");
+        for (int i = 0; i < check_count; i++) {
+            agent_printf("  [%s] %s", checks[i].passed ? "PASS" : "FAIL",
+                         checks[i].name);
+            if (checks[i].expected && checks[i].actual) {
+                agent_printf(" (expected: %s, actual: %s)",
+                             checks[i].expected, checks[i].actual);
+            }
+            agent_print("\r\n");
+        }
+    }
+
+    return all_passed ? 0 : 1;
+}
+
+#if NCD_PLATFORM_LINUX
+static int chmod_recursive(const char *path, int mode)
+{
+    int changed = 0;
+    if (platform_set_mode(path, mode))
+        changed++;
+    else
+        return -1;
+
+    DIR *dir = opendir(path);
+    if (!dir) return changed;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+
+        char child_path[NCD_MAX_PATH];
+        snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
+
+        struct stat st;
+        if (stat(child_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            int sub = chmod_recursive(child_path, mode);
+            if (sub < 0) {
+                closedir(dir);
+                return -1;
+            }
+            changed += sub;
+        }
+    }
+    closedir(dir);
+    return changed;
+}
+#else
+static int chmod_recursive(const char *path, int mode)
+{
+    (void)path;
+    (void)mode;
+    return 0;
+}
+#endif
+
+static int agent_mode_chmod(const NcdOptions *opts)
+{
+    if (!opts->has_search || !opts->search[0]) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"error\":\"no path specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No path specified\r\n");
+        }
+        return 1;
+    }
+
+    const char *path = opts->search;
+    int mode = opts->agent_mode_octal;
+
+#if NCD_PLATFORM_WINDOWS
+    (void)mode;
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_print("\",\"mode\":\"n/a\",\"result\":\"error_unsupported\",\"changed\":0}\r\n");
+    } else {
+        agent_print("ERROR: chmod is not supported on Windows\r\n");
+    }
+    return 1;
+#else
+    if (mode < 0) {
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"path\":\"");
+            agent_json_escape(path);
+            agent_print("\",\"error\":\"no mode specified\",\"result\":\"error\"}\r\n");
+        } else {
+            agent_print("ERROR: No mode specified\r\n");
+        }
+        return 1;
+    }
+
+    int changed = 0;
+    bool ok = true;
+
+    if (opts->agent_recursive) {
+        changed = chmod_recursive(path, mode);
+        ok = (changed >= 0);
+        if (changed < 0) changed = 0;
+    } else {
+        if (platform_set_mode(path, mode)) {
+            changed = 1;
+        } else {
+            ok = false;
+        }
+    }
+
+    char mode_str[8];
+    snprintf(mode_str, sizeof(mode_str), "%04o", mode);
+
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"path\":\"");
+        agent_json_escape(path);
+        agent_printf("\",\"mode\":\"%s\",\"result\":\"%s\",\"changed\":%d}\r\n",
+                     mode_str, ok ? "changed" : "error", changed);
+    } else {
+        if (ok) {
+            agent_printf("Changed mode to %s for %d entries\r\n", mode_str, changed);
+        } else {
+            agent_printf("ERROR: Failed to change mode for %s\r\n", path);
+        }
+    }
+
+    return ok ? 0 : 1;
+#endif
 }
 
 #if NCD_PLATFORM_LINUX
@@ -3294,7 +4787,8 @@ int main(int argc, char *argv[])
         !opts.show_history && !opts.clear_history && !opts.show_version &&
         !opts.force_rescan && !opts.has_search &&
         !opts.history_pingpong && opts.history_index == 0 && !opts.history_browse && 
-        !opts.history_list && !opts.history_clear && opts.history_remove == 0) {
+        !opts.history_list && !opts.history_clear && opts.history_remove == 0 &&
+        !opts.agent_mode) {
         ncd_println("Welcome to NCD! Let's set up your default options.");
         ncd_println("(Use 'ncd -c' anytime to change these settings)\r\n");
         
@@ -4034,6 +5528,34 @@ int main(int argc, char *argv[])
             }
             case AGENT_SUB_MKDIRS: {
                 result = agent_mode_mkdirs(&opts);
+                break;
+            }
+            case AGENT_SUB_RMDIR: {
+                result = agent_mode_rmdir(&opts);
+                break;
+            }
+            case AGENT_SUB_RMDIRS: {
+                result = agent_mode_rmdirs(&opts);
+                break;
+            }
+            case AGENT_SUB_MV: {
+                result = agent_mode_mv(&opts);
+                break;
+            }
+            case AGENT_SUB_VERIFY: {
+                result = agent_mode_verify(&opts);
+                break;
+            }
+            case AGENT_SUB_CHMOD: {
+                result = agent_mode_chmod(&opts);
+                break;
+            }
+            case AGENT_SUB_LN: {
+                result = agent_mode_ln(&opts);
+                break;
+            }
+            case AGENT_SUB_HELP: {
+                result = agent_mode_help(&opts);
                 break;
             }
             case AGENT_SUB_QUIT: {

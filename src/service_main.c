@@ -24,6 +24,7 @@
 #include "service_publish.h"
 #include "control_ipc.h"
 #include "shm_platform.h"
+#include "ui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,10 +35,23 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <io.h>
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/types.h>
+
+static void svc_debug_log(const char *fmt, ...) {
+    FILE *f = fopen("C:\\ncd_svc_debug.log", "a");
+    if (!f) return;
+    va_list args;
+    va_start(args, fmt);
+    fprintf(f, "[%lu] ", GetCurrentProcessId());
+    vfprintf(f, fmt, args);
+    fprintf(f, "\n");
+    va_end(args);
+    fclose(f);
+}
 #endif
 
 /* --------------------------------------------------------- globals            */
@@ -47,6 +61,11 @@ static volatile int g_flush_requested = 0;
 static volatile int g_rescan_requested = 0;
 static volatile int g_shutdown_requested = 0;
 static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
+
+/* Init-database option: block startup and scan drives synchronously */
+static bool g_init_db = false;
+static char g_init_drives[26];
+static int g_init_drive_count = 0;
 
 #if NCD_PLATFORM_WINDOWS
 /* Named objects for service instance detection and control */
@@ -252,6 +271,146 @@ static void log_close(void) {
 static void start_background_loader(ServiceState *state, SnapshotPublisher *pub);
 static void wait_for_loader(void);
 static void signal_loader_stop(void);
+
+/* Parse a comma/space separated drive list into individual letters */
+static int parse_init_drive_list(const char *str, char *out_drives, int max_drives) {
+    int count = 0;
+    const char *p = str;
+    while (*p && count < max_drives) {
+        while (*p && (*p == ' ' || *p == ',' || *p == ';')) p++;
+        if (isalpha((unsigned char)*p)) {
+            out_drives[count++] = (char)toupper((unsigned char)*p);
+            p++;
+        } else if (*p) {
+            p++;
+        }
+    }
+    return count;
+}
+
+/*
+ * perform_init_scan  --  Synchronous blocking database initialization scan
+ *
+ * When -init is specified, the service blocks in STARTING/SCANNING state
+ * and scans the requested drives (or all drives) before becoming READY.
+ * This prevents clients from using NCD before the database is built.
+ */
+static void perform_init_scan(ServiceState *state, SnapshotPublisher *pub) {
+    LOG_EVENT("Init scan starting...");
+    LOG_DETAIL("Entering perform_init_scan (drives=%d)", g_init_drive_count);
+
+    service_state_set_runtime_state(state, SERVICE_STATE_SCANNING);
+    service_state_set_status_message(state, "Initializing database scan...");
+
+    /* Skip init scan in test mode to prevent scanning user drives */
+    const char *test_mode = getenv("NCD_TEST_MODE");
+    if (test_mode && test_mode[0]) {
+        LOG_EVENT("Init scan skipped: NCD_TEST_MODE is set");
+        LOG_DETAIL("Test mode detected, skipping init scan");
+        service_state_set_runtime_state(state, SERVICE_STATE_READY);
+        service_state_set_status_message(state, "Ready (test mode)");
+        LOG_EVENT("Service state changed to READY (test mode)");
+        return;
+    }
+
+    NcdDatabase *new_db = db_create();
+    if (!new_db) {
+        LOG_DETAIL("ERROR - Failed to create database for init scan");
+        LOG_EVENT("Init scan failed: database creation error");
+        service_state_set_status_message(state, "Init scan failed");
+        service_state_set_runtime_state(state, SERVICE_STATE_READY);
+        return;
+    }
+
+    /* Use metadata defaults for scan options */
+    const NcdMetadata *meta = service_state_get_metadata(state);
+    bool show_hidden = meta ? meta->cfg.default_show_hidden : false;
+    bool show_system = meta ? meta->cfg.default_show_system : false;
+    int timeout = 300; /* default timeout */
+
+    /* Default exclusions from metadata */
+    const NcdExclusionList *exclusions = meta ? &meta->exclusions : NULL;
+
+    int scanned = 0;
+
+    if (g_init_drive_count > 0) {
+        /* Build mount paths from specified drives */
+        const char *mounts[26];
+        char mount_bufs[26][MAX_PATH];
+        int mcount = 0;
+
+        char status[256];
+        snprintf(status, sizeof(status), "Scanning %d drive(s)...", g_init_drive_count);
+        service_state_set_status_message(state, status);
+
+        for (int i = 0; i < g_init_drive_count; i++) {
+            if (platform_build_mount_path(g_init_drives[i], mount_bufs[mcount], MAX_PATH)) {
+                mounts[mcount] = mount_bufs[mcount];
+                mcount++;
+            } else {
+                LOG_DETAIL("Failed to build mount path for drive %c:", g_init_drives[i]);
+            }
+        }
+
+        if (mcount > 0) {
+            LOG_DETAIL("Init scan: scanning %d specified drives", mcount);
+            scanned = scan_mounts(new_db, mounts, mcount, show_hidden, show_system, timeout, exclusions);
+        }
+    } else {
+        /* No drives specified - scan all (same as ncd -r) */
+        service_state_set_status_message(state, "Scanning all drives...");
+        LOG_DETAIL("Init scan: scanning all drives (no drive list specified)");
+        scanned = scan_mounts(new_db, NULL, 0, show_hidden, show_system, timeout, exclusions);
+    }
+
+    if (!g_running) {
+        LOG_EVENT("Service stopping, discarding init scan results");
+        db_free(new_db);
+        return;
+    }
+
+    LOG_EVENT("Init scan complete: %d directories found", scanned);
+    LOG_DETAIL("Updating service database with init scan results...");
+
+    /* Update service state with new database */
+    service_state_update_database(state, new_db, false);
+    service_state_bump_db_generation(state);
+
+    /* Publish snapshot so clients see it immediately */
+    LOG_DETAIL("Publishing database snapshot after init scan...");
+    if (!snapshot_publisher_publish_db(pub, state)) {
+        LOG_DETAIL("ERROR - Failed to publish database snapshot after init scan");
+    } else {
+        LOG_DETAIL("Database snapshot published after init scan");
+    }
+
+    /* Save metadata only if it existed before service start.
+     * On first run we let the user configure via interactive prompt
+     * before creating the metadata file. */
+    if (service_state_metadata_existed(state)) {
+        LOG_DETAIL("Saving metadata after init scan...");
+        if (!service_state_save_metadata(state)) {
+            LOG_DETAIL("WARNING - Failed to save metadata after init scan");
+        }
+    } else {
+        LOG_DETAIL("Skipping metadata save: first run, not previously loaded from disk");
+    }
+
+    /* Flush database to disk immediately */
+    LOG_DETAIL("Flushing database to disk after init scan...");
+    if (service_state_flush(state)) {
+        LOG_DETAIL("Database flushed successfully after init scan");
+    } else {
+        LOG_DETAIL("WARNING - Failed to flush database after init scan");
+    }
+
+    char status[256];
+    snprintf(status, sizeof(status), "Ready (%d directories)", scanned);
+    service_state_set_status_message(state, status);
+    service_state_set_runtime_state(state, SERVICE_STATE_READY);
+    LOG_EVENT("Service state changed to READY after init scan");
+    LOG_DETAIL("Exiting perform_init_scan");
+}
 
 /* Thread handle for background loader */
 static PlatformHandle g_loader_thread = NULL;
@@ -553,8 +712,57 @@ static bool apply_metadata_update(ServiceState *state, int update_type,
 
     switch (update_type) {
         case NCD_META_UPDATE_GROUP_ADD: {
-            /* Data format: [name_len (4 bytes)][path_len (4 bytes)][name string][path string] */
-            if (data && data_len >= 8) {
+            /* Try newline-delimited format first: "name\npath" */
+            if (data && data_len > 0) {
+                const char *p = (const char *)data;
+                const char *nl = NULL;
+                for (uint32_t i = 0; i < data_len; i++) {
+                    if (p[i] == '\n') {
+                        nl = p + i;
+                        break;
+                    }
+                }
+                if (nl) {
+                    size_t name_len = nl - p;
+                    size_t path_len = data_len - name_len - 1;
+                    if (name_len > 0 && path_len > 0) {
+                        char *name = (char *)malloc(name_len + 1);
+                        char *path = (char *)malloc(path_len + 1);
+                        if (name && path) {
+                            memcpy(name, p, name_len);
+                            name[name_len] = '\0';
+                            memcpy(path, nl + 1, path_len);
+                            path[path_len] = '\0';
+                            success = service_state_add_group(state, name, path);
+                        }
+                        free(name);
+                        free(path);
+                        break;
+                    }
+                }
+            }
+            /* Try null-terminated concatenated format: "name\0path\0" */
+            if (!success && data && data_len >= 2) {
+                const char *p = (const char *)data;
+                /* Find first null terminator within data */
+                uint32_t name_len = 0;
+                while (name_len < data_len && p[name_len] != '\0') {
+                    name_len++;
+                }
+                if (name_len > 0 && name_len + 1 < data_len) {
+                    uint32_t path_len = 0;
+                    const char *path_start = p + name_len + 1;
+                    uint32_t path_max = data_len - name_len - 1;
+                    while (path_len < path_max && path_start[path_len] != '\0') {
+                        path_len++;
+                    }
+                    if (path_len > 0) {
+                        success = service_state_add_group(state, p, path_start);
+                    }
+                }
+            }
+            /* Fall back to binary length-prefixed format */
+            if (!success && data && data_len >= 8) {
                 uint32_t name_len = *(uint32_t *)data;
                 uint32_t path_len = *(uint32_t *)((char *)data + 4);
                 if (name_len > 0 && path_len > 0 && data_len >= 8 + name_len + path_len) {
@@ -584,11 +792,22 @@ static bool apply_metadata_update(ServiceState *state, int update_type,
         case NCD_META_UPDATE_DIR_HISTORY_ADD: {
             /* Data format: [path string (null-terminated)][drive byte] */
             if (data && data_len >= 2) {
-                const char *path = (const char *)data;
-                size_t path_len = strlen(path);
-                if (data_len >= path_len + 2) {
-                    char drive = ((const char *)data)[path_len + 1];
-                    success = service_state_add_dir_history(state, path, drive);
+                const char *p = (const char *)data;
+                /* Find null terminator within bounds, or use full data_len */
+                uint32_t path_len = 0;
+                while (path_len < data_len && p[path_len] != '\0') {
+                    path_len++;
+                }
+                if (path_len > 0) {
+                    char path_buf[512];
+                    if (path_len >= sizeof(path_buf)) path_len = sizeof(path_buf) - 1;
+                    memcpy(path_buf, p, path_len);
+                    path_buf[path_len] = '\0';
+                    char drive = '\0';
+                    if (data_len >= path_len + 2) {
+                        drive = p[path_len + 1];
+                    }
+                    success = service_state_add_dir_history(state, path_buf, drive);
                 }
             }
             break;
@@ -1324,7 +1543,9 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
     }
 
     LOG_DETAIL("Cleaning up IPC server (total clients handled: %d)", client_connection_count);
-    ipc_server_cleanup(server);
+    /* Note: ipc_server_cleanup is deferred to run_service so the pipe
+     * stays open until after the mutex is closed, preventing races
+     * where ipc_service_exists() sees a live mutex but no pipe. */
     LOG_EVENT("Service main loop ended");
     LOG_DETAIL("Exiting service_loop");
 }
@@ -1336,8 +1557,13 @@ static bool is_service_running(void) {
 #if NCD_PLATFORM_WINDOWS
     HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, SERVICE_MUTEX_NAME);
     if (hMutex) {
+        DWORD waitResult = WaitForSingleObject(hMutex, 0);
         CloseHandle(hMutex);
-        return true;
+        if (waitResult == WAIT_TIMEOUT) {
+            /* Mutex is owned by a live service process */
+            return true;
+        }
+        /* WAIT_ABANDONED_0 (service crashed) or WAIT_OBJECT_0 (unowned) */
     }
     return false;
 #else
@@ -1371,6 +1597,10 @@ static void print_usage(void) {
     printf("  ncd_service -conf <path>       Use custom config file\n");
     printf("  ncd_service --daemon           Run service in foreground (internal use)\n");
     printf("  ncd_service -log<n>            Enable logging (n=0-5, see below)\n");
+    printf("  ncd_service -init [drives]     Initialize database on startup\n");
+    printf("                                 Scans specified drives (e.g. C,D,E)\n");
+    printf("                                 or all drives if none specified.\n");
+    printf("                                 Blocks until scan is complete.\n");
     printf("\n");
     printf("Logging levels (-log<n>):\n");
     printf("  -log0  Log service start, rescan requests, and client requests\n");
@@ -1470,6 +1700,7 @@ static void print_detailed_status(void) {
 
 /* Parse -log<n> option from argument */
 static int parse_log_option(const char *arg) {
+    if (!arg) return -1;
     if (strncmp(arg, "-log", 4) == 0 || strncmp(arg, "/log", 4) == 0) {
         const char *level_str = arg + 4;
         if (*level_str >= '0' && *level_str <= '5' && level_str[1] == '\0') {
@@ -1483,12 +1714,16 @@ static int parse_log_option(const char *arg) {
 
 #if NCD_PLATFORM_WINDOWS
 /* Spawn detached child process to run as daemon */
-static int spawn_daemon(const char *exe_path) {
+static int spawn_daemon(const char *exe_path, const char *extra_args) {
     STARTUPINFOA si = {sizeof(si)};
     PROCESS_INFORMATION pi;
     char cmd[MAX_PATH * 2];
 
-    snprintf(cmd, sizeof(cmd), "\"%s\" --daemon", exe_path);
+    if (extra_args && extra_args[0]) {
+        snprintf(cmd, sizeof(cmd), "\"%s\" --daemon %s", exe_path, extra_args);
+    } else {
+        snprintf(cmd, sizeof(cmd), "\"%s\" --daemon", exe_path);
+    }
 
     if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
                       CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
@@ -1571,13 +1806,18 @@ static int run_service(void) {
 
     /* Start background loader AFTER IPC is ready
      * Clients can now connect and see STARTING/LOADING state */
-    LOG_DETAIL("Starting background loader...");
-    start_background_loader(state, pub);
+    if (g_init_db) {
+        LOG_DETAIL("Init-db requested, performing synchronous scan...");
+        perform_init_scan(state, pub);
+    } else {
+        LOG_DETAIL("Starting background loader...");
+        start_background_loader(state, pub);
+    }
 
     /* Run service loop - IPC server already initialized */
     LOG_DETAIL("Entering service main loop");
     service_loop(state, pub, server);
-    server = NULL; /* service_loop cleaned it up */
+    /* server cleanup is deferred to after CLOSE_SERVICE_MUTEX */
 
     /* Cleanup */
     LOG_DETAIL("Beginning service cleanup...");
@@ -1593,10 +1833,10 @@ static int run_service(void) {
     ret = 0;
 
 cleanup:
+    CLOSE_SERVICE_MUTEX();
     if (server) ipc_server_cleanup(server);
     if (pub) snapshot_publisher_cleanup(pub);
     if (state) service_state_cleanup(state);
-    CLOSE_SERVICE_MUTEX();
     if (ret == 0) {
         LOG_EVENT("Service stopped successfully");
     }
@@ -1612,11 +1852,22 @@ int main(int argc, char *argv[]) {
 #endif
 
     /* Parse command line arguments */
-    /* First pass: look for logging options before other processing */
+    /* First pass: look for logging and init options before other processing */
     for (int i = 1; i < argc; i++) {
         int log_level = parse_log_option(argv[i]);
         if (log_level >= 0) {
             g_log_level = log_level;
+        }
+        if (strcmp(argv[i], "-init") == 0 || strcmp(argv[i], "--init-db") == 0) {
+            g_init_db = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-' &&
+                strcmp(argv[i + 1], "start") != 0 &&
+                strcmp(argv[i + 1], "stop") != 0 &&
+                strcmp(argv[i + 1], "status") != 0 &&
+                strcmp(argv[i + 1], "--daemon") != 0) {
+                g_init_drive_count = parse_init_drive_list(argv[i + 1], g_init_drives, 26);
+                i++;
+            }
         }
     }
 
@@ -1650,6 +1901,20 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /* Skip -init in command position (already parsed in first pass) */
+    if (argc > 1 + arg_offset &&
+        (strcmp(argv[1 + arg_offset], "-init") == 0 || strcmp(argv[1 + arg_offset], "--init-db") == 0)) {
+        arg_offset++;
+        /* Skip optional drive list if present */
+        if (argc > 1 + arg_offset && argv[1 + arg_offset][0] != '-' &&
+            strcmp(argv[1 + arg_offset], "start") != 0 &&
+            strcmp(argv[1 + arg_offset], "stop") != 0 &&
+            strcmp(argv[1 + arg_offset], "status") != 0 &&
+            strcmp(argv[1 + arg_offset], "--daemon") != 0) {
+            arg_offset++;
+        }
+    }
+
     /* Initialize file logging early */
     log_init();
     LOG_EVENT("=== Service starting ===");
@@ -1664,8 +1929,47 @@ int main(int argc, char *argv[]) {
                 log_close();
                 return 0;
             }
+            /* First-run interactive configuration */
+            if (!db_metadata_exists()) {
+                const char *test_mode = getenv("NCD_TEST_MODE");
+                if (!test_mode || !test_mode[0]) {
+                    bool stdin_tty = false;
+                    bool stdout_tty = false;
 #if NCD_PLATFORM_WINDOWS
-            int ret = spawn_daemon(g_exe_path);
+                    stdin_tty = _isatty(_fileno(stdin)) != 0;
+                    stdout_tty = _isatty(_fileno(stdout)) != 0;
+#else
+                    stdin_tty = isatty(STDIN_FILENO) != 0;
+                    stdout_tty = isatty(STDOUT_FILENO) != 0;
+#endif
+                    if (stdin_tty && stdout_tty) {
+                        printf("Welcome to NCD Service! Let's set up your default options.\n");
+                        printf("(Use 'ncd -c' anytime to change these settings)\n\n");
+                        NcdMetadata *meta = db_metadata_create();
+                        if (ui_edit_config(meta)) {
+                            meta->config_dirty = true;
+                            if (db_metadata_save(meta)) {
+                                printf("Configuration saved.\n\n");
+                            } else {
+                                printf("Warning: Could not save configuration.\n\n");
+                            }
+                        } else {
+                            printf("Using default settings. (Run 'ncd -c' to configure later)\n\n");
+                        }
+                        db_metadata_free(meta);
+                    }
+                }
+            }
+            /* Build extra args string from remaining arguments after "start" */
+            char extra_args[1024] = {0};
+            int extra_len = 0;
+            for (int i = 2 + arg_offset; i < argc && extra_len < (int)sizeof(extra_args) - 2; i++) {
+                int n = snprintf(extra_args + extra_len, sizeof(extra_args) - extra_len,
+                                 "%s%s", extra_len > 0 ? " " : "", argv[i]);
+                if (n > 0) extra_len += n;
+            }
+#if NCD_PLATFORM_WINDOWS
+            int ret = spawn_daemon(g_exe_path, extra_args);
             log_close();
             return ret;
 #else

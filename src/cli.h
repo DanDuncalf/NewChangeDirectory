@@ -23,8 +23,15 @@ extern "C" {
 #define AGENT_SUB_CHECK     4
 #define AGENT_SUB_COMPLETE  5
 #define AGENT_SUB_MKDIR     6
-#define AGENT_SUB_MKDIRS    8
 #define AGENT_SUB_QUIT      7
+#define AGENT_SUB_MKDIRS    8
+#define AGENT_SUB_RMDIR     9
+#define AGENT_SUB_RMDIRS    10
+#define AGENT_SUB_MV        11
+#define AGENT_SUB_VERIFY    12
+#define AGENT_SUB_CHMOD     13
+#define AGENT_SUB_LN        14
+#define AGENT_SUB_HELP      15
 
 /*
  * parse_args  --  Parse command-line arguments

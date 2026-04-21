@@ -12,11 +12,11 @@
 
 setlocal enabledelayedexpansion
 
-:: Parse arguments
+:: Parse arguments early to know target architecture before setting up environment
 set BUILD_X64=1
 set BUILD_ARM64=1
-set TARGET_ARCH=all
 set BUILD_DEBUG=0
+set TARGET_ARCH=all
 
 if "%~1"=="x64" (
     set BUILD_X64=1
@@ -52,6 +52,10 @@ echo cl.exe not found in PATH. Searching for Visual Studio environment...
 :: Common locations for vswhere.exe
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VCVARS_FOUND="
+
+:: Only set up x64 environment now if we're building x64.
+:: For arm64, :setup_arm64_env will handle it later.
+if "%TARGET_ARCH%"=="arm64" goto :detect_arch
 
 :: Try vswhere.exe first (most reliable method for VS2017+)
 if exist "%VSWHERE%" (
@@ -176,13 +180,15 @@ set ARCH_SUFFIX=_%ARCH%
 :: Create object directory
 if not exist %ARCH_OBJDIR% mkdir %ARCH_OBJDIR%
 
-:: Set architecture-specific compiler flags
+:: Set architecture-specific compiler and linker flags
 if "%ARCH%"=="x64" (
     set ARCH_CFLAGS=/arch:AVX2
+    set LINK_FLAGS=
     set TARGET_EXE=NewChangeDirectory.exe
     set SERVICE_EXE=NCDService.exe
 ) else if "%ARCH%"=="arm64" (
     set ARCH_CFLAGS=
+    set LINK_FLAGS=/machine:ARM64
     set TARGET_EXE=NewChangeDirectory_arm64.exe
     set SERVICE_EXE=NCDService_arm64.exe
 ) else (
@@ -251,7 +257,7 @@ cl %CFLAGS% /Fo%ARCH_OBJDIR%\sh_common.obj %SHARED%\common.c
 if errorlevel 1 exit /b 1
 
 echo Linking %TARGET_EXE%...
-link /nologo /SUBSYSTEM:CONSOLE /OUT:%TARGET_EXE% ^
+link /nologo /SUBSYSTEM:CONSOLE /MANIFEST:EMBED /MANIFESTINPUT:NCD.manifest %LINK_FLAGS% /OUT:%TARGET_EXE% ^
     %ARCH_OBJDIR%\service_state.obj ^
     %ARCH_OBJDIR%\service_publish.obj ^
     %ARCH_OBJDIR%\main.obj ^
@@ -279,8 +285,9 @@ echo Building service executable %SERVICE_EXE%...
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\service_main.obj %SRCDIR%\service_main.c
 if errorlevel 1 exit /b 1
 
-link /nologo /SUBSYSTEM:CONSOLE /OUT:%SERVICE_EXE% ^
+link /nologo /SUBSYSTEM:CONSOLE /MANIFEST:EMBED /MANIFESTINPUT:NCD.manifest %LINK_FLAGS% /OUT:%SERVICE_EXE% ^
     %ARCH_OBJDIR%\service_main.obj ^
+    %ARCH_OBJDIR%\ui.obj ^
     %ARCH_OBJDIR%\service_state.obj ^
     %ARCH_OBJDIR%\service_publish.obj ^
     %ARCH_OBJDIR%\state_backend_service.obj ^
@@ -351,13 +358,29 @@ for %%V in (2022 2019 2017) do (
 )
 
 if not defined VCVARSARM64 (
-    echo WARNING: Could not find vcvarsarm64.bat for ARM64 build
+    :: Fallback: try vcvarsall.bat with arm64 argument
+    for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -property installationPath`) do (
+        if exist "%%i\VC\Auxiliary\Build\vcvarsall.bat" (
+            set "VCVARSALL=%%i\VC\Auxiliary\Build\vcvarsall.bat"
+            goto :found_arm64_vcvarsall
+        )
+    )
+    echo WARNING: Could not find vcvarsarm64.bat or vcvarsall.bat for ARM64 build
     exit /b 1
 )
 
 :found_arm64_vcvars
 echo Setting up ARM64 build environment: %VCVARSARM64%
 call "%VCVARSARM64%"
+if errorlevel 1 (
+    echo ERROR: Failed to initialize ARM64 build environment
+    exit /b 1
+)
+exit /b 0
+
+:found_arm64_vcvarsall
+echo Setting up ARM64 build environment via vcvarsall.bat x64_arm64: %VCVARSALL%
+call "%VCVARSALL%" x64_arm64
 if errorlevel 1 (
     echo ERROR: Failed to initialize ARM64 build environment
     exit /b 1

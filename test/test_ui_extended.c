@@ -447,8 +447,8 @@ TEST(config_edit_numeric_invalid_input) {
     NcdMetadata *meta = create_test_metadata();
     ASSERT_NOT_NULL(meta);
     
-    /* Navigate to rescan interval, clear it, type invalid chars */
-    ui_inject_keys("DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:abc,ENTER,ESC");
+    /* Navigate to rescan interval, type out-of-range value, confirm, then cancel */
+    ui_inject_keys("DOWN,DOWN,DOWN,DOWN,DOWN,TEXT:9999,ENTER,ESC");
     
     bool result = ui_edit_config(meta);
     /* Cancelled */

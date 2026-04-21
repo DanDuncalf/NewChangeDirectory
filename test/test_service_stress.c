@@ -20,6 +20,7 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <tlhelp32.h>
 #include <process.h>
 #else
 #include <unistd.h>

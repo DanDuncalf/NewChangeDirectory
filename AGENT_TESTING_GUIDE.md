@@ -7,7 +7,10 @@
 If your context window is empty, run these commands from the repo root (`E:\llama\NewChangeDirectory`):
 
 ```batch
-:: Full build + test cycle (Windows only — safest)
+:: Unified cross-platform report - auto-builds, runs Windows + Linux tests, writes test.results
+python test/generate_report.py
+
+:: Full build + test cycle (Windows integration tests only)
 cmd /c Build-And-Run-All-Tests.bat --windows-only
 
 :: If binaries already exist, skip the build
@@ -15,13 +18,11 @@ cmd /c Run-All-Tests.bat --windows-only
 
 :: Quick unit-test only run
 cmd /c Run-Tests-Safe.bat unit
-
-:: Detailed per-test breakdown (after any test run)
-python test/generate_report.py
 ```
 
 **Critical facts to avoid footguns:**
-- **ALWAYS** use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1`. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
+- **`generate_report.py` is the preferred entry point.** It auto-detects outdated binaries, rebuilds them, runs both Windows and Linux unit tests, and writes `test.results`. It exits with code 1 if any test fails or is skipped.
+- **ALWAYS** use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1` for integration tests. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
 - **Shell tool runs PowerShell** — invoke batch files with `cmd /c File.bat`, never bare `File.bat`.
 - `test/build-tests.bat` is the Windows build script. `Run-NcdTests.ps1` calls it. If you add a new `test_*.c`, you **must** add its build rule there or it is **silently skipped**.
 - The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `build-tests.bat` as of 2026-04-18.
@@ -53,6 +54,13 @@ This guide provides step-by-step instructions for AI agents to run comprehensive
 | User metadata modified | Groups, exclusions, history corrupted with test data |
 | Service left running | Orphaned processes, resource leaks |
 | No VHD isolation | Tests may fail due to permission issues on real filesystem |
+| **False failure reports** | Direct execution produces **invalid failures** (service state conflicts, heap corruption from prior runs, TUI console mismatches). These are **not real bugs**. |
+
+### 🚫 AGENT SELF-CORRECTION NOTE — Direct Execution Trap
+
+> **Historical mistake:** An agent ran `test\*.exe` files directly to "get per-test breakdowns" and reported ~22 "failures" as if they were real. These were **100% artifacts** of bypassing isolation (running service tests against real metadata, UI tests without headless mode, etc.). The official isolated runners (`Run-All-Tests.bat`, `Run-Tests-Safe.bat`) reported **0 failures** for the same binaries.
+>
+> **Rule:** If `generate_report.py` is unavailable, use `Run-All-Tests.bat` or `Run-Tests-Safe.bat`. **Never** run individual `test_*.exe` files directly to validate the test suite.
 
 ### ✅ Correct Way to Run Tests
 ```batch
@@ -157,22 +165,41 @@ When reporting results to the user, the **ONLY** acceptable format is a **comple
 
 **Preferred method:** Run `python test/generate_report.py` from the project root.
 
-This script is self-isolating (safe to run standalone):
+This script is the **unified cross-platform test runner and report generator**:
+- **Auto-build detection:** Rebuilds Windows and Linux binaries automatically if source files are newer
+- **Build failure detection:** Captures compiler output and aborts with exit code 1 if any build fails
+- **Cross-platform execution:** Runs Windows `.exe` unit tests AND Linux ELF tests (via WSL when available)
+- **Skip tracking:** Detects `SKIP:` output and counts skipped tests separately
+- **Exit code enforcement:** Returns 0 **only** if all tests pass with zero failures and zero skips
+- **test.results output:** Writes a structured report file with build timestamps and full statistics
+
+Self-isolating behavior:
 - Creates a temp directory and redirects `LOCALAPPDATA` / `XDG_DATA_HOME`
 - Sets `NCD_TEST_MODE=1`
 - Stops any running NCD services before testing
 - Restores environment and cleans up on exit (even on Ctrl+C)
 
-It then produces the complete per-test report with check counts and ratios.
-
 **Full build + test + report (recommended for CI):**
-1. Run `cmd /c Build-And-Run-All-Tests.bat` for the safe full test cycle
-2. Then run `python test/generate_report.py` for the detailed per-test breakdown
+```powershell
+# Single command does everything: build (if needed), test, report
+python test/generate_report.py
+```
 
-> **Note:** The Python report generator can also be run standalone (it handles its own isolation) whenever you want the complete per-test listing without rebuilding.
+> **Note:** On Windows with WSL installed, this will build and run both Windows and Linux tests. On Linux, it runs Linux tests only. The script always writes `test.results` to the project root.
 
-**Manual method (fallback):**
-1. **Unit tests:** Run each `test_*.exe` directly and present a per-test table for every executable (test name + status).
+> **CI Gate:** GitHub Actions runs this script on both `windows-latest` and `ubuntu-latest`. Pushes to `master` are blocked unless `test.results` shows `OVERALL STATUS: PASS` with 0 failures and 0 skips.
+
+**Manual method (fallback — ONLY if `generate_report.py` is broken):**
+
+> ⚠️ **Do NOT run `test_*.exe` directly.** That produces invalid results. Use the safe runners instead:
+> ```batch
+> cmd /c Run-All-Tests.bat          :: All integration suites (unit tests included)
+> cmd /c Run-Tests-Safe.bat unit    :: Unit tests only, fully isolated
+> ```
+>
+> Only if the above are genuinely unavailable should you consider direct execution, and **you must explicitly warn the user that direct execution is unvalidated and may produce false failures.**
+
+1. **Unit tests:** Use `Run-Tests-Safe.bat unit`. If absolutely impossible, running `test_*.exe` directly requires isolated `LOCALAPPDATA`, `NCD_TEST_MODE=1`, and service cleanup between every executable.
 2. **Integration tests:** List each suite with platform, duration, PASS/FAIL, and the **number of individual checks** performed in that suite.
 3. **Ratios:** For every suite, report `X/Y passed | Z failed | W skipped`.
 4. **Summaries:** Provide module-level and overall totals **only after** the full per-test listing.
@@ -370,7 +397,22 @@ Test 6: Directory search...
 
 > ⚠️ **WARNING:** WSL tests run outside the PowerShell harness. Ensure you set `NCD_TEST_MODE=1` and isolate `XDG_DATA_HOME` when running directly, or use `Run-Tests-Safe.bat wsl` which handles this automatically.
 
-#### Build in WSL
+#### Automatic Cross-Platform Testing (Recommended)
+
+`generate_report.py` now **automatically** builds and runs Linux unit tests when WSL is available:
+
+```batch
+:: From project root - builds Windows + Linux tests, runs both, writes test.results
+python test/generate_report.py
+```
+
+This is the preferred method because it:
+- Detects outdated Linux ELF binaries and rebuilds them via `wsl make -C test all`
+- Builds `ncd_service` via `wsl ./build.sh` if missing
+- Runs every discovered Linux test binary and parses PASSED/FAILED/SKIPPED
+- Includes Linux results in `test.results` alongside Windows results
+
+#### Manual Build in WSL
 ```batch
 wsl bash -c "cd /mnt/e/llama/NewChangeDirectory && ./build.sh"
 ```
@@ -393,12 +435,12 @@ wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && ./test_matcher"
 wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && ./test_scanner"
 ```
 
-#### Build All Tests in WSL (may have some failures)
+#### Build All Tests in WSL
 ```batch
-wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make all 2>&1 | tail -100"
+wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make all"
 ```
 
-**Note:** Some extended test files may have compilation issues in WSL due to API differences. Core tests (test_database, test_matcher, test_scanner, etc.) should pass.
+**Note:** `generate_report.py` now handles Linux test building automatically. Manual WSL commands above are only needed when debugging specific test failures.
 
 ---
 
@@ -534,13 +576,26 @@ set NCD_TEST_MODE=
 
 ## Continuous Integration Checklist
 
-Before marking changes as complete:
+Before marking changes as complete, run the unified report generator:
 
-### Build Verification
+```batch
+python test/generate_report.py
+```
+
+This single command verifies **build health** and **test results** for both platforms.
+
+### Required Checks
+- [ ] `generate_report.py` exits with code 0 (no failures, no skips)
+- [ ] `test.results` shows `OVERALL STATUS: PASS`
+- [ ] `test.results` shows `FAILED: 0` for both Windows and Linux
+- [ ] `test.results` shows `SKIPPED: 0` for both Windows and Linux
+- [ ] `test.results` file is committed with the changes
+
+### Manual Verification (if generate_report.py fails)
 - [ ] Windows build succeeds: `build.bat`
+- [ ] Windows test build succeeds: `cd test && build-tests.bat`
 - [ ] WSL build succeeds: `wsl bash -c "./build.sh"`
-
-### Unit Tests (Via Harness)
+- [ ] WSL test build succeeds: `wsl bash -c "cd test && make all"`
 - [ ] Windows unit tests pass: `Run-Tests-Safe.bat --windows-only`
 - [ ] WSL core tests pass: `Run-Tests-Safe.bat wsl`
 

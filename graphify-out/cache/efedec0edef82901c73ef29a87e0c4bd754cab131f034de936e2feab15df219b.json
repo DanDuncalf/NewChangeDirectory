@@ -1,0 +1,1 @@
+{"nodes": [{"id": "test_test_main_shim_h", "label": "test_main_shim.h", "file_type": "code", "source_file": "test\\test_main_shim.h", "source_location": "L1"}], "edges": [{"source": "test_test_main_shim_h", "target": "ncd", "relation": "imports", "confidence": "EXTRACTED", "source_file": "test\\test_main_shim.h", "source_location": "L26", "weight": 1.0}], "raw_calls": []}

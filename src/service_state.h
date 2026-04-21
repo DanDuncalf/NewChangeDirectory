@@ -186,6 +186,14 @@ bool service_state_update_database(ServiceState *state, NcdDatabase *db, bool is
 bool service_state_flush(ServiceState *state);
 
 /*
+ * service_state_save_metadata  --  Force-save metadata to disk
+ *
+ * Saves metadata immediately regardless of dirty flags.
+ * Used after init scan to ensure metadata file exists.
+ */
+bool service_state_save_metadata(ServiceState *state);
+
+/*
  * service_state_needs_flush  --  Check if flush is needed
  */
 bool service_state_needs_flush(const ServiceState *state);
@@ -306,6 +314,13 @@ bool service_state_is_shutdown_requested(const ServiceState *state);
  * Returns true if service is READY and not shutting down.
  */
 bool service_state_is_available_for_operations(const ServiceState *state);
+
+/*
+ * service_state_metadata_existed  --  Check if metadata was loaded from disk
+ *
+ * Returns true if the metadata file existed when the service started.
+ */
+bool service_state_metadata_existed(const ServiceState *state);
 
 /* --------------------------------------------------------- request queue        */
 

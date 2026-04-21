@@ -1,0 +1,1 @@
+{"v":1,"path":"test_mkdir_after_fix","result":"created","message":"Directory created successfully","mode":"0000"}

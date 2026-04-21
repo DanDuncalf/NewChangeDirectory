@@ -53,6 +53,7 @@ static void *xrealloc(void *p, size_t n)
 /* Name index implementation */
 NameIndex *name_index_build(const NcdDatabase *db)
 {
+    if (!db) return NULL;
     int total_dirs = 0;
     for (int di = 0; di < db->drive_count; di++) {
         total_dirs += db->drives[di].dir_count;

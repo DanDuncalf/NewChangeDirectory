@@ -45,6 +45,8 @@ extern "C" {
 #if NCD_PLATFORM_WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#undef MAX_PATH
+#define MAX_PATH 4096
 #else
 #include <limits.h>
 #include <strings.h>
@@ -534,7 +536,7 @@ typedef struct {
 #endif
     /* Agent mode options (/agent command) */
     bool agent_mode;              /* /agent -- agent API mode                */
-    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir, 8=mkdirs */
+    int  agent_subcommand;        /* 0=none, 1=query, 2=ls, 3=tree, 4=check, 5=complete, 6=mkdir, 8=mkdirs, 9=rmdir, 10=rmdirs, 11=mv, 12=verify, 13=chmod, 14=ln */
     bool agent_json;              /* --json output                           */
     int  agent_limit;             /* --limit N (default: query=unlimited, complete=20) */
     bool agent_depth_sort;        /* --depth (sort shallowest first)         */
@@ -547,6 +549,18 @@ typedef struct {
     bool agent_check_stats;       /* --stats (for check)                     */
     bool agent_check_service_status; /* --service-status (for check)         */
     char agent_mkdirs_file[NCD_MAX_PATH]; /* --file <path> (for mkdirs)      */
+    
+    /* Additional agent mode flags (AdditionalAgentFeatures.md) */
+    bool agent_dry_run;           /* --dry-run                               */
+    bool agent_force;             /* --force                                 */
+    bool agent_atomic;            /* --atomic                                */
+    bool agent_verify;            /* --verify                                */
+    int  agent_mode_octal;        /* --mode <octal> (-1 if not set)          */
+    bool agent_parents_required;  /* --parents-required                      */
+    bool agent_stop_on_error;     /* --stop-on-error                         */
+    bool agent_preserve_root;     /* --preserve-root                         */
+    bool agent_recursive;         /* --recursive                             */
+    char agent_tree_file[NCD_MAX_PATH]; /* --tree <file> (for verify)        */
     
     /* Exclusion list options */
     bool exclusion_add;           /* -x <pattern> -- add exclusion pattern   */

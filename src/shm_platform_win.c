@@ -26,6 +26,72 @@ struct ShmHandle {
 
 static DWORD g_last_error = 0;
 
+/* Linked list to keep persistent references for created objects.
+ * On Windows, file mapping objects are destroyed when the last handle
+ * closes. To mimic POSIX behaviour (shm_unlink controls lifetime),
+ * we keep an extra internal handle for every object created by
+ * shm_create() and close it only in shm_remove().               */
+typedef struct ShmCreatedEntry {
+    char     name[MAX_PATH];
+    HANDLE   hMapFile;
+    struct ShmCreatedEntry *next;
+} ShmCreatedEntry;
+
+static ShmCreatedEntry *g_created_list = NULL;
+
+static void shm_created_list_add(const char *name, HANDLE hMapFile) {
+    ShmCreatedEntry *entry = (ShmCreatedEntry *)calloc(1, sizeof(ShmCreatedEntry));
+    if (!entry) return;
+    strncpy(entry->name, name, MAX_PATH - 1);
+    entry->name[MAX_PATH - 1] = '\0';
+    entry->hMapFile = hMapFile;
+    entry->next = g_created_list;
+    g_created_list = entry;
+}
+
+static bool shm_created_list_remove(const char *name) {
+    ShmCreatedEntry **current = &g_created_list;
+    while (*current) {
+        ShmCreatedEntry *entry = *current;
+        if (strcmp(entry->name, name) == 0) {
+            *current = entry->next;
+            if (entry->hMapFile != NULL && entry->hMapFile != INVALID_HANDLE_VALUE) {
+                CloseHandle(entry->hMapFile);
+            }
+            free(entry);
+            return true;
+        }
+        current = &entry->next;
+    }
+    return false;
+}
+
+static void shm_created_list_clear(void) {
+    while (g_created_list) {
+        ShmCreatedEntry *entry = g_created_list;
+        g_created_list = entry->next;
+        if (entry->hMapFile != NULL && entry->hMapFile != INVALID_HANDLE_VALUE) {
+            CloseHandle(entry->hMapFile);
+        }
+        free(entry);
+    }
+}
+
+/* Duplicate the creation handle so the user gets a separate handle.
+ * The original (creation) handle is kept in g_created_list, which
+ * prevents Windows from destroying the object when the user calls
+ * shm_close().                                                   */
+static bool persist_created_object(const char *name, ShmHandle *handle) {
+    HANDLE hUser = NULL;
+    if (!DuplicateHandle(GetCurrentProcess(), handle->hMapFile,
+                         GetCurrentProcess(), &hUser, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        return false;
+    }
+    shm_created_list_add(name, handle->hMapFile);
+    handle->hMapFile = hUser;
+    return true;
+}
+
 /* --------------------------------------------------------- error handling     */
 
 static void set_last_error(DWORD err) {
@@ -76,7 +142,7 @@ ShmResult shm_platform_init(void) {
 }
 
 void shm_platform_cleanup(void) {
-    /* Nothing special needed on Windows */
+    shm_created_list_clear();
 }
 
 /* --------------------------------------------------------- object management  */
@@ -144,6 +210,11 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
             
             if (handle->hMapFile != NULL && GetLastError() != ERROR_ALREADY_EXISTS) {
                 /* Success on retry */
+                if (!persist_created_object(name, handle)) {
+                    CloseHandle(handle->hMapFile);
+                    free(handle);
+                    return SHM_ERROR_GENERIC;
+                }
                 *out_handle = handle;
                 return SHM_OK;
             }
@@ -157,6 +228,11 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
         return SHM_ERROR_EXISTS;
     }
     
+    if (!persist_created_object(name, handle)) {
+        CloseHandle(handle->hMapFile);
+        free(handle);
+        return SHM_ERROR_GENERIC;
+    }
     *out_handle = handle;
     return SHM_OK;
 }
@@ -219,15 +295,15 @@ ShmResult shm_remove(const char *name) {
         return SHM_ERROR_GENERIC;
     }
     
-    /* On Windows, try to open and close the existing mapping to force cleanup.
-     * This helps when a previous process crashed and left the object around. */
+    /* Close our persistent reference so the object can be destroyed.
+     * On Windows this mimics POSIX shm_unlink().                 */
+    shm_created_list_remove(name);
+    
+    /* Also try to open and close any other existing mapping to force
+     * cleanup when a previous process crashed and left the object. */
     HANDLE hMap = OpenFileMapping(FILE_MAP_WRITE, FALSE, name);
     if (hMap != NULL) {
-        /* Object exists - closing this handle might destroy it if we're the last */
         CloseHandle(hMap);
-        /* Windows doesn't have a direct "delete" for file mappings.
-         * They are destroyed when the last handle closes.
-         * We successfully "unlinked" (removed our reference). */
     }
     
     return SHM_OK;

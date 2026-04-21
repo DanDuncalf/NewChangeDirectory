@@ -1,0 +1,1 @@
+{"v":1,"atomic":false,"dirs":[{"path":"test_flat_mkdir","result":"created","message":"Directory created"}],"rollback":[],"summary":{"created":1,"exists":0,"failed":0}}

@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: NewChangeDirectory.NCD
+PackageVersion: 1.3.0
+PackageLocale: en-US
+Publisher: NewChangeDirectory
+PublisherUrl: https://github.com/YOUR-ORG/YOUR-REPO
+PackageName: NewChangeDirectory
+PackageUrl: https://github.com/YOUR-ORG/YOUR-REPO
+License: MIT
+LicenseUrl: https://github.com/YOUR-ORG/YOUR-REPO/blob/main/LICENSE
+Copyright: Copyright (c) 2026 NewChangeDirectory contributors
+ShortDescription: Fast fuzzy directory navigation tool inspired by Norton Commander
+Description: |
+  NewChangeDirectory (NCD) is a cross-platform command-line directory navigation
+  tool inspired by the classic Norton Commander CD command. It maintains a database
+  of directory paths across drives/mounts and provides fast, fuzzy search-based
+  navigation with an interactive TUI.
+Moniker: ncd
+Tags:
+  - cd
+  - directory
+  - navigation
+  - fuzzy
+  - search
+  - command-line
+  - cli
+  - tui
+  - norton-commander
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

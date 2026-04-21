@@ -167,12 +167,22 @@ NcdIpcClient *ipc_client_connect(void) {
         );
         
         if (hPipe != INVALID_HANDLE_VALUE) {
-            break;  /* Success */
+            /* Set pipe to message mode */
+            DWORD mode = PIPE_READMODE_MESSAGE;
+            if (SetNamedPipeHandleState(hPipe, &mode, NULL, NULL)) {
+                break;  /* Success */
+            }
+            /* Server closed the pipe between CreateFile and SetNamedPipeHandleState */
+            CloseHandle(hPipe);
+            hPipe = INVALID_HANDLE_VALUE;
+            Sleep(20);
+            retries--;
+            continue;
         }
         
         DWORD err = GetLastError();
-        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PIPE_BUSY) {
-            /* Pipe not ready yet, wait and retry */
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PIPE_BUSY || err == ERROR_BAD_PIPE) {
+            /* Pipe not ready yet or server closed it; wait and retry */
             Sleep(20);
             retries--;
             continue;
@@ -189,14 +199,6 @@ NcdIpcClient *ipc_client_connect(void) {
     }
     
     client->hPipe = hPipe;
-    
-    /* Set pipe to message mode */
-    DWORD mode = PIPE_READMODE_MESSAGE;
-    if (!SetNamedPipeHandleState(client->hPipe, &mode, NULL, NULL)) {
-        CloseHandle(client->hPipe);
-        free(client);
-        return NULL;
-    }
     
     return client;
 }
@@ -1034,27 +1036,56 @@ bool ipc_service_exists(void) {
         }
     }
     
-    /* Try to connect with minimal timeout */
-    HANDLE hPipe = CreateFile(
-        g_pipe_name,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL
-    );
-    
-    if (hPipe == INVALID_HANDLE_VALUE) {
+    /* Try to connect with retries to handle transient unavailability
+     * when the service is between pipe instances. */
+    int retries = 5;  /* 5 * 20ms = 100ms total */
+    while (retries > 0) {
+        HANDLE hPipe = CreateFile(
+            g_pipe_name,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL
+        );
+        
+        if (hPipe != INVALID_HANDLE_VALUE) {
+            CloseHandle(hPipe);
+            return true;
+        }
+        
         DWORD err = GetLastError();
         /* ERROR_PIPE_BUSY (231) means the pipe exists but all instances are busy.
          * This indicates the service IS running, just handling other clients. */
         if (err == ERROR_PIPE_BUSY) {
             return true;
         }
-        return false;
+        
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_BAD_PIPE) {
+            /* Service may be recreating the pipe; wait briefly and retry */
+            Sleep(20);
+            retries--;
+            continue;
+        }
+        
+        break;
     }
     
-    CloseHandle(hPipe);
-    return true;
+    /* Fallback: check the service mutex. The pipe may be temporarily
+     * unavailable while the service is between connections, but the
+     * mutex remains owned until the process exits. An abandoned mutex
+     * means the service crashed and should not be treated as running. */
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+    if (hMutex) {
+        DWORD waitResult = WaitForSingleObject(hMutex, 0);
+        CloseHandle(hMutex);
+        if (waitResult == WAIT_TIMEOUT) {
+            /* Mutex is owned by a live service process */
+            return true;
+        }
+        /* WAIT_ABANDONED_0 (service crashed) or WAIT_OBJECT_0 (unowned) */
+    }
+    
+    return false;
 }

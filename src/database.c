@@ -906,6 +906,92 @@ int db_add_dir(DriveData *drv, const char *name, int32_t parent,
     return id;
 }
 
+bool db_remove_path(NcdDatabase *db, const char *path)
+{
+    if (!db || !path || !path[0]) return false;
+
+    db_make_mutable(db);
+
+    char target_drive = 0;
+#if NCD_PLATFORM_WINDOWS
+    if (path[1] == ':') {
+        target_drive = (char)toupper((unsigned char)path[0]);
+    }
+#else
+    target_drive = (char)toupper((unsigned char)path[0]);
+#endif
+
+    DriveData *drv = db_find_drive(db, target_drive);
+    if (!drv) return false;
+
+    /* Find the directory index by full path reconstruction */
+    int dir_idx = -1;
+    char buf[NCD_MAX_PATH];
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (!db_full_path(drv, i, buf, sizeof(buf))) continue;
+        if (_stricmp(buf, path) == 0) {
+            dir_idx = i;
+            break;
+        }
+    }
+
+    if (dir_idx < 0) return false;
+
+    /* Collect all indices to remove (dir + all descendants) */
+    bool *to_remove = ncd_calloc((size_t)drv->dir_count, sizeof(bool));
+    to_remove[dir_idx] = true;
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < drv->dir_count; i++) {
+            if (to_remove[i]) continue;
+            int parent = drv->dirs[i].parent;
+            if (parent >= 0 && parent < drv->dir_count && to_remove[parent]) {
+                to_remove[i] = true;
+                changed = true;
+            }
+        }
+    }
+
+    /* Build mapping from old indices to new indices */
+    int *old_to_new = ncd_malloc_array((size_t)drv->dir_count, sizeof(int));
+    for (int i = 0; i < drv->dir_count; i++) old_to_new[i] = -1;
+
+    DirEntry *new_dirs = ncd_malloc_array((size_t)drv->dir_count, sizeof(DirEntry));
+    int new_count = 0;
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (!to_remove[i]) {
+            old_to_new[i] = new_count;
+            new_dirs[new_count++] = drv->dirs[i];
+        }
+    }
+
+    /* Update parent references */
+    for (int i = 0; i < new_count; i++) {
+        if (new_dirs[i].parent >= 0) {
+            new_dirs[i].parent = old_to_new[new_dirs[i].parent];
+        }
+    }
+
+    free(drv->dirs);
+    if (new_count > 0) {
+        drv->dirs = new_dirs;
+    } else {
+        drv->dirs = NULL;
+        free(new_dirs);
+    }
+    drv->dir_count = new_count;
+    drv->dir_capacity = new_count;
+
+    free(old_to_new);
+    free(to_remove);
+
+    /* Invalidate cached name index */
+    db->name_index_generation++;
+    return true;
+}
+
 /* =========================================================== path helper  */
 
 char *db_full_path(const DriveData *drv, int dir_index,
@@ -2111,6 +2197,11 @@ static bool parse_exclusion_pattern(const char *pattern, NcdExclusionEntry *entr
     if (pattern[0] == '\0') return false;
     if (pattern[0] == '*' && pattern[1] == '\0') return false;
     
+    /* Check for whitespace-only pattern */
+    const char *wp = pattern;
+    while (*wp && isspace((unsigned char)*wp)) wp++;
+    if (*wp == '\0') return false;
+    
     platform_strncpy_s(entry->pattern, sizeof(entry->pattern), pattern);
     
     const char *p = pattern;
@@ -2403,6 +2494,7 @@ NcdMetadata *db_metadata_create(void)
     memset(meta, 0, sizeof(NcdMetadata));
     
     db_config_init_defaults(&meta->cfg);
+    db_exclusion_init_defaults(meta);
     
     meta->groups.groups = NULL;
     meta->groups.count = 0;

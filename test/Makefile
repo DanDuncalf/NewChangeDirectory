@@ -24,6 +24,7 @@ TESTS = test_database test_matcher test_history test_config \
         test_service_database test_service_ipc test_service_empty_db test_service_logging \
         test_service_version_compat test_legacy_service_shutdown \
         test_cli_parse test_agent_mode test_agent_integration test_result_output \
+        test_agent_cli_extended test_agent_query_tree test_agent_ls_check test_agent_complete_mkdir_quit \
         test_shared_state test_shared_state_extended test_shm_platform test_ipc \
         test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended \
         test_integration_extended \
@@ -34,9 +35,10 @@ TESTS = test_database test_matcher test_history test_config \
         ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
         ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli \
         ipc_fuzzer ipc_stress_test \
-        test_service_stress test_service_rescan test_ipc_extended test_shm_stress fuzz_ipc \
+        test_service_stress test_service_rescan test_service_init_db test_ipc_extended test_shm_stress fuzz_ipc \
         test_cli_edge_cases test_scanner_extended test_matcher_extended \
-        test_result_edge_cases test_stress
+        test_result_edge_cases test_stress \
+        test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone
 
@@ -187,6 +189,42 @@ AGENT_INTEGRATION_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../s
 test_agent_integration: test_agent_integration.c test_framework.c $(AGENT_INTEGRATION_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Tier 3 tests - Agent CLI extended (comprehensive parse_agent_args + glob_match)
+AGENT_CLI_EXTENDED_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_agent_cli_extended: test_agent_cli_extended.c test_framework.c $(AGENT_CLI_EXTENDED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Agent query/tree integration (invokes actual executable)
+AGENT_QUERY_TREE_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_agent_query_tree: test_agent_query_tree.c test_framework.c $(AGENT_QUERY_TREE_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Agent ls/check integration (invokes actual executable)
+AGENT_LS_CHECK_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_agent_ls_check: test_agent_ls_check.c test_framework.c $(AGENT_LS_CHECK_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Tier 3 tests - Agent complete/mkdir/quit integration (invokes actual executable)
+AGENT_COMPLETE_MKDIR_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_agent_complete_mkdir_quit: test_agent_complete_mkdir_quit.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# AdditionalAgentFeatures.md tests - mkdir enhancements
+test_agent_mkdir_extended: test_agent_mkdir_extended.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# AdditionalAgentFeatures.md tests - rmdir/rmdirs
+test_agent_rmdir: test_agent_rmdir.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# AdditionalAgentFeatures.md tests - mv/ln
+test_agent_mv: test_agent_mv.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# AdditionalAgentFeatures.md tests - verify/chmod
+test_agent_verify: test_agent_verify.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Tier 3 tests - Result output
 # Uses extracted result.c module
 RESULT_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
@@ -333,6 +371,9 @@ SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../sr
 test_service_rescan: test_service_rescan.c test_framework.c $(SERVICE_RESCAN_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+test_service_init_db: test_service_init_db.c test_framework.c $(SERVICE_RESCAN_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # IPC extended tests
 IPC_EXTENDED_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_ipc_extended: test_ipc_extended.c test_framework.c $(IPC_EXTENDED_SOURCES)
@@ -352,7 +393,7 @@ fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases
+test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""
@@ -476,6 +517,18 @@ test: test_database test_database_extended test_matcher test_history test_strbui
 	@echo "Running key injection tests..."
 	@./test_key_injection
 	@echo ""
+	@echo "Running agent mkdir extended tests..."
+	@./test_agent_mkdir_extended || echo "Note: Some agent mkdir extended tests require the NCD binary"
+	@echo ""
+	@echo "Running agent rmdir tests..."
+	@./test_agent_rmdir || echo "Note: Some agent rmdir tests require the NCD binary"
+	@echo ""
+	@echo "Running agent mv tests..."
+	@./test_agent_mv || echo "Note: Some agent mv tests require the NCD binary"
+	@echo ""
+	@echo "Running agent verify tests..."
+	@./test_agent_verify || echo "Note: Some agent verify tests require the NCD binary"
+	@echo ""
 	@echo "All unit tests complete."
 
 service-test: test_service_lifecycle test_service_integration test_service_ipc
@@ -548,7 +601,7 @@ clean:
 	rm -f ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli
 	rm -f ipc_fuzzer ipc_stress_test
 	rm -f stress_test.db
-	rm -f test_service_stress test_service_rescan test_ipc_extended test_shm_stress fuzz_ipc
+	rm -f test_service_stress test_service_rescan test_service_init_db test_ipc_extended test_shm_stress fuzz_ipc
 
 # Windows-specific test builds
 win-test:

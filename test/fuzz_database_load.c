@@ -8,6 +8,16 @@
 #include <stdlib.h>
 #include <time.h>
 
+#ifdef _WIN32
+/* Windows does not provide rand_r; simple reentrant wrapper */
+static int rand_r(unsigned int *seed) {
+    srand(*seed);
+    int r = rand();
+    *seed = (unsigned int)r + 1;
+    return r;
+}
+#endif
+
 /* Helper: Create a minimal valid binary database */
 static void create_valid_db_header(uint8_t *buf, size_t *len) {
     BinFileHdr hdr;

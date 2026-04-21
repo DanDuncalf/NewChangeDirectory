@@ -1,0 +1,1 @@
+{"v":1,"path":"C:/","result":"error","message":"Cannot remove root directory"}

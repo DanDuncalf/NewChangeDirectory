@@ -1,0 +1,281 @@
+================================================================================
+NCD Test Results Report
+================================================================================
+Generated: 2026-04-21T20:57:23Z
+Generator: generate_report.py
+Platform: Windows
+WSL Available: True
+
+================================================================================
+BUILD INFORMATION
+================================================================================
+
+[Windows Main Binaries]
+  NCDService.exe                           : 2026-04-21T19:37:48Z
+  NewChangeDirectory.exe                   : 2026-04-21T19:37:48Z
+
+[Linux Main Binaries]
+  NewChangeDirectory                       : 2026-04-21T20:43:10Z
+  ncd_service                              : 2026-04-09T03:08:58Z
+
+================================================================================
+UNIT TEST RESULTS - WINDOWS
+================================================================================
+
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load.exe                       2026-04-21    20:42:48
+    10       0       0  fuzz_ipc.exe                                 2026-04-21    20:42:51
+    12       0       1  test_agent_mkdir_extended.exe                2026-04-21    05:41:19
+    16       0       0  test_agent_mode.exe                          2026-04-16    19:31:33
+     2       1       2  test_agent_mv.exe                            2026-04-21    05:50:25
+     7       0       0  test_agent_rmdir.exe                         2026-04-21    05:41:19
+     5       0       0  test_agent_verify.exe                        2026-04-21    05:47:17
+    15       0       0  test_bugs.exe                                2026-04-21    20:42:36
+    30       0       0  test_cli_edge_cases.exe                      2026-04-21    20:42:54
+    40       0       0  test_cli_parse.exe                           2026-04-17    17:25:24
+    47       0       0  test_cli_parse_extended.exe                  2026-04-17    17:25:26
+     7       0       0  test_common.exe                              2026-04-21    20:42:37
+    50       0       0  test_database.exe                            2026-04-21    20:42:34
+    50       0       0  test_database_extended.exe                   2026-04-21    20:42:47
+    13       0       0  test_db_corruption.exe                       2026-04-21    20:42:35
+    19       2       4  test_ipc_extended.exe                        2026-04-21    20:42:51
+     7       0       0  test_legacy_service_shutdown.exe             2026-04-21    20:42:41
+    40       0       0  test_main.exe                                2026-04-21    20:42:53
+    23       0       0  test_matcher.exe                             2026-04-21    20:42:35
+    30       0       0  test_matcher_extended.exe                    2026-04-21    20:42:55
+    10       0       0  test_metadata.exe                            2026-04-21    20:42:37
+    30       0       0  test_odd_cases.exe                           2026-04-21    20:42:48
+    12       0       0  test_platform.exe                            2026-04-21    20:42:37
+    20       0       0  test_result_edge_cases.exe                   2026-04-21    20:42:55
+     9       0       0  test_scanner.exe                             2026-04-21    20:42:38
+    35       0       0  test_scanner_extended.exe                    2026-04-21    20:42:54
+     4       0       0  test_service_init_db.exe                     2026-04-21    20:42:50
+     7       4       0  test_service_integration.exe                 2026-04-21    20:42:40
+    22       0       0  test_service_lazy_load.exe                   2026-04-21    20:42:39
+    13       0       0  test_service_lifecycle.exe                   2026-04-21    20:42:39
+    20       0       0  test_service_rescan.exe                      2026-04-21    20:42:49
+     0       1       0  test_service_stress.exe                      2026-04-21    20:42:49
+     6       0       0  test_service_version_compat.exe              2026-04-21    20:42:40
+    10       0       0  test_shared_state.exe                        2026-03-30    14:44:58
+     0       1       0  test_shm_stress.exe                          2026-04-21    20:42:51
+    15       0       0  test_strbuilder.exe                          2026-04-21    20:42:36
+    25       0       0  test_stress.exe                              2026-04-21    20:42:56
+    15       0       0  test_ui_exclusions.exe                       2026-04-21    20:42:52
+    45       0       0  test_ui_extended.exe                         2026-04-21    20:42:52
+
+================================================================================
+UNIT TEST RESULTS - LINUX
+================================================================================
+
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load                           2026-04-21    20:22:09
+    10       0       0  fuzz_ipc                                     2026-04-21    20:22:38
+    56       2       0  test_agent_cli_extended                      2026-04-21    20:21:14
+     0       1       0  test_agent_complete_mkdir_quit               2026-04-21    20:21:22
+    26       0       0  test_agent_integration                       2026-04-21    20:21:08
+     0       1       0  test_agent_ls_check                          2026-04-21    20:21:19
+    12       1       0  test_agent_mkdir_extended                    2026-04-21    20:22:58
+    16       0       0  test_agent_mode                              2026-04-21    20:21:05
+     4       0       1  test_agent_mv                                2026-04-21    20:23:04
+     3      11       0  test_agent_query_tree                        2026-04-21    20:21:16
+     7       0       0  test_agent_rmdir                             2026-04-21    20:23:01
+     3       4       0  test_agent_verify                            2026-04-21    20:23:07
+    15       0       0  test_bugs                                    2026-04-21    20:22:19
+    30       0       0  test_cli_edge_cases                          2026-04-21    20:22:42
+    40       0       0  test_cli_parse                               2026-04-21    20:21:02
+    46       1       0  test_cli_parse_extended                      2026-04-21    20:21:25
+     7       0       0  test_common                                  2026-04-18    00:31:24
+    33       0       0  test_common_extended                         2026-04-18    00:32:51
+    22       0       0  test_config                                  2026-04-21    20:20:11
+    45       0       0  test_database                                2026-04-21    20:20:03
+    50       0       0  test_database_extended                       2026-04-21    20:22:00
+    13       0       0  test_db_corruption                           2026-04-21    20:22:16
+    17       0       0  test_history                                 2026-04-21    20:20:08
+    13       0       0  test_integration_extended                    2026-04-21    20:21:31
+    10       0       3  test_ipc                                     2026-04-21    05:42:15
+    20       3       2  test_ipc_extended                            2026-04-21    20:22:34
+    11       0       0  test_key_injection                           2026-04-20    16:02:53
+     1       5       1  test_legacy_service_shutdown                 2026-04-21    20:20:58
+    40       0       0  test_main                                    2026-04-21    20:21:57
+    23       0       0  test_matcher                                 2026-04-21    20:20:05
+    30       0       0  test_matcher_extended                        2026-04-21    20:22:48
+    10       0       0  test_metadata                                2026-04-21    20:20:16
+    30       0       0  test_odd_cases                               2026-04-21    20:22:03
+    12       0       0  test_platform                                2026-04-21    20:20:13
+    33       0       0  test_platform_extended                       2026-04-21    20:21:28
+     0      20       0  test_result_edge_cases                       2026-04-21    20:22:52
+    13       0       0  test_result_output                           2026-04-21    20:21:11
+     9       0       0  test_scanner                                 2026-04-21    20:20:19
+    35       0       0  test_scanner_extended                        2026-04-21    20:22:45
+     8       1       0  test_service_database                        2026-04-21    20:20:39
+     4       0       0  test_service_empty_db                        2026-04-21    20:20:48
+     3       1       0  test_service_init_db                         2026-04-21    20:22:31
+     6       5       0  test_service_integration                     2026-04-21    20:20:34
+     0       1       0  test_service_ipc                             2026-04-21    20:20:43
+    22       0       0  test_service_lazy_load                       2026-04-21    20:20:23
+    13       0       0  test_service_lifecycle                       2026-04-21    20:20:31
+     4       3       0  test_service_logging                         2026-04-21    20:20:51
+     8       1       0  test_service_parity                          2026-04-21    20:20:27
+     0       1       0  test_service_rescan                          2026-04-21    20:22:27
+     0       1       0  test_service_stress                          2026-04-21    20:22:23
+     2       0       4  test_service_version_compat                  2026-04-21    20:20:55
+    10       0       0  test_shared_state                            2026-04-21    05:42:07
+     8       2       0  test_shared_state_extended                   2026-04-21    05:42:10
+    11       0       0  test_shm_platform                            2026-04-21    05:42:12
+    18       0       2  test_shm_stress                              2026-04-21    05:43:56
+    15       0       0  test_strbuilder                              2026-04-18    00:31:23
+    41       0       0  test_strbuilder_extended                     2026-04-18    00:32:50
+    25       0       0  test_stress                                  2026-04-21    20:22:56
+     0       1       0  test_tui_integration                         2026-04-09    16:47:31
+     7       1       0  test_ui_config                               2026-04-21    20:21:41
+    15       0       0  test_ui_exclusions                           2026-04-21    20:21:53
+    45       0       0  test_ui_extended                             2026-04-21    20:21:48
+     9       0       0  test_ui_history                              2026-04-21    20:21:38
+     8       1       0  test_ui_navigator                            2026-04-21    20:21:44
+     9       1       0  test_ui_selector                             2026-04-21    20:21:34
+
+================================================================================
+FAILING/SKIPPED TESTS SUMMARY - WINDOWS
+================================================================================
+
+#     Status     Test Binary                                Test Name
+----- ---------- ------------------------------------------ ----------------------------------------
+1     SKIPPED    test_agent_mkdir_extended.exe              mkdir_linux_mode_0700
+2     FAILED     test_agent_mv.exe                          mv_updates_database
+3     SKIPPED    test_agent_mv.exe                          ln_creates_symlink
+4     SKIPPED    test_agent_mv.exe                          ln_fails_without_privilege_windows
+5     FAILED     test_ipc_extended.exe                      ipc_pipe_create_already_exists
+6     FAILED     test_ipc_extended.exe                      ipc_pipe_disconnect_mid_transfer
+7     SKIPPED    test_ipc_extended.exe                      ipc_socket_create_with_invalid_path
+8     SKIPPED    test_ipc_extended.exe                      ipc_socket_path_too_long
+9     SKIPPED    test_ipc_extended.exe                      ipc_socket_permission_denied
+10    SKIPPED    test_ipc_extended.exe                      ipc_file_permissions_linux
+11    FAILED     test_service_integration.exe               help_shows_service_running_when_service_active
+12    FAILED     test_service_integration.exe               agent_service_status_running
+13    FAILED     test_service_integration.exe               agent_service_status_json_running
+14    FAILED     test_service_integration.exe               ncd_search_works_with_service
+15    FAILED     test_service_stress.exe                    unknown
+16    FAILED     test_shm_stress.exe                        unknown
+
+================================================================================
+FAILING/SKIPPED TESTS SUMMARY - LINUX
+================================================================================
+
+#     Status     Test Binary                                Test Name
+----- ---------- ------------------------------------------ ----------------------------------------
+1     FAILED     test_agent_cli_extended                    glob_multiple_questions
+2     FAILED     test_agent_cli_extended                    glob_mixed_star_and_question
+3     FAILED     test_agent_complete_mkdir_quit             unknown
+4     FAILED     test_agent_ls_check                        unknown
+5     FAILED     test_agent_mkdir_extended                  mkdir_linux_mode_0700
+6     SKIPPED    test_agent_mv                              ln_fails_without_privilege_windows
+7     FAILED     test_agent_query_tree                      agent_query_basic_plain
+8     FAILED     test_agent_query_tree                      agent_query_basic_json
+9     FAILED     test_agent_query_tree                      agent_query_no_match_json
+10    FAILED     test_agent_query_tree                      agent_query_limit
+11    FAILED     test_agent_query_tree                      agent_query_chain_search
+12    FAILED     test_agent_query_tree                      agent_query_case_insensitive
+13    FAILED     test_agent_query_tree                      agent_tree_basic_plain
+14    FAILED     test_agent_query_tree                      agent_tree_basic_json
+15    FAILED     test_agent_query_tree                      agent_tree_flat
+16    FAILED     test_agent_query_tree                      agent_tree_flat_json
+17    FAILED     test_agent_query_tree                      agent_tree_depth_limit
+18    FAILED     test_agent_verify                          verify_missing_directory_fails
+19    FAILED     test_agent_verify                          verify_mode_mismatch_fails
+20    FAILED     test_agent_verify                          chmod_changes_mode
+21    FAILED     test_agent_verify                          chmod_recursive_changes_all
+22    FAILED     test_cli_parse_extended                    exclusion_add_slash_variant
+23    SKIPPED    test_ipc                                   ipc_client_connect_fails_when_no_service
+24    SKIPPED    test_ipc                                   ipc_rejects_truncated_payload_length_in_response
+25    SKIPPED    test_ipc                                   ipc_rejects_oversized_state_info_name_lengths
+26    SKIPPED    test_ipc_extended                          ipc_pipe_create_with_invalid_name
+27    FAILED     test_ipc_extended                          ipc_message_partial_read_handling
+28    FAILED     test_ipc_extended                          ipc_message_exact_buffer_size
+29    FAILED     test_ipc_extended                          ipc_timeout_with_slow_response
+30    SKIPPED    test_ipc_extended                          ipc_access_control_windows
+31    FAILED     test_legacy_service_shutdown               legacy_shutdown_graceful_stop_succeeds
+32    FAILED     test_legacy_service_shutdown               legacy_shutdown_stop_when_already_stopped_returns_success
+33    FAILED     test_legacy_service_shutdown               legacy_shutdown_block_command_waits_for_stop
+34    SKIPPED    test_legacy_service_shutdown               legacy_shutdown_double_stop_is_safe
+35    FAILED     test_legacy_service_shutdown               legacy_shutdown_force_kill_as_last_resort
+36    FAILED     test_legacy_service_shutdown               legacy_shutdown_restart_after_stop_works
+37    FAILED     test_result_edge_cases                     result_batch_file_percent_escaping
+38    FAILED     test_result_edge_cases                     result_batch_file_bang_escaping
+39    FAILED     test_result_edge_cases                     result_batch_file_caret_escaping
+40    FAILED     test_result_edge_cases                     result_batch_file_ampersand_escaping
+41    FAILED     test_result_edge_cases                     result_batch_file_pipe_escaping
+42    FAILED     test_result_edge_cases                     result_batch_file_quote_escaping
+43    FAILED     test_result_edge_cases                     result_batch_file_redirection_escaping
+44    FAILED     test_result_edge_cases                     result_batch_file_parenthesis_escaping
+45    FAILED     test_result_edge_cases                     result_batch_file_newline_replacement
+46    FAILED     test_result_edge_cases                     result_batch_file_maximum_length
+47    FAILED     test_result_edge_cases                     result_shell_file_dollar_escaping
+48    FAILED     test_result_edge_cases                     result_shell_file_backtick_escaping
+49    FAILED     test_result_edge_cases                     result_shell_file_backslash_escaping
+50    FAILED     test_result_edge_cases                     result_shell_file_quote_escaping
+51    FAILED     test_result_edge_cases                     result_shell_file_newline_replacement
+52    FAILED     test_result_edge_cases                     result_error_message_with_path
+53    FAILED     test_result_edge_cases                     result_error_message_with_suggestion
+54    FAILED     test_result_edge_cases                     result_error_message_with_help_text
+55    FAILED     test_result_edge_cases                     result_error_message_truncation
+56    FAILED     test_result_edge_cases                     result_error_message_format_consistency
+57    FAILED     test_service_database                      snapshot_checksum_validation
+58    FAILED     test_service_init_db                       init_db_help_shows_option
+59    FAILED     test_service_integration                   help_shows_service_running_when_service_active
+60    FAILED     test_service_integration                   agent_service_status_running
+61    FAILED     test_service_integration                   agent_service_status_json_running
+62    FAILED     test_service_integration                   agent_service_status_after_stop
+63    FAILED     test_service_integration                   ncd_search_works_with_service
+64    FAILED     test_service_ipc                           unknown
+65    FAILED     test_service_logging                       logs_path_returns_valid_path
+66    FAILED     test_service_logging                       database_directory_created_automatically
+67    FAILED     test_service_logging                       logs_path_buffer_size
+68    FAILED     test_service_parity                        best_effort_fallback
+69    FAILED     test_service_rescan                        unknown
+70    FAILED     test_service_stress                        unknown
+71    SKIPPED    test_service_version_compat                version_check_mismatch_triggers_shutdown
+72    SKIPPED    test_service_version_compat                version_check_result_populated_correctly
+73    SKIPPED    test_service_version_compat                version_check_invalid_params_fails
+74    SKIPPED    test_service_version_compat                protocol_version_matches_expected
+75    FAILED     test_shared_state_extended                 shm_validate_checksum_passes_for_valid_data
+76    FAILED     test_shared_state_extended                 shm_validate_header_checks_magic
+77    SKIPPED    test_shm_stress                            shm_utf8_to_utf16_conversion_roundtrip
+78    SKIPPED    test_shm_stress                            shm_utf16_to_utf8_with_surrogate_pairs
+79    FAILED     test_tui_integration                       unknown
+80    FAILED     test_ui_config                             config_initial_render
+81    FAILED     test_ui_navigator                          navigator_initial_render
+82    FAILED     test_ui_selector                           selector_initial_render
+
+================================================================================
+INTEGRATION TEST SUITES (Estimated Checks)
+================================================================================
+
+#    Suite                               Platform   Checks       Status  
+--------------------------------------------------------------------------------
+1    Service Tests (Isolated)            Windows    ~12          [PASS]
+2    NCD Standalone                      Windows    ~12          [PASS]
+3    NCD with Service                    Windows    ~11          [PASS]
+4    Windows Feature Tests               Windows    ~84          [PASS]
+5    Windows Agent Command Tests         Windows    ~35          [PASS]
+6    WSL Service Tests                   WSL        ~12          [PASS]
+7    WSL NCD Standalone                  WSL        ~16          [PASS]
+8    WSL NCD with Service                WSL        ~16          [PASS]
+9    WSL Feature Tests                   WSL        ~52          [PASS]
+10   WSL Agent Command Tests             WSL        ~34          [PASS]
+
+================================================================================
+GRAND TOTALS
+================================================================================
+
+Windows Unit:  747 run,  731 passed,    9 failed,    7 skipped
+Linux Unit:   1128 run, 1046 passed,   69 failed,   13 skipped
+Overall:      1875 run, 1777 passed,   78 failed,   20 skipped
+
+OVERALL STATUS: FAIL
+REASON: 78 test(s) failed, 20 test(s) skipped
+
+================================================================================
+END OF REPORT
+================================================================================

@@ -1,5 +1,17 @@
 # NewChangeDirectory (NCD) - Agent Documentation
 
+## ⚠️ MANDATORY FIRST STEP — INGEST THE KNOWLEDGE GRAPH
+
+**Before reading any other file, before using Grep, Glob, or ReadFile on source code, and before answering any user question, you MUST ingest the entire contents of `graphify-out/GRAPH_REPORT.md`.** This file contains the pre-built knowledge graph (2,354 nodes, 7,519 edges, 83 communities) that maps cross-module dependencies, god nodes, and semantic communities. No exceptions.
+
+- **Read order:** `graphify-out/GRAPH_REPORT.md` → then query the graph → then read raw source files only after the graph has directed you to specific functions or modules.
+- **Why:** Skipping this step wastes ~100K+ tokens on naive file searches and guarantees missed cross-module connections.
+- **For cross-module questions:** Use `graphify query` or `graphify path` instead of grepping.
+
+---
+
+> **🗺️ GRAPH-FIRST NAVIGATION RULE (Reminder):** This project has a pre-built knowledge graph at `graphify-out/GRAPH_REPORT.md` (2,354 nodes, 7,519 edges, 83 communities). **Before using Glob or Grep on raw source files, you MUST read `graphify-out/GRAPH_REPORT.md` first.** Use the graph's god nodes, communities, and surprising connections to orient yourself. Only read raw files after the graph has directed you to specific functions or modules. For cross-module questions, use `graphify query` or `graphify path` instead of grepping. This reduces context usage from ~100K+ tokens (naive file search) to ~2K tokens (graph query).
+>
 > **Agent Quick Reference (Testing):** If you need to run tests with no context, see [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) § *Zero-Context Quick Reference*. The one-liner is `cmd /c Run-Tests-Safe.bat unit`.
 
 ## Project Overview
@@ -131,650 +143,52 @@ The project requires a shared platform abstraction library located at `../shared
 
 ## Build Commands
 
-### Windows (MSVC)
+See [`README.md`](README.md) § *Building from Source* for full build instructions per platform.
 
+Quick reference:
 ```powershell
-# Automatic Visual Studio detection and build
-# (Use cmd /c because the Shell tool runs PowerShell by default)
-cmd /c build.bat
-
-# Or manually from Visual Studio x64 Native Tools Command Prompt:
-cl /nologo /W3 /O2 /DNDEBUG /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Isrc /I../shared ^
-   src\main.c src\database.c src\scanner.c src\matcher.c src\ui.c ^
-   src\platform.c ../shared/platform.c ../shared/strbuilder.c ../shared/common.c ^
-   /Fe:NewChangeDirectory.exe /link /SUBSYSTEM:CONSOLE kernel32.lib user32.lib
+cmd /c build.bat        # Windows (MSVC)
+make                    # Windows (MinGW) / Linux (see Makefile)
+./build.sh              # Linux (GCC/Clang)
 ```
-
-### Windows (MinGW-w64)
-
-```batch
-make                    # Release build
-make debug             # Debug build with symbols
-clean                  # Remove build artifacts
-make install           # Install to INSTALL_DIR (default: C:/Windows/System32)
-```
-
-### Linux (GCC)
-
-```bash
-chmod +x build.sh
-./build.sh             # Default build with gcc
-
-CC=clang ./build.sh    # Build with Clang
-
-# Deploy to /usr/local/bin:
-./deploy.sh            # May require sudo
-```
-
-### Visual Studio
-
-Open `src/ncd.sln` in Visual Studio 2019/2022 and build from IDE.
 
 ## Testing
 
-> **📋 For AI Agents:** See [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) for comprehensive agent-specific testing instructions.
+> **📋 Comprehensive testing docs live in [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md). Read that file before running any tests.**
 
-### Quick Start (Recommended Test Runners)
-
-NCD provides **three safe test runners** that all use PowerShell internally for guaranteed cleanup. Even if you press Ctrl+C during tests, your environment will be restored.
-
-**Why PowerShell?** Pure batch files cannot trap Ctrl+C interrupts, which can leave your environment corrupted. These runners delegate to PowerShell which uses `try/finally` blocks that CAN trap Ctrl+C.
-
-> **⚠️ AI Agent Note - Running `.bat` files via the Shell tool:** The Shell tool runs PowerShell by default. PowerShell does **not** execute `.bat` files by bare name (e.g., `Build-And-Run-All-Tests.bat` fails with "not recognized as a cmdlet"). Always invoke batch files using one of these forms:
-> ```powershell
-> # Option A: Explicitly run via cmd.exe (recommended)
-> cmd /c Build-And-Run-All-Tests.bat
->
-> # Option B: Use .\ prefix so PowerShell resolves the path
-> .\Build-And-Run-All-Tests.bat
-> ```
->
-> **⚠️ AI Agent Note - Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 3-4 minutes. Use `run_in_background=true` with a longer timeout (e.g., 600s) when invoking the full suite, or run `Run-All-Tests.bat` if binaries are already built (faster).
-
-#### Option 1: Build and Run All Tests (Recommended for CI/Full Validation)
-
+Quick reference for zero-context agents:
 ```powershell
-# Full build + test cycle - builds everything then runs all tests
-# (Use cmd /c because the Shell tool runs PowerShell by default)
-cmd /c Build-And-Run-All-Tests.bat
-
-# Options
-cmd /c Build-And-Run-All-Tests.bat --windows-only    # Windows only
-cmd /c Build-And-Run-All-Tests.bat --quick           # Skip fuzz/benchmarks
-cmd /c Build-And-Run-All-Tests.bat --no-service      # Skip service tests
+python test\generate_report.py           # Unified cross-platform report (recommended)
+cmd /c Run-Tests-Safe.bat unit           # Unit tests only
+cmd /c Run-Tests-Safe.bat integration    # Integration tests only
+cmd /c Run-Tests-Safe.bat --repair       # Fix corrupted test environment
 ```
 
-#### Option 2: Run All Tests (Pre-built Binaries)
-
-```powershell
-# Run all tests WITHOUT building (binaries must already exist)
-cmd /c Run-All-Tests.bat
-
-# Options
-cmd /c Run-All-Tests.bat --windows-only    # Windows only
-cmd /c Run-All-Tests.bat --quick           # Skip fuzz/benchmarks
-cmd /c Run-All-Tests.bat --skip-unit-tests # Skip unit tests
-```
-
-#### Option 3: Run Specific Test Suites (Development)
-
-```powershell
-# Run specific test suites
-cmd /c Run-Tests-Safe.bat unit              # Unit tests only
-cmd /c Run-Tests-Safe.bat integration       # Integration tests (6 suites)
-cmd /c Run-Tests-Safe.bat service           # Service tests only
-cmd /c Run-Tests-Safe.bat ncd               # NCD standalone tests
-cmd /c Run-Tests-Safe.bat windows           # All Windows tests
-cmd /c Run-Tests-Safe.bat wsl               # All WSL tests
-
-# Environment management
-cmd /c Run-Tests-Safe.bat --check           # Check if environment is clean
-cmd /c Run-Tests-Safe.bat --repair          # Repair corrupted environment
-```
-
-#### Option 4: Generate Full Per-Test Report (Recommended for Results)
-
-After running tests (or if `test\*.exe` binaries already exist), use the Python report generator to produce a complete per-test breakdown with check counts and ratios:
-
-```powershell
-# From project root - produces detailed per-test report
-python test\generate_report.py
-```
-
-This script is self-isolating (safe to run standalone):
-- Creates a temp directory and redirects `LOCALAPPDATA` / `XDG_DATA_HOME`
-- Sets `NCD_TEST_MODE=1`
-- Stops any running NCD services before testing
-- Restores environment and cleans up on exit (even on Ctrl+C)
-
-It outputs a complete table of every unit test with pass/fail status, integration suite check counts, and grand totals.
-
-**All three runners are Ctrl+C safe and restore your environment.**
-
-### Complete Build and Test Process
-
-This section describes the complete process to build NCD and run all tests on all platforms.
-
-#### Step 1: Build NCD
-
-**Windows (MSVC):**
-```powershell
-# From project root - auto-detects Visual Studio
-# (Use cmd /c because the Shell tool runs PowerShell by default)
-cmd /c build.bat
-
-# Verify binaries exist
-dir NewChangeDirectory.exe
-dir NCDService.exe
-```
-
-**Windows (MinGW):**
-```batch
-make
-dir NewChangeDirectory.exe
-dir NCDService.exe
-```
-
-**Linux/WSL:**
-```bash
-chmod +x build.sh
-./build.sh
-ls -la NewChangeDirectory
-ls -la ncd_service
-```
-
-#### Step 2: Build Test Executables
-
-**Windows:**
-```powershell
-cd test
-# (Use cmd /c because the Shell tool runs PowerShell by default)
-cmd /c build-tests.bat
-```
-
-**Linux/WSL:**
-```bash
-cd test
-make all
-```
-
-#### Step 3: Run Tests
-
-**Option A: Run All Tests (Complete Test Suite)**
-
-Runs both unit tests and integration tests across all platforms:
-
-```powershell
-# From project root - Run all tests (pre-built binaries) - FASTEST
-# Use this when test executables already exist in test\ directory
-cmd /c Run-All-Tests.bat
-
-# From project root - Build then run all tests - SLOWER
-# Use this only if binaries are missing or you need a fresh build
-cmd /c Build-And-Run-All-Tests.bat
-
-# Windows only
-cmd /c Run-All-Tests.bat --windows-only
-cmd /c Build-And-Run-All-Tests.bat --windows-only
-
-# Quick mode (skip fuzz/benchmarks)
-cmd /c Run-All-Tests.bat --quick
-cmd /c Build-And-Run-All-Tests.bat --quick
-```
-
-**Agent Decision Rule:** If `test\*.exe` files exist, prefer `Run-All-Tests.bat`. Only use `Build-And-Run-All-Tests.bat` if binaries are missing or the user explicitly requests a rebuild.
-
-**Option B: Run Only Unit Tests**
-
-```powershell
-# Windows - from test directory
-cd test
-cmd /c Run-All-Unit-Tests.bat
-
-# Skip fuzz tests (faster)
-cmd /c Run-All-Unit-Tests.bat --skip-fuzz
-
-# Linux/WSL
-cd test
-make test
-```
-
-**Option C: Run Only Integration Tests (6 Test Suites)**
-
-```powershell
-# All 6 test suites (use the main runners for safety)
-cmd /c Run-All-Tests.bat --skip-unit-tests
-cmd /c Build-And-Run-All-Tests.bat --skip-unit-tests
-
-# Individual suites (for development only)
-cmd /c Test-Service-Windows.bat              # Service isolated (Windows)
-cmd /c Test-NCD-Windows-Standalone.bat       # NCD standalone (Windows)
-cmd /c Test-NCD-Windows-With-Service.bat     # NCD with service (Windows)
-
-# WSL (from project root)
-bash test/Test-Service-WSL.sh
-bash test/Test-NCD-WSL-Standalone.sh
-bash test/Test-NCD-WSL-With-Service.sh
-```
-
-**Note:** The individual test scripts should only be used during development when working on specific test scenarios. For normal testing, always use `Run-All-Tests.bat` or `Build-And-Run-All-Tests.bat`.
-
-### Test Runner Reference
-
-#### Primary Runners (Safe - Use These)
-
-| Script | Purpose | When to Use |
-|--------|---------|-------------|
-| `Build-And-Run-All-Tests.bat` | **Build + test all** - Full build and test cycle, Ctrl+C safe | **RECOMMENDED** - CI builds, full validation |
-| `Run-All-Tests.bat` | **Run all tests** - Run pre-built tests, Ctrl+C safe | **RECOMMENDED** - When binaries already built |
-| `Run-Tests-Safe.bat` | **Specific suites** - Run individual test suites, Ctrl+C safe | Development work on specific areas |
-| `Run-NcdTests.ps1` | PowerShell native with full control | When you need maximum flexibility |
-
-#### Development Helpers (Use with Caution)
-
-| Script | Purpose | When to Use |
-|--------|---------|-------------|
-| `test\Run-All-Unit-Tests.bat` | Runs unit tests only | Quick validation during development |
-| `test\build-and-run-tests.bat` | Builds and runs unit tests | Unit test development |
-| `Check-Environment.ps1` | Environment diagnostics and repair | When tests leave environment corrupted |
-| `test\Test-Service-Windows.bat` | Single integration test suite | **Development only** - Working on service tests |
-| `test\Test-NCD-Windows-Standalone.bat` | Single integration test suite | **Development only** - Working on NCD tests |
-| `test\Test-NCD-Windows-With-Service.bat` | Single integration test suite | **Development only** - Working on integration |
-
-**IMPORTANT:** For normal testing, always use the three primary runners at the project root. The individual test scripts in the `test\` directory should only be used when actively developing or debugging specific test scenarios, as they require proper environment setup that the primary runners handle automatically.
-
-### Test Suite Breakdown by Platform and Category
-
-When the user says "run tests" without specifying which tests, the default is to run all tests. Here is the complete breakdown of the 11 test suites executed by the primary runners:
-
-| # | Suite | Platform | Category | Typical Duration | Checks | Expected Result |
-|---|-------|----------|----------|------------------|--------|-----------------|
-| 1 | Unit Tests | Windows | Unit | < 1s | 356+ | PASS |
-| 2 | Service Tests (Isolated) | Windows | Integration | ~5s | ~10 | PASS |
-| 3 | NCD Standalone | Windows | Integration | ~3s | ~10 | PASS |
-| 4 | NCD with Service | Windows | Integration | ~5s | ~10 | PASS |
-| 5 | Windows Feature Tests | Windows | Integration | ~60s | ~68 | PASS |
-| 6 | Windows Agent Command Tests | Windows | Integration | ~10s | ~40 | PASS |
-| 7 | WSL Service Tests | WSL | Integration | ~25s | ~10 | PASS |
-| 8 | WSL NCD Standalone | WSL | Integration | ~3s | ~15 | PASS |
-| 9 | WSL NCD with Service | WSL | Integration | ~25s | ~16 | PASS |
-| 10 | WSL Feature Tests | WSL | Integration | ~46s | ~49 | PASS |
-| 11 | WSL Agent Command Tests | WSL | Integration | < 1s | ~31 | PASS |
-| | **Total** | | | **~3:00-4:00** | **~615** | **11/11 PASS** |
-
-**How to report results — MANDATORY FORMAT:**
-
-When reporting test results to the user, the **ONLY** acceptable format is a **complete per-test listing**. You **must** list every individual test by name with its exact status (`PASSED`, `FAILED`, or `SKIP`). Suite-level summary tables and totals alone are **NOT** acceptable.
-
-**Quick method:** Run `python test/generate_report.py` from the project root.
-
-This script includes its own environment isolation (mirroring the safe batch runners):
-- Creates an isolated temp directory for test data
-- Redirects `LOCALAPPDATA` and `XDG_DATA_HOME` to that temp dir
-- Sets `NCD_TEST_MODE=1`
-- Stops any running NCD services before testing
-- Restores environment and cleans up on exit (even on Ctrl+C)
-
-It then produces the complete per-test report by running each unit test executable and parsing per-test names/statuses, plus counting individual checks in integration test script sources.
-
-**Full build + test + report (recommended for CI):**
-1. Run `cmd /c Build-And-Run-All-Tests.bat` to build and run all tests safely
-2. Then run `python test/generate_report.py` for the detailed per-test breakdown
-
-**Manual method (if script is unavailable):**
-1. Run each unit test executable directly to capture full per-test output.
-2. For every executable, present a table showing each test name and its status.
-3. Finish with a module-level summary table (executable, tests run, passed, failed, skipped).
-4. For integration suites, list each suite with platform, duration, and PASS/FAIL.
-5. Count individual checks in integration scripts via `grep -c 'pass\|fail\|TEST'` on script sources.
-6. Report the pass/fail/not ran ratio for each suite.
-
-**Required elements in every report:**
-- Per-executable test tables with every test name and status
-- Module-level summary table (executable, run, passed, failed, skipped)
-- Integration suite table with **check counts** and platform
-- Grand total table combining unit + integration numbers
-
-**Example (unit tests):**
-```
-### test_database.exe (50 tests)
-| # | Test | Status |
-| 1 | create_and_free | [OK] PASSED |
-...
-**Ratio: 50/50 passed | 0 failed | 0 skipped**
-```
-
-**Example (integration suites):**
-```
-| # | Suite | Platform | Checks | Passed | Failed | Skipped | Status |
-| 1 | Service Tests (Isolated) | Windows | ~10 | ~10 | 0 | 0 | [PASS] |
-```
-
-**Do NOT** present only summary lines like `Total Suites: 11 | Passed: 11` without the full per-test breakdown.
-
-**Note:** Some WSL suites may emit bash warnings (e.g., "ignored null byte in input") or show aborted processes in agent command tests. These are typically expected for negative test cases and do **not** indicate failures as long as the harness reports `[PASS]`.
-
-### Test Isolation (CRITICAL)
-
-All tests must be **completely isolated** from the user's real data:
-
-| Resource | User Data | Test Data |
-|----------|-----------|-----------|
-| **Drives/Mounts** | `C:`, `D:`, etc. | VHD (Windows) or ramdisk (WSL) |
-| **Metadata** | `%LOCALAPPDATA%\NCD\ncd.metadata` | Temp directory via `-conf` or env override |
-| **Databases** | `%LOCALAPPDATA%\NCD\ncd_*.database` | Temp location via `-d:path` |
-
-**Rules for writing tests:**
-1. **Never use bare `-r`** - Always use `-r:.` (subdirectory) or `-r:drive` (specific drive)
-2. **Never scan user drives** - Only scan the test VHD/ramdisk/temp directory
-3. **Never modify user metadata** - Use `-conf <temp_path>` for custom metadata location
-4. **Clean up after tests** - Remove all test files and databases
-5. **Use `NCD_TEST_MODE=1`** - Set this environment variable to disable background rescans during testing
-
-**Important:** The `NCD_TEST_MODE` environment variable must be set for BOTH the NCD client AND the service. When starting the service in tests, ensure the environment variable is passed to the service process. The service checks this variable to prevent automatic background rescans that could scan user drives.
-
-### Test Environment Variables
-
-The test runners automatically handle these environment variables:
-
-| Variable | Purpose | Set By |
-|----------|---------|--------|
-| `NCD_TEST_MODE` | Disables automatic background rescans. In debug builds, also enables headless stdio TUI mode. Optionally set dimensions as `cols,rows` (e.g., `80,25`). | All test runners |
-| `LOCALAPPDATA` | Isolates metadata from user data (set to temp dir) | Windows test runners |
-| `XDG_DATA_HOME` | Isolates metadata on Linux/WSL (set to temp dir) | WSL test runners |
-| `NCD_UI_KEYS` | Comma-separated keys to inject into TUI. Prefix with `@` to load from a file (e.g., `@keys.txt`). | Manual testing/CI |
-| `NCD_UI_KEY_TIMEOUT_MS` | Timeout for key injection (milliseconds) | Automated testing |
-| `NCD_STRESS_ITERATIONS` | Reduces iteration count for stress tests | Development |
-
-**Environment Isolation Mechanism:**
-
-The primary test runners implement multiple layers of isolation:
-
-1. **PowerShell Wrapper Layer:**
-   - Creates isolated temp directory: `%TEMP%\ncd_test_YYYYMMDD_HHMMSS_RAND\`
-   - Sets `LOCALAPPDATA` (Windows) and `XDG_DATA_HOME` (WSL) to this temp directory
-   - Sets `NCD_TEST_MODE=1` to prevent background rescans
-
-2. **Individual Test Script Layer:**
-   - Each test script creates its own sub-directory within the temp location
-   - Uses `-conf` option to specify custom metadata paths
-   - Uses `-d:` option to specify database locations
-   - Only scans test VHDs/ramdisks, never user drives
-
-3. **Cleanup on ALL Exit Paths:**
-   - Services stopped via `Stop-NcdProcesses`
-   - Temp directories removed via `Remove-TestTempDirs`
-   - TUI variables cleared (`NCD_UI*`, `NCD_TUI*`) via `Clear-TuiEnvironmentVariables`
-   - Environment restored via `Restore-EnvironmentState`
-
-**Important:** All `NCD_UI*` and `NCD_TUI*` environment variables are automatically cleared after tests complete. This ensures that headless mode, key injection, or TUI display settings from tests do not affect subsequent NCD usage in your shell.
-
-| Runner | Save Method | Restore Method | Ctrl+C Safe | Isolated Temp Dir |
-|--------|-------------|----------------|-------------|-------------------|
-| `Build-And-Run-All-Tests.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
-| `Run-All-Tests.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
-| `Run-Tests-Safe.bat` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
-| `Run-NcdTests.ps1` | PowerShell hashtable | `finally` block | ✅ Yes | ✅ Yes |
-| Individual `test\*.bat` files | Various | Various | ❌ No | ⚠️ Partial |
-
-**If your environment gets corrupted**, run:
-```powershell
-cmd /c Run-Tests-Safe.bat --repair
-```
-
-### Running Unit Tests
-
-**Linux/WSL:**
-```bash
-cd test
-make test
-```
-
-**Windows (MSVC):**
-```batch
-cd test
-cl /nologo /W3 /O2 /Isrc /I. /I../../shared test_database.c test_framework.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c /Fe:test_database.exe
-cl /nologo /W3 /O2 /Isrc /I. /I../../shared test_matcher.c test_framework.c ../src/matcher.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c /Fe:test_matcher.exe
-test_database.exe
-test_matcher.exe
-```
-
-**Windows (MinGW):**
-```batch
-cd test
-gcc -Wall -Wextra -I../src -I../../shared -I. -o test_database.exe test_database.c test_framework.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c -lpthread
-gcc -Wall -Wextra -I../src -I../../shared -I. -o test_matcher.exe test_matcher.c test_framework.c ../src/matcher.c ../src/database.c ../src/platform.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c -lpthread
-test_database.exe
-test_matcher.exe
-```
-
-### Running Other Tests
-
-```bash
-# Fuzz tests (runs for 60 seconds max)
-cd test && make fuzz
-
-# Performance benchmarks
-cd test && make bench
-
-# Database corruption tests
-cd test && make corruption
-
-# Bug detection tests
-cd test && make bugs
-
-# Recursive mount tests (Linux, requires root)
-cd test && make recursive-mount
-
-# Comprehensive feature tests (Linux, requires root)
-cd test && make features
-
-# Feature tests without root (uses /tmp)
-cd test && make features-noroot
-
-# Service parity tests
-cd test && make service-parity
-```
-
-### Test Coverage
-
-The NCD test suite contains **880+ unit tests** across multiple test files following a parallel expansion effort. See `test/README.md` and `test/COVERAGE_REPORT.md` for comprehensive documentation.
-
-**Coverage by Category:**
-
-| Category | Tests | Coverage % | Notes |
-|----------|-------|------------|-------|
-| Database operations | 110 | 95% | Excellent (extended tests added) |
-| Search/matching | 53 | 97% | Excellent (extended tests added) |
-| CLI parsing | 91 | 98% | Excellent (edge cases covered) |
-| Agent mode args | 47 | 75% | Good (parsing + integration) |
-| Platform abstraction | 61 | 90% | Excellent (extended tests added) |
-| Shared library | 61 | 95% | Excellent |
-| Service lifecycle | 96 | 95% | Excellent (stress tests added) |
-| UI/Interaction | 103 | 92% | Excellent (extended tests added) |
-| Scanner/Input | 44 | 92% | Excellent (extended tests added) |
-| Stress/Fuzz | 42 | N/A | Comprehensive robustness testing |
-| Integration/feature | 119+ | 85% | Good (exit codes + behavior) |
-| **Overall** | **880+** | **~95%** | **Excellent coverage** |
-
-**Parallel Expansion (430 new tests):**
-Following the `PARALLEL_TEST_COVERAGE_PLAN.md`, 4 agents worked in parallel to add comprehensive test coverage:
-- **Agent 1 (Data Core):** 90 tests - Database extended, odd cases, fuzzing
-- **Agent 2 (Service IPC):** 100 tests - Service stress, IPC extended, SHM stress
-- **Agent 3 (UI & Main):** 100 tests - UI extended, exclusions, main flow
-- **Agent 4 (Input Processing):** 140 tests - CLI edge cases, scanner/matcher extended, stress
-
-See `test/PARALLEL_INTEGRATION_REPORT.md` for detailed breakdown.
-
-**Database Tests (test_database.c - 34 tests):**
-- **Basic:** `create_and_free`, `add_drive`, `add_directory`, `full_path_reconstruction`
-- **Save/Load:** `binary_save_load_roundtrip`, `json_save_load_roundtrip`, `load_auto_detects_*`
-- **Corruption:** `binary_load_corrupted_rejected`, `binary_load_truncated_rejected`
-- **Version:** `check_file_version_*`, `check_all_versions_with_no_databases`
-- **Config:** `config_init_defaults_*`, `config_save_load_roundtrip`, `config_encoding_*`
-- **Exclusions:** `exclusion_add_*`, `exclusion_remove_*`, `exclusion_check_*`
-- **Heuristics:** `heur_calculate_score_*`, `heur_find_*`, `heur_find_best_*`
-- **Drive:** `drive_backup_*`, `find_drive_*`
-- **Text Encoding:** `text_encoding_*`, `binary_save_load_utf8_*`, `binary_save_load_utf16_*`
-- **Version Consistency:** `saved_database_version_matches_current`, `saved_database_version_is_correct_binary_version`
-- **Exclusion Filtering:** `filter_excluded_*`
-
-**Matcher Tests (test_matcher.c - 23 tests):**
-- **Basic:** `match_single_component`, `match_two_components`, `match_case_insensitive`, `match_with_hidden_filter`, `match_no_results`, `match_empty_search`
-- **Prefix:** `match_prefix_single_component`, `match_prefix_multi_component`
-- **Glob:** `match_glob_star_*`, `match_glob_question_*`, `match_glob_in_path`, `match_glob_no_match`
-- **Fuzzy:** `fuzzy_match_with_typo`, `fuzzy_match_with_transposition`, `fuzzy_match_no_results_on_total_mismatch`, `fuzzy_match_case_difference`
-- **Name Index:** `name_index_build_*`, `name_index_find_by_hash_*`, `name_index_free_*`
-
-**Scanner Tests (test_scanner.c - 9 tests):**
-- `scan_mount_populates_database`, `scan_mount_respects_hidden_flag`, `scan_mount_applies_exclusions`
-- `scan_mount_excludes_directories_from_database`, `scan_subdirectory_merges_into_existing_db`
-- `find_is_directory_*`, `find_is_hidden_*`, `find_is_reparse_*`, `scan_mounts_handles_empty_mount_list`
-
-**Metadata Tests (test_metadata.c - 11 tests):**
-- `metadata_create_*`, `metadata_save_load_roundtrip`, `metadata_exists_*`
-- `metadata_preserves_config_section`, `metadata_preserves_groups_section`
-- `metadata_preserves_exclusions_section`, `metadata_preserves_heuristics_section`, `metadata_preserves_history_section`
-- `metadata_cleanup_legacy_*`, `metadata_free_*`, `metadata_group_remove_path`
-
-**Platform Tests (test_platform.c - 12 tests):**
-- `strcasestr_*` (3 tests), `is_drive_specifier_*` (2 tests)
-- `parse_drive_from_search_*` (2 tests), `build_mount_path_*`
-- `filter_available_drives_*`, `is_pseudo_fs_*`, `get_app_title_*`, `db_default_path_*`
-
-**Additional Test Files:**
-- **test_strbuilder.c** (15 tests) - String builder and JSON escaping
-- **test_strbuilder_extended.c** (39 tests) - Extended string builder tests
-- **test_common.c** (7 tests) - Memory allocation and overflow checking
-- **test_common_extended.c** (37 tests) - Extended memory allocation tests
-- **test_history.c** (14 tests) - Directory history operations
-- **test_db_corruption.c** (16+ tests) - Database corruption handling
-- **test_bugs.c** (20 tests) - Known bug detection
-- **test_cli_parse_extended.c** (31 tests) - Extended CLI parsing tests
-- **test_platform_extended.c** (34 tests) - Extended platform abstraction tests
-- **test_integration_extended.c** (19 tests) - Extended integration tests
-
-**Shared State Tests:**
-- `header_validation` - Snapshot header validation
-- `checksum_validation` - CRC64 checksum verification
-- `section_lookup` - Section table navigation
-- `bounds_checking` - Memory bounds validation
-
-### Service Tests
-
-The service test suite validates the NCD State Service functionality across Windows and Linux:
-
-**Service Lifecycle Tests (`test_service_lifecycle.c` - 13 tests):**
-- **Lifecycle:** `service_status_when_stopped`, `service_start_when_stopped`, `service_double_start_fails`, `service_stop_when_running`, `service_stop_when_already_stopped`, `service_restart`
-- **IPC:** `service_ipc_ping`, `service_ipc_ping_when_stopped`, `service_ipc_get_version`, `service_ipc_get_state_info`, `service_ipc_shutdown_request`
-- **State:** `service_state_progression` - Verify STARTING → LOADING → READY progression
-- **Termination:** `service_termination_graceful_then_force`
-
-**Service Integration Tests (`test_service_integration.c` - 12 tests):**
-- **Help Output:** `help_shows_standalone_when_service_stopped`, `help_shows_service_running_when_service_active`, `help_includes_exclusion_and_agent_options`
-- **Agent Status:** `agent_service_status_not_running`, `agent_service_status_json_not_running`, `agent_service_status_running`, `agent_service_status_json_running`, `agent_service_status_after_stop`
-- **Operation:** `ncd_search_works_without_service`, `ncd_search_works_with_service`, `a_flag_is_not_agent_alias`
-
-**Running Service Tests:**
-
-```bash
-# Linux/WSL - All service tests
-make test_service_lifecycle
-make test_service_integration
-./test_service_lifecycle
-./test_service_integration
-
-# Or use the combined target
-make service-test
-
-# Windows - Service tests are included in build-and-run-tests.bat
-cd test
-cmd /c build-and-run-tests.bat
-```
-
-**Note:** Service tests require the service executable to be built:
-- Windows: `NCDService.exe` 
-- Linux: `ncd_service`
-
-Tests will skip gracefully if the service executable is not available.
-
-**Test Infrastructure Note (Windows):**
-NCD automatically detects when stdout is redirected (e.g., in tests or when piping output) and switches from direct console writes (`CONOUT$`) to standard stdout output. This allows:
-- Help text output (`ncd -?`) to be captured via pipe redirection for testing
-- Proper operation in both interactive (console) and batch (redirected) modes
-
-The detection uses `GetConsoleMode()` on Windows and `isatty()` on Linux. When redirected, output goes through `fputs(stdout)`; when in a console, output uses `WriteConsoleA()` for better TUI performance.
+Critical rules (also repeated in `AGENT_TESTING_GUIDE.md`):
+- **Never run `test\*.exe` directly** — always use the harness (`Run-Tests-Safe.bat`, `Run-All-Tests.bat`, or `generate_report.py`)
+- **Invoke `.bat` files via `cmd /c`** because the Shell tool runs PowerShell by default
+- Use `run_in_background=true` with timeout `600` for full-suite runs (~3–4 minutes)
+- Set `NCD_TEST_MODE=1` to disable background rescans during tests
 
 ### Keystroke Injection for TUI Testing
 
-NCD supports automated keystroke injection for testing and scripting the interactive TUI (config editor, selector, navigator, etc.). This allows batch files and scripts to programmatically drive the UI without human interaction.
-
-**Environment Variables:**
+NCD supports automated keystroke injection for testing and scripting the interactive TUI.
 
 | Variable | Purpose |
 |----------|---------|
-| `NCD_UI_KEYS` | Comma-separated list of keys to inject (e.g., `DOWN,ENTER,TEXT:hello`). Prefix with `@` to load from a file (e.g., `@keys.txt`). |
-| `NCD_UI_KEY_TIMEOUT_MS` | Timeout in milliseconds to wait for next key (default: waits indefinitely) |
+| `NCD_UI_KEYS` | Comma-separated keys (`DOWN,ENTER,TEXT:hello`). Prefix with `@` to load from file. |
+| `NCD_UI_KEY_TIMEOUT_MS` | Timeout for next key (ms). Default: indefinite. |
 
-**Key Tokens:**
+Key tokens: `UP`, `DOWN`, `LEFT`, `RIGHT`, `PGUP`, `PGDN`, `HOME`, `END`, `ENTER`, `ESC`, `TAB`, `BACKSPACE`, `DELETE`, `SPACE`, `TEXT:<string>`.
 
-| Token | Description |
-|-------|-------------|
-| `UP`, `DOWN`, `LEFT`, `RIGHT` | Arrow keys |
-| `PGUP`, `PGDN` | Page Up/Down |
-| `HOME`, `END` | Home/End keys |
-| `ENTER` | Enter/Return key |
-| `ESC` | Escape key |
-| `TAB` | Tab key |
-| `BACKSPACE` | Backspace key |
-| `DELETE` | Delete key |
-| `SPACE` | Space bar |
-| `TEXT:abc` | Type literal text (e.g., `TEXT:-1` types "-1") |
-
-**Example - Disable Auto-Rescan via Config Editor:**
-
+Example:
 ```batch
-:: Navigate to rescan_interval field (6th item), enter -1, save
 set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
 ncd -c
 set "NCD_UI_KEYS="
 ```
 
-**Key Sequence Explanation:**
-1. `DOWN,DOWN,DOWN,DOWN,DOWN` - Navigate to "Auto-rescan hours" (6th config item)
-2. `ENTER` - Enter input mode for the numeric field
-3. `TEXT:-1` - Type "-1" (never auto-rescan)
-4. `ENTER` - Confirm the value
-5. `ENTER` - Save configuration and exit
-
-**Headless TUI Testing Mode:**
-
-For automated testing without a real console, enable the stdio backend:
-
-```batch
-:: Enable headless mode with custom dimensions, inject keystrokes
-set "NCD_TEST_MODE=80,25"
-set "NCD_UI_KEYS=DOWN,ENTER,TEXT:mydir,ENTER"
-
-:: Run NCD - output goes to stdout instead of console
-ncd -c > tui_output.txt 2>&1
-
-:: Clean up
-set "NCD_TEST_MODE="
-set "NCD_UI_KEYS="
-```
-
-In headless mode (`NCD_TEST_MODE` is set in a debug build):
-- TUI output is written to stdout as text instead of console control codes
-- Keystrokes are injected from `NCD_UI_KEYS` (use `@file` to load from a file)
-- Display size defaults to 80x25, or parsed from `NCD_TEST_MODE` as `cols,rows`
-- Useful for CI/CD pipelines and automated testing
-
-**Notes:**
-- Key names are case-insensitive (`enter`, `ENTER`, `Enter` all work)
-- Keys are consumed from the queue in order
-- Once the queue is empty, the TUI returns ESC (deterministic failure) when `NCD_TEST_MODE` is set
-- Use `NCD_UI_KEY_TIMEOUT_MS=5000` to set a 5-second timeout waiting for keys
+In headless mode (`NCD_TEST_MODE=80,25` in debug builds), TUI output goes to stdout and keystrokes are consumed from `NCD_UI_KEYS`.
 
 ## Code Style Guidelines
 
@@ -937,169 +351,186 @@ powershell -Command "Import-Module .\test\PowerShell\NcdTestUtils.psm1; Stop-Ncd
 
 ## Usage
 
-### Command Line
+> **For basic command-line usage, interactive UI, wrapper scripts, and shell tab completion, see [`README.md`](README.md).**
+
+### Agent Mode (LLM Integration)
+
+Agent mode is the primary interface for automated and LLM-driven interaction.
 
 ```bash
-# Search for a directory
-ncd downloads
-ncd scott\downloads
-
-# Force rescan
-ncd -r                    # All drives
-ncd -r:bde                 # Specific drives only (B:,D:,E:)
-cd -r:-b-d                 # Exclude drives B: and D:
-cd -r:.                    # Rescan current subdirectory only
-
-# Options
-ncd -i scott\appdata      # Include hidden directories
-ncd -s                    # Include system directories
-ncd -a                    # Include all (hidden + system)
-ncd -z                    # Fuzzy matching with DL distance
-
-# Interactive navigation
-ncd .                     # Navigate from current directory
-ncd C:                    # Navigate from drive root (Windows)
-
-# Groups (bookmarks) - supports multiple directories per group
-ncd -g:@home              # Add current directory to group
-ncd -G:@home             # Remove current directory from group
-ncd -g:l                   # List all groups
-ncd @home                 # Jump to group (shows selector if multiple)
-
-# Directory history
-ncd -0                    # Ping-pong between two most recent directories
-ncd -h                    # Browse history interactively (Del to remove)
-ncd -h:l                   # List directory history
-ncd -h:c                   # Clear all history
-ncd -h:c3                  # Remove history entry #3
-
-# Exclusions
-ncd -x:<pattern>          # Add exclusion pattern (e.g., -x:C:Windows)
-ncd -X:<pattern>         # Remove exclusion pattern
-ncd -x:l                   # List all exclusions
-
-(Note: `-x`, `-X`, `-x:l` are also accepted)
-
-# Configuration
-ncd -c                    # Edit configuration (set default options)
-
-# Frequent searches
-ncd -f                    # Show frequent searches
-ncd -f:c                   # Clear frequent searches
-
-# Agent mode (LLM integration)
 ncd --agent:query <search> [--json] [--limit N] [--depth]
 ncd --agent:ls <path> [--json] [--depth N] [--dirs-only|--files-only]
-ncd --agent:tree <path> [--json] [--depth N] [--flat]  # Show directory tree from DB
+ncd --agent:tree <path> [--json] [--depth N] [--flat]
 ncd --agent:check <path> | --db-age | --stats | --service-status
-ncd --agent:complete <partial> [--limit N]  # Shell tab-completion
-ncd --agent:mkdir <path>  # Create single directory
-ncd --agent:mkdirs [--file <path>] [--json] <content>  # Create directory tree
-
-# Service management
-ncd_service start         # Start resident service (faster startup)
-ncd_service stop          # Stop resident service (waits up to 5s, returns 0 on success, 1 on error)
-ncd_service stop block N  # Stop service and wait N seconds (-1 if timeout)
-ncd --agent:check --service-status  # Check if service is running
-
-# Service Logging (for debugging crashes)
-# Log file location: %LOCALAPPDATA%\NCD\ncd_service.log (Windows)
-#                    ~/.local/share/ncd/ncd_service.log (Linux)
-ncd_service start -log0   # Log service start, rescan requests, client requests
-ncd_service start -log1   # Level 0 + responses sent to clients  
-ncd_service start -log2   # Level 1 + detailed startup/shutdown (crash diagnosis)
-ncd_service start -log3   # Reserved for future debugging
-ncd_service start -log4   # Reserved for future debugging
-ncd_service start -log5   # Reserved for future debugging
-
-# Configuration Override
-ncd -conf <path>          # Use custom metadata file path
-ncd_service start -conf <path>  # Service with custom metadata path
-
-# Help
-ncd -?                    # or -h
-ncd -v                    # Version info
+ncd --agent:complete <partial> [--limit N]
+ncd --agent:mkdir <path> [--json] [--force] [--mode <octal>] [--verify]
+ncd --agent:mkdirs [--file <path>] [--json] [--atomic] [--verify] <content>
+ncd --agent:rmdir <path> [--force] [--json]
+ncd --agent:rmdirs <path> [--force] [--json]
+ncd --agent:mv <src> <dst> [--force] [--json]
+ncd --agent:ln <target> <link> [--json]
+ncd --agent:verify <path> [--empty] [--mode <octal>] [--tree <spec>] [--json]
+ncd --agent:chmod <path> [--mode <octal>] [--recursive] [--json]
+ncd --agent:help
 ```
 
-### Interactive Selection UI
+**Exit codes:** `0` = Success/Found, `1` = Not found/Error.
 
-When multiple directories match, NCD shows an interactive list with **live filtering**:
+#### Agent Tree Output Formats
 
-**Navigation:**
-- **Arrow keys** - Navigate up/down
-- **Page Up/Down** - Scroll a page at a time
-- **Home/End** - Jump to first/last item
-- **Enter** - Select highlighted entry
-- **Escape** - Cancel (or clear filter if active)
-- **Tab** - Enter navigator mode on selected item
+| Option | Description |
+|--------|-------------|
+| `--depth N` | Max depth (default: 3) |
+| `--json` | Output JSON |
+| `--flat` | Full relative paths instead of names |
 
-**Live Filtering:**
-- **Type characters** - Filter the list in real-time (e.g., type "src" to narrow)
-- **Backspace** - Remove last filter character
-- **Escape (when filtering)** - Clear filter, restore full list
+#### Agent Mkdirs Input Formats
 
-Filter matching:
-- Case-insensitive substring match
-- If filter contains `\` or `/`, matches against full path
-- Otherwise, matches against last path component (directory name)
+**Flat file** (2-space indentation = nesting):
+```
+project
+  src
+    core
+  docs
+```
 
-### History Browser
-
-The interactive history browser (`ncd -h`) shows recently visited directories:
-
-- **Arrow keys** - Navigate
-- **Delete** - Remove entry from history
-- **Enter** - Navigate to selected directory
-- **Escape** - Cancel
-
-### Wrapper Scripts
-
-**Windows (`ncd.bat`):**
-- Must be used to call `NewChangeDirectory.exe`
-- Exe writes `%TEMP%\ncd_result.bat` with environment variables
-- Batch file sources the result and executes `cd /d`
-
-**Linux (`ncd`):**
-- Must be sourced, not executed: `source ncd` or use shell function
-- Exe writes `/tmp/ncd_result.sh` (or `$XDG_RUNTIME_DIR`)
-- Script sources and executes `cd`
-
-## Shell Tab Completion
-
-NCD supports tab-completion for directory and group names.
-
-### Bash
+**JSON:**
 ```bash
-source completions/ncd.bash
-ncd dow<Tab>    # Completes to "downloads", "documents", etc.
-ncd @h<Tab>     # Completes to "@home", "@htdocs", etc.
+ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src"}]}]'
 ```
 
-### Zsh
-```zsh
-fpath+=(/path/to/completions)
-autoload -U compinit && compinit
+Result codes: `created`, `exists`, `error_perms`, `error_parent`, `error_path`, `error`.
+
+#### Agent Rmdir / Rmdirs
+
+Remove directories. `rmdir` removes a single empty directory; `rmdirs` recursively removes a directory tree.
+
+```bash
+ncd --agent:rmdir /home/user/old_dir --json
+ncd --agent:rmdirs /home/user/old_tree --force --json
 ```
 
-### PowerShell
-```powershell
-. /path/to/completions/ncd.ps1
+| Option | Description |
+|--------|-------------|
+| `--force` | Required for `rmdirs`; also allows `rmdir` to remove non-empty directories |
+| `--json` | JSON output |
+
+Result codes: `removed`, `error_not_found`, `error_not_empty`, `error_perms`.
+
+#### Agent Mv / Ln
+
+Move or symlink directories. `mv` updates the NCD database automatically.
+
+```bash
+ncd --agent:mv /home/user/src /home/user/dst --json
+ncd --agent:ln /home/user/target /home/user/link --json
+```
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite empty destination directory (mv only) |
+| `--json` | JSON output |
+
+Result codes (mv): `moved`, `error_not_found`, `error_exists`, `error_perms`.
+Result codes (ln): `created`, `error_exists`, `error_unsupported` (Windows without dev mode), `error_perms`.
+
+#### Agent Verify
+
+Verify directory properties. Useful for CI/CD and deployment validation.
+
+```bash
+ncd --agent:verify /home/user/projects --json
+ncd --agent:verify /home/user/empty_dir --empty --json
+ncd --agent:verify /home/user/projects --tree "src\n  core\n  ui" --json
+```
+
+| Option | Description |
+|--------|-------------|
+| `--empty` | Verify directory contains no entries |
+| `--mode <octal>` | Verify permissions match (Linux only) |
+| `--tree <spec>` | Verify directory tree matches flat or JSON spec |
+| `--json` | JSON output with per-check results |
+
+Output fields: `verified` (bool), `checks[]` (array of check objects).
+
+#### Agent Chmod
+
+Change directory permissions. **Linux only**; returns `error_unsupported` on Windows.
+
+```bash
+ncd --agent:chmod /home/user/projects --mode 0755 --recursive --json
+```
+
+| Option | Description |
+|--------|-------------|
+| `--mode <octal>` | Permission mode (required) |
+| `--recursive` | Apply to entire directory tree |
+| `--json` | JSON output |
+
+Result codes: `changed`, `error_unsupported`, `error_not_found`, `error_perms`.
+
+#### Agent Help
+
+Display the complete list of agent commands and options.
+
+```bash
+ncd --agent:help
+```
+
+### Service Management & Logging
+
+```bash
+ncd_service start                 # Start resident service
+ncd_service start -init           # Start and initialize database (scan all drives)
+ncd_service start -init C,D,E     # Start and initialize database (scan specific drives)
+ncd_service stop                  # Stop (default 5s timeout)
+ncd_service stop block N          # Stop with custom timeout
+ncd --agent:check --service-status # Check status
+```
+
+Log levels (`-log0` through `-log5`): See Service Logging section below.
+
+### Configuration Override
+
+```bash
+ncd -conf <path>                  # Custom metadata file
+ncd_service start -conf <path>    # Service with custom metadata
+```
+
+### Service Database Initialization (`-init`)
+
+The `-init` option performs a synchronous blocking database scan during service startup. This is especially useful for first-time deployment or when you want to ensure the database is fully built before the service accepts client requests.
+
+**Behavior:**
+- **No metadata file exists** (first run): The service enters `SCANNING` state, scans the requested drives (or all drives), saves the database and metadata to disk, then transitions to `READY`.
+- **Metadata file exists**: The option behaves like `ncd -r {drivelist}` — performs a forced rescan of the specified drives on startup.
+- **No drive list specified**: Scans all drives/mounts (same as `ncd -r`).
+- **Drive list specified** (e.g. `-init C,D,E`): Scans only the requested drives.
+
+**Key characteristics:**
+- The scan runs in the **main thread** and blocks service readiness until complete
+- Clients connecting during init see `SCANNING` state and receive a busy message
+- Uses the same `scan_mounts()` code path as `ncd -r` for identical behavior
+- Automatically saves metadata after scan to prevent re-initialization on future starts
+- Respects `NCD_TEST_MODE=1` (skips scan in test mode to avoid scanning user drives)
+
+**Examples:**
+```bash
+# First-time setup: scan all drives before service becomes ready
+ncd_service start -init
+
+# Initialize with specific drives only
+ncd_service start -init C,D
+
+# Combine with other options
+ncd_service start -init -log2 -conf C:\NCD\custom.metadata
 ```
 
 ## Database Storage
 
 ### Locations
 
-**Windows:**
-- Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
-- Metadata: `%LOCALAPPDATA%\NCD\ncd.metadata`
-- Service log: `%LOCALAPPDATA%\NCD\ncd_service.log`
-- Legacy (migrated to metadata): `%LOCALAPPDATA%\NCD\ncd.config`, `ncd.groups`, `ncd.history`
-
-**Linux:**
-- Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
-- Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
-- Service log: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_service.log`
+See [`README.md`](README.md) § *Database Storage* for path locations.
 
 ### Binary Format
 
@@ -1121,39 +552,11 @@ Sections: Config (0x01), Groups (0x02), Heuristics (0x03), Exclusions (0x04), Di
 
 ### Atomic Writes
 
-All database writes use temp-file-then-rename pattern:
-1. Write to `.tmp` file
+All database writes use temp-file-then-rename:
+1. Write to `.tmp`
 2. Move current to `.old` (backup)
 3. Move `.tmp` to final name
 4. On failure: restore from `.old`
-
-### Configuration Override (`-conf` option)
-
-The `-conf <path>` option allows specifying a custom metadata file location instead of using the default platform-specific paths. This is useful for:
-
-- **Testing:** Use isolated configuration during test runs
-- **Multiple profiles:** Maintain separate configurations for different workflows
-- **Portable installations:** Keep configuration alongside the executable
-- **Shared environments:** Use a common configuration across user accounts
-
-**Usage:**
-```bash
-# Use custom metadata file
-ncd -conf C:\MyConfig\ncd.metadata downloads
-
-# Service with custom configuration
-ncd_service start -conf /opt/ncd/config/ncd.metadata
-```
-
-**Behavior:**
-- When `-conf` is specified, all metadata operations (config, groups, exclusions, heuristics, history) use the specified file
-- Per-drive database files are still loaded from their default locations or the location specified by `-d:path`
-- The override applies to both NCD client and NCD Service when specified
-- If the file doesn't exist, it will be created with default settings
-
-**Platform Notes:**
-- Windows: Use full paths with drive letters (e.g., `C:\path\to\ncd.metadata`)
-- Linux: Use absolute paths (e.g., `/home/user/.config/ncd/ncd.metadata`)
 
 ## Architecture Decisions
 
@@ -1651,159 +1054,6 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
 | Max path length | 64 chars (label) | 4096 chars (NCD_MAX_PATH) |
 | Drive/mount limit | 64 fixed | Variable (FAM) |
 
-## Agent Mode
-
-NCD includes an "agent mode" API for LLM integration:
-
-```bash
-# Query the database
-ncd --agent:query downloads --json --limit 10
-
-# List directory contents (live filesystem)
-ncd --agent:ls /home/user --depth 2 --json
-
-# Show directory tree from database
-ncd --agent:tree /home/user --depth 3 --json
-```
-
-### Agent Tree Output Formats
-
-The `/agent tree` command supports multiple output formats:
-
-**1. Indented Tree Format (default)**
-Displays directories as an indented tree with 2 spaces per level:
-```bash
-$ ncd --agent:tree /home/user --depth 2
-docs
-  architecture
-  history
-```
-
-**2. Flat Format with Full Paths (`--flat`)**
-Displays directories as relative paths with platform-specific separators:
-```bash
-$ ncd --agent:tree /home/user --depth 2 --flat
-docs/architecture
-docs/history
-```
-
-**3. JSON Format (`--json`)**
-Returns structured JSON with name and depth fields:
-```bash
-$ ncd --agent:tree /home/user --depth 2 --json
-{"v":1,"tree":[
-  {"n":"docs","d":0},
-  {"n":"architecture","d":1},
-  {"n":"history","d":1}
-]}
-```
-
-**4. JSON Flat Format (`--json --flat`)**
-Combines JSON structure with full relative paths:
-```bash
-$ ncd --agent:tree /home/user --depth 2 --json --flat
-{"v":1,"tree":[
-  {"n":"docs/architecture","d":1},
-  {"n":"docs/history","d":1}
-]}
-```
-
-| Option | Description |
-|--------|-------------|
-| `--depth N` | Maximum depth to traverse (default: 3) |
-| `--json` | Output as JSON |
-| `--flat` | Show full relative paths instead of just names |
-
-**Exit Codes:**
-- `0` - Path found, tree displayed
-- `1` - Path not found in database or error
-
-# Check if path exists in database
-ncd --agent:check /home/user/projects
-
-# Get database age
-ncd --agent:check --db-age
-
-# Get database statistics
-ncd --agent:check --stats
-
-# Check service status (returns: READY, STARTING, or NOT_RUNNING)
-ncd --agent:check --service-status
-
-# Shell tab-completion candidates
-ncd --agent:complete dow --limit 20
-
-# Create directory (creates parent directories as needed)
-ncd --agent:mkdir /home/user/new/project
-
-# Create directory tree from JSON or flat file format
-ncd --agent:mkdirs --file tree.txt
-ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src"}]}]' --json
-```
-
-### Agent Mkdirs Input Formats
-
-The `/agent mkdirs` command creates a complete directory tree structure from either a flat file or JSON input.
-
-**1. Flat File Format (default)**
-Uses 2-space indentation to indicate directory nesting:
-```
-$ cat tree.txt
-project
-  src
-    core
-    ui
-  docs
-  tests
-
-$ ncd --agent:mkdirs --file tree.txt
-Creating directory tree...
-
-project: Directory created
-project\src: Directory created
-project\src\core: Directory created
-project\src\ui: Directory created
-project\docs: Directory created
-project\tests: Directory created
-
-Created 6 directories
-```
-
-**2. JSON Format**
-Supports two JSON structures:
-
-*Simple string array:*
-```bash
-$ ncd --agent:mkdirs '["dir1", "dir2", "dir3"]'
-```
-
-*Object tree with children:*
-```bash
-$ ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src","children":[{"name":"core"}]}]}]'
-```
-
-**3. JSON Output Format (`--json`)**
-Returns structured JSON with per-directory results:
-```bash
-$ ncd --agent:mkdirs --file tree.txt --json
-{"v":1,"dirs":[
-  {"path":"project","result":"created","message":"Directory created"},
-  {"path":"project\\src","result":"created","message":"Directory created"}
-]}
-```
-
-Result codes:
-- `created` - Directory was created
-- `exists` - Directory already exists
-- `error_perms` - Permission denied
-- `error_parent` - Failed to create parent directory
-- `error_path` - Invalid path
-- `error` - Other error
-
-Exit codes:
-- `0` - Success / Found
-- `1` - Not found / Error
-
 ## Security Considerations
 
 1. **Path escaping:** Result files escape special characters for batch/shell safety
@@ -1896,3 +1146,68 @@ When changing database format:
 ### Config Format Changes
 
 **Version 3** - Added `rescan_interval_hours` field to support configurable auto-rescan intervals (1-168 hours, or -1 for never).
+
+
+---
+
+## Knowledge Graph (Graphify)
+
+This project has a pre-built knowledge graph in `graphify-out/` that maps the codebase structure, cross-module dependencies, and semantic communities.
+
+### Graph Summary
+- **2353 nodes, 7518 edges, 84 communities**
+- Built from 196 files (~249K words)
+- **God nodes**: `db_free()`, `db_create()`, `ipc_client_disconnect()`, `db_add_dir()`, `ipc_client_connect()`, `db_add_drive()`, `db_metadata_free()`, `ui_inject_keys()`, `ui_set_io_backend()`, `run_test()`
+- **Top communities**: Database Core Operations, IPC Client Protocol, TUI Key Injection Tests, Config & Heuristics, Agent CLI Extended Tests, Shared Memory Snapshots, IPC Server Protocol, Argument Parsing & Glob Matching, Agent Mode Parsing, State Backend Management
+
+### Outputs Location
+```
+graphify-out/
+├── graph.html        # Interactive visualization (open in browser)
+├── GRAPH_REPORT.md   # Full audit report with communities, god nodes, surprises
+└── graph.json        # Queryable graph data (NetworkX node_link_data)
+```
+
+### How to Use the Graph
+
+**Before answering architecture questions or searching raw files**, read `graphify-out/GRAPH_REPORT.md` for:
+1. **God Nodes** - the highest-degree hubs at the heart of the system
+2. **Community structure** - which modules form natural clusters
+3. **Surprising Connections** - unexpected cross-file dependencies
+
+**Query the graph programmatically:**
+```powershell
+# Find shortest path between two concepts
+graphify path "db_create" "ipc_client_connect"
+
+# Explain a node and its neighbors
+graphify explain "db_free"
+
+# BFS query for broad context
+graphify query "how does the service publish snapshots"
+
+# DFS query to trace a specific chain
+graphify query "state backend to shared memory" --dfs
+```
+
+**Update the graph after code changes:**
+```powershell
+# Incremental update (code-only changes, no LLM cost)
+graphify update .
+
+# Full rebuild (if docs/semantic content changed)
+# Re-run detection + extraction + build pipeline via graphify Python API
+```
+
+### Graphify Integration for Kimi
+
+Graphify is installed (`pip install graphifyy`). The skill is not officially available for Kimi yet, but the graph outputs are always-on via this AGENTS.md section. When the user asks about:
+- Code architecture or module relationships
+- "How does X connect to Y"
+- "What are the main components"
+- "Explain the structure of..."
+
+**Read `graphify-out/GRAPH_REPORT.md` first** before using Glob/Grep, as it provides a structured map of the system.
+
+### .graphifyignore
+A `.graphifyignore` file exists in the project root to exclude build artifacts, `.git/`, log files, and temporary outputs from future graph builds.

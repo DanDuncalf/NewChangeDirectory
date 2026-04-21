@@ -188,12 +188,27 @@ fi
 # ==========================================================================
 echo "--- Agent Tree Tests ---"
 
-# W10-W12: NCD's /agent tree has a known bug on Linux where it converts
-# forward slashes to backslashes when looking up paths in the database,
-# causing "path not found in database" errors. Skip these tests.
-skip W10 "tree --json returns valid JSON" "NCD tree path separator bug on Linux"
-skip W11 "tree --flat shows relative paths" "NCD tree path separator bug on Linux"
-skip W12 "tree --depth limits results" "NCD tree path separator bug on Linux"
+OUTPUT=$("$NCD" --agent tree "$TESTROOT/Projects" --json --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '"v":1' && echo "$OUTPUT" | grep -q '"tree":'; then
+    pass W10 "tree --json returns valid JSON"
+else
+    fail W10 "tree --json returns valid JSON"
+fi
+
+OUTPUT=$("$NCD" --agent tree "$TESTROOT/Projects" --flat --depth 2 2>&1)
+if echo "$OUTPUT" | grep -q '/'; then
+    pass W11 "tree --flat shows relative paths"
+else
+    fail W11 "tree --flat shows relative paths"
+fi
+
+DEPTH1=$("$NCD" --agent tree "$TESTROOT" --depth 1 2>&1 | wc -l)
+DEPTH3=$("$NCD" --agent tree "$TESTROOT" --depth 3 2>&1 | wc -l)
+if [ "$DEPTH3" -gt "$DEPTH1" ]; then
+    pass W12 "tree --depth limits results"
+else
+    fail W12 "tree --depth limits results"
+fi
 
 if ! "$NCD" --agent tree "/nonexistent/path" --json >/dev/null 2>&1; then
     pass W13 "tree fails on non-existent path"

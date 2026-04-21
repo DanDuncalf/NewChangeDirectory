@@ -67,6 +67,7 @@ MAIN_SOURCES := \
 # Service executable sources
 SERVICE_SOURCES := \
     $(SRCDIR)/service_main.c \
+    $(SRCDIR)/ui.c        \
     $(COMMON_SOURCES)
 
 MAIN_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(MAIN_SOURCES)))

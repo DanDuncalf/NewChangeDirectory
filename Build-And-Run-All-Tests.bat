@@ -72,6 +72,23 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Check for Administrator elevation
+net session >nul 2>&1
+if errorlevel 1 (
+    echo ========================================
+    echo FAILURE: Administrator privileges required
+    echo ========================================
+    echo.
+    echo This test runner must be run from an elevated CMD shell.
+    echo.
+    echo To fix this:
+    echo   1. Close the current CMD window
+    echo   2. Right-click on Command Prompt and select "Run as administrator"
+    echo   3. Navigate to this directory and run the script again
+    echo.
+    exit /b 1
+)
+
 :: Parse arguments and pass through to PowerShell
 set "PS_ARGS=-TestSuite All"
 

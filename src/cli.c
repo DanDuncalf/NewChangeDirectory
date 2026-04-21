@@ -73,8 +73,7 @@ static bool is_bundle_bool(char c)
         case 's': case 'S':
         case 'z': case 'Z':
         case 'v': case 'V':
-        case 'c': case 'C':
-        case 'f': case 'F':
+        case 'b': case 'B':
         case 'r': case 'R':
         case 'h': case 'H':
         case '?':
@@ -160,13 +159,19 @@ static bool tokenize_args(int argc, char *argv[],
         /* Check for colon/equals form: -r:d, -r=d, /r:d (value may be empty) */
         const char *colon = find_value_sep(body);
         if (colon && colon == body + 1) {
-            tokens[tc].type = TOK_SHORT_VAL;
-            tokens[tc].s = body[0];  /* preserve case to distinguish -g vs -G */
-            tokens[tc].val = colon + 1;
-            tokens[tc].name = NULL;
-            tokens[tc].orig_idx = i;
-            tc++;
-            continue;
+            const char *val = colon + 1;
+            if (*colon == '=' && val[0] && !val[1]) {
+                /* Single-character value with '=' is not valid short-val syntax;
+                   fall through to bundle/unknown handling. */
+            } else {
+                tokens[tc].type = TOK_SHORT_VAL;
+                tokens[tc].s = body[0];  /* preserve case to distinguish -g vs -G */
+                tokens[tc].val = val;
+                tokens[tc].name = NULL;
+                tokens[tc].orig_idx = i;
+                tc++;
+                continue;
+            }
         }
 
         /* Multi-char token after dash/slash */
@@ -317,7 +322,7 @@ static bool tokenize_args(int argc, char *argv[],
                     is_short_with_val = true;
                     break;
             }
-            if (is_short_with_val) {
+            if (is_short_with_val && !is_bundle_bool(body[1])) {
                 tokens[tc].type = TOK_SHORT_VAL;
                 tokens[tc].s = c;
                 tokens[tc].val = body + 1;
@@ -431,7 +436,12 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
     const char *sub = argv[1];
     *consumed = 0;
     
-    if (_stricmp(sub, "query") == 0) {
+    if (_stricmp(sub, "help") == 0 || _stricmp(sub, "?") == 0) {
+        opts->agent_subcommand = AGENT_SUB_HELP;
+        *consumed = 1;
+        return true;
+        
+    } else if (_stricmp(sub, "query") == 0) {
         if (argc < 3) {
             ncd_println("NCD: --agent query requires a search term");
             return false;
@@ -619,6 +629,22 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             if (strcmp(opt, "--json") == 0) {
                 opts->agent_json = true;
                 (*consumed)++;
+            } else if (strcmp(opt, "--dry-run") == 0) {
+                opts->agent_dry_run = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--force") == 0) {
+                opts->agent_force = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--verify") == 0) {
+                opts->agent_verify = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--parents-required") == 0) {
+                opts->agent_parents_required = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--mode") == 0 && i + 1 < argc) {
+                opts->agent_mode_octal = (int)strtol(argv[i + 1], NULL, 8);
+                (*consumed) += 2;
+                i++;
             } else {
                 break;
             }
@@ -636,6 +662,28 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             if (strcmp(opt, "--json") == 0) {
                 opts->agent_json = true;
                 (*consumed)++;
+            } else if (strcmp(opt, "--dry-run") == 0) {
+                opts->agent_dry_run = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--atomic") == 0) {
+                opts->agent_atomic = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--force") == 0) {
+                opts->agent_force = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--verify") == 0) {
+                opts->agent_verify = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--stop-on-error") == 0) {
+                opts->agent_stop_on_error = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--parents-required") == 0) {
+                opts->agent_parents_required = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--mode") == 0 && i + 1 < argc) {
+                opts->agent_mode_octal = (int)strtol(argv[i + 1], NULL, 8);
+                (*consumed) += 2;
+                i++;
             } else if (strcmp(opt, "--file") == 0 && i + 1 < argc) {
                 platform_strncpy_s(opts->agent_mkdirs_file, sizeof(opts->agent_mkdirs_file), argv[i + 1]);
                 (*consumed) += 2;
@@ -644,6 +692,158 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
                 /* JSON content directly as argument */
                 platform_strncpy_s(opts->search, sizeof(opts->search), opt);
                 opts->has_search = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "rmdir") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: --agent rmdir requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_RMDIR;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--force") == 0) {
+                opts->agent_force = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "rmdirs") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: --agent rmdirs requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_RMDIRS;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--dry-run") == 0) {
+                opts->agent_dry_run = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--force") == 0) {
+                opts->agent_force = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--preserve-root") == 0) {
+                opts->agent_preserve_root = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "mv") == 0) {
+        if (argc < 4) {
+            ncd_println("NCD: --agent mv requires src and dst paths");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_MV;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        platform_strncpy_s(opts->agent_mkdirs_file, sizeof(opts->agent_mkdirs_file), argv[3]);
+        *consumed = 3;
+        for (int i = 4; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--force") == 0) {
+                opts->agent_force = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "verify") == 0) {
+        if (argc < 3) {
+            ncd_println("NCD: --agent verify requires a path");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_VERIFY;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        *consumed = 2;
+        for (int i = 3; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--empty") == 0) {
+                opts->agent_dirs_only = true; /* re-use for --empty */
+                (*consumed)++;
+            } else if (strcmp(opt, "--tree") == 0 && i + 1 < argc) {
+                platform_strncpy_s(opts->agent_tree_file, sizeof(opts->agent_tree_file), argv[i + 1]);
+                (*consumed) += 2;
+                i++;
+            } else if (strcmp(opt, "--mode") == 0 && i + 1 < argc) {
+                opts->agent_mode_octal = (int)strtol(argv[i + 1], NULL, 8);
+                (*consumed) += 2;
+                i++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "chmod") == 0) {
+        if (argc < 4) {
+            ncd_println("NCD: --agent chmod requires a path and mode");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_CHMOD;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        opts->agent_mode_octal = (int)strtol(argv[3], NULL, 8);
+        *consumed = 3;
+        for (int i = 4; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else if (strcmp(opt, "--recursive") == 0) {
+                opts->agent_recursive = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
+        return true;
+        
+    } else if (_stricmp(sub, "ln") == 0) {
+        if (argc < 4) {
+            ncd_println("NCD: --agent ln requires target and link paths");
+            return false;
+        }
+        opts->agent_subcommand = AGENT_SUB_LN;
+        platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
+        opts->has_search = true;
+        platform_strncpy_s(opts->agent_mkdirs_file, sizeof(opts->agent_mkdirs_file), argv[3]);
+        *consumed = 3;
+        for (int i = 4; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
                 (*consumed)++;
             } else {
                 break;
@@ -925,6 +1125,7 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
 {
     memset(opts, 0, sizeof(NcdOptions));
     opts->timeout_seconds = 300;  /* default 5 minute timeout */
+    opts->agent_mode_octal = -1;  /* -1 means --mode was not specified */
 
     if (argc <= 1) {
         opts->show_help = true;
