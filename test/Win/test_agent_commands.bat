@@ -125,17 +125,22 @@ if not exist "%NCD%" (
 
 
 :: Find available drive letter
+:: Build list of used drive letters from registry (avoids "format disk" prompts for raw drives)
+set "USED_LETTERS= "
+for %%L in (A B C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+    reg query "HKLM\SYSTEM\MountedDevices" /v "\DosDevices\%%L:" >nul 2>nul && set "USED_LETTERS=!USED_LETTERS!%%L "
+)
 
+set "TESTDRIVE="
 for %%L in (Z Y X W V U T S R Q P O N M L K J I H G) do (
-
-    if not exist %%L:\ (
-
-        set "TESTDRIVE=%%L"
-
-        goto :found_letter
-
+    set "LETTER_USED=0"
+    for %%U in (!USED_LETTERS!) do (
+        if /I "%%U"=="%%L" set "LETTER_USED=1"
     )
-
+    if "!LETTER_USED!"=="0" (
+        set "TESTDRIVE=%%L"
+        goto :found_letter
+    )
 )
 
 echo WARNING: No free drive letter, using temp directory
