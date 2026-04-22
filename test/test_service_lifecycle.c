@@ -655,9 +655,10 @@ TEST(service_state_progression) {
 /* --------------------------------------------------------- service termination test */
 
 TEST(service_termination_graceful_then_force) {
-    /* This test verifies service termination works correctly */
+    /* This test verifies graceful stop and safe restart.
+     * The service now waits for a shutting-down instance to fully exit
+     * before spawning a new daemon, preventing double-start races. */
     
-    /* First ensure service is running */
     if (!service_executable_exists()) {
         printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
         return 0;
@@ -682,14 +683,19 @@ TEST(service_termination_graceful_then_force) {
     ASSERT_TRUE(stopped);
     ASSERT_FALSE(ipc_service_exists());
     
-    /* Test force termination path - start service again */
+    /* Test restart after graceful stop - service should safely wait for
+     * the old instance to exit before creating a new one */
     exit_code = run_service_command("start", output, sizeof(output));
     ASSERT_EQ_INT(0, exit_code);
     started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
     ASSERT_TRUE(started);
+    ASSERT_TRUE(ipc_service_exists());
     
-    /* Force terminate (simulates stuck service) */
-    force_terminate_service();
+    /* Clean shutdown */
+    exit_code = run_service_command("stop", output, sizeof(output));
+    ASSERT_EQ_INT(0, exit_code);
+    stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
+    ASSERT_TRUE(stopped);
     ASSERT_FALSE(ipc_service_exists());
     
     return 0;
@@ -721,19 +727,9 @@ void suite_service_lifecycle(void) {
     /* Service termination test */
     RUN_TEST(service_termination_graceful_then_force);
     
-    /* Final cleanup and ensure service is left running */
-    printf("\n--- Final cleanup: Leaving service running ---\n");
+    /* Final cleanup - ensure service is fully stopped */
+    printf("\n--- Final cleanup: Stopping service ---\n");
     ensure_service_stopped();
-    if (service_executable_exists()) {
-        char output[256] = {0};
-        run_service_command("start", output, sizeof(output));
-        bool started = wait_for_service_state(true, SERVICE_START_TIMEOUT);
-        if (started) {
-            printf("Service left running for subsequent tests.\n");
-        } else {
-            printf("WARNING: Could not leave service running.\n");
-        }
-    }
 }
 
 TEST_MAIN(

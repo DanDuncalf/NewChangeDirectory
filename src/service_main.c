@@ -35,23 +35,14 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <tlhelp32.h>
 #include <io.h>
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/types.h>
-
-static void svc_debug_log(const char *fmt, ...) {
-    FILE *f = fopen("C:\\ncd_svc_debug.log", "a");
-    if (!f) return;
-    va_list args;
-    va_start(args, fmt);
-    fprintf(f, "[%lu] ", GetCurrentProcessId());
-    vfprintf(f, fmt, args);
-    fprintf(f, "\n");
-    va_end(args);
-    fclose(f);
-}
+#include <ctype.h>
+#include <dirent.h>
 #endif
 
 /* --------------------------------------------------------- globals            */
@@ -1552,6 +1543,121 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
 
 /* --------------------------------------------------------- service lifecycle  */
 
+#if NCD_PLATFORM_WINDOWS
+/* Find another NCDService.exe process in the process list (exclude self) */
+static bool find_existing_ncd_service_process(DWORD *out_pid) {
+    DWORD my_pid = GetCurrentProcessId();
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+
+    PROCESSENTRY32 pe = {sizeof(pe)};
+    bool found = false;
+    if (Process32First(hSnap, &pe)) {
+        do {
+            if (_stricmp(pe.szExeFile, "NCDService.exe") == 0 &&
+                pe.th32ProcessID != my_pid) {
+                *out_pid = pe.th32ProcessID;
+                found = true;
+                break;
+            }
+        } while (Process32Next(hSnap, &pe));
+    }
+    CloseHandle(hSnap);
+    return found;
+}
+
+/* Poll until process exits or timeout */
+static bool wait_for_process_exit(DWORD pid, int timeout_seconds) {
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        if (!hProc) return true;  /* Process gone */
+        DWORD r = WaitForSingleObject(hProc, 0);
+        CloseHandle(hProc);
+        if (r != WAIT_TIMEOUT) return true;  /* Exited */
+        platform_sleep_ms(100);
+    }
+    return false;
+}
+
+static void print_stale_process_error(DWORD pid) {
+    fprintf(stderr, "NCD Service: Another instance (PID: %lu) is stuck during shutdown.\n", pid);
+    fprintf(stderr, "Please terminate it manually with:\n");
+    fprintf(stderr, "  taskkill /F /IM NCDService.exe /FI \"PID eq %lu\"\n", pid);
+}
+#else
+/* Check PID file or scan /proc for existing NCDService process */
+static bool find_existing_ncd_service_process(pid_t *out_pid) {
+    const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
+    char pid_path[256];
+    if (xdg_runtime && *xdg_runtime) {
+        snprintf(pid_path, sizeof(pid_path), "%s/ncd_service.pid", xdg_runtime);
+    } else {
+        snprintf(pid_path, sizeof(pid_path), "/tmp/ncd_service.pid");
+    }
+
+    /* Check PID file first */
+    FILE *f = fopen(pid_path, "r");
+    if (f) {
+        pid_t pid = 0;
+        if (fscanf(f, "%d", &pid) == 1 && pid > 0) {
+            if (kill(pid, 0) == 0) {
+                *out_pid = pid;
+                fclose(f);
+                return true;
+            }
+        }
+        fclose(f);
+    }
+
+    /* Fallback: scan /proc for NCDService processes */
+    DIR *proc = opendir("/proc");
+    if (!proc) return false;
+
+    struct dirent *entry;
+    pid_t my_pid = getpid();
+    bool found = false;
+
+    while ((entry = readdir(proc)) != NULL) {
+        if (!isdigit((unsigned char)entry->d_name[0])) continue;
+        pid_t pid = atoi(entry->d_name);
+        if (pid == my_pid) continue;
+
+        char comm_path[256];
+        snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", pid);
+        FILE *fcomm = fopen(comm_path, "r");
+        if (fcomm) {
+            char name[256];
+            if (fgets(name, sizeof(name), fcomm)) {
+                size_t len = strlen(name);
+                if (len > 0 && name[len - 1] == '\n') name[len - 1] = '\0';
+                if (strcmp(name, "NCDService") == 0) {
+                    *out_pid = pid;
+                    found = true;
+                }
+            }
+            fclose(fcomm);
+            if (found) break;
+        }
+    }
+    closedir(proc);
+    return found;
+}
+
+static bool wait_for_process_exit(pid_t pid, int timeout_seconds) {
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        if (kill(pid, 0) != 0) return true;
+        platform_sleep_ms(100);
+    }
+    return false;
+}
+
+static void print_stale_process_error(pid_t pid) {
+    fprintf(stderr, "NCD Service: Another instance (PID: %d) is stuck during shutdown.\n", (int)pid);
+    fprintf(stderr, "Please terminate it manually with:\n");
+    fprintf(stderr, "  kill -9 %d\n", (int)pid);
+}
+#endif
+
 /* Check if service is already running */
 static bool is_service_running(void) {
 #if NCD_PLATFORM_WINDOWS
@@ -1929,6 +2035,32 @@ int main(int argc, char *argv[]) {
                 log_close();
                 return 0;
             }
+
+            /* Check for a stale process that is still in the process list but
+             * has already released its mutex / pipe (shutting down) */
+#if NCD_PLATFORM_WINDOWS
+            DWORD existing_pid = 0;
+            if (find_existing_ncd_service_process(&existing_pid)) {
+                printf("NCD Service: Waiting for previous instance (PID: %lu) to finish shutting down...\n", existing_pid);
+                if (!wait_for_process_exit(existing_pid, 5)) {
+                    print_stale_process_error(existing_pid);
+                    log_close();
+                    return 1;
+                }
+                printf("NCD Service: Previous instance exited, proceeding with start\n");
+            }
+#else
+            pid_t existing_pid = 0;
+            if (find_existing_ncd_service_process(&existing_pid)) {
+                printf("NCD Service: Waiting for previous instance (PID: %d) to finish shutting down...\n", (int)existing_pid);
+                if (!wait_for_process_exit(existing_pid, 5)) {
+                    print_stale_process_error(existing_pid);
+                    log_close();
+                    return 1;
+                }
+                printf("NCD Service: Previous instance exited, proceeding with start\n");
+            }
+#endif
             /* First-run interactive configuration */
             if (!db_metadata_exists()) {
                 const char *test_mode = getenv("NCD_TEST_MODE");

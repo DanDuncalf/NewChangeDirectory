@@ -138,7 +138,7 @@ typedef struct {
 #define SHM_GROUPS_ENTRIES(base, section) \
     SHM_ARRAY(base, (section)->entries_off, ShmGroupEntry)
 #define SHM_GROUPS_POOL(base, section) \
-    ((const char *)((base) + (section)->pool_off))
+    ((const char *)(base) + (section)->pool_off)
 
 /* --------------------------------------------------------- heuristics section */
 
@@ -166,7 +166,7 @@ typedef struct {
 #define SHM_HEUR_ENTRIES(base, section) \
     SHM_ARRAY(base, (section)->entries_off, ShmHeurEntry)
 #define SHM_HEUR_POOL(base, section) \
-    ((const char *)((base) + (section)->pool_off))
+    ((const char *)(base) + (section)->pool_off)
 
 /* --------------------------------------------------------- exclusions section */
 
@@ -195,7 +195,7 @@ typedef struct {
 #define SHM_EXCL_ENTRIES(base, section) \
     SHM_ARRAY(base, (section)->entries_off, ShmExclusionEntry)
 #define SHM_EXCL_POOL(base, section) \
-    ((const char *)((base) + (section)->pool_off))
+    ((const char *)(base) + (section)->pool_off)
 
 /* --------------------------------------------------------- dir history section */
 
@@ -223,7 +223,7 @@ typedef struct {
 #define SHM_HISTORY_ENTRIES(base, section) \
     SHM_ARRAY(base, (section)->entries_off, ShmDirHistoryEntry)
 #define SHM_HISTORY_POOL(base, section) \
-    ((const char *)((base) + (section)->pool_off))
+    ((const char *)(base) + (section)->pool_off)
 
 /* --------------------------------------------------------- database header  */
 
