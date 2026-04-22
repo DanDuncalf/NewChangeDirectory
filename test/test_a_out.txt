@@ -1,3 +1,0 @@
-NCD: unknown --agent subcommand: THIS_IS_A_PARSE_REGRESSION_TEST
-
-NCD: Invalid command line.  Run 'ncd -?' for help.

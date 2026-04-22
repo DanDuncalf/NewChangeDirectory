@@ -1,1 +1,0 @@
-{"v":1,"path":"test_rmdir_target","result":"created","message":"Directory created successfully","mode":"0000"}

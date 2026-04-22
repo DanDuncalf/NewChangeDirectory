@@ -1,1 +1,0 @@
-{"v":1,"path":"test_mv_dst","verified":true,"checks":[{"check":"exists","passed":true,"expected":"true","actual":"true"},{"check":"is_directory","passed":true,"expected":"true","actual":"true"},{"check":"mode","passed":true,"expected":"n/a","actual":"n/a"}]}

@@ -1,1 +1,0 @@
-{"v":1,"atomic":true,"dirs":[{"path":"test_atomic_rb\\block_file","result":"error_not_empty","message":"Path exists but is not a directory"}],"rollback":[],"summary":{"created":0,"exists":0,"failed":1,"rolled_back":0}}

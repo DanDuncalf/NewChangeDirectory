@@ -1,1 +1,0 @@
-{"v":1,"path":"test_mkdir_dryrun","result":"created","message":"Directory would be created","mode":"0000"}

@@ -1,3 +1,0 @@
-  FAIL: test_database_extended.c:311: Expected 0, got 2
-  FAIL: test_database_extended.c:398: Assertion failed: db_heur_find(meta, search) >= 0
-  FAIL: test_database_extended.c:854: Assertion failed: strstr(e1->path, "three") != NULL

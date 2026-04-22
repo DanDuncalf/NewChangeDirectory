@@ -1,1 +1,0 @@
-{"v":1,"path":"test_mkdir_nonexistent2","result":"created","message":"Directory created successfully","mode":"0000"}

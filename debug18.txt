@@ -1,1 +1,0 @@
-{"v":1,"path":"test_mv_src","result":"created","message":"Directory created successfully","mode":"0000"}

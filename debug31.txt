@@ -1,1 +1,0 @@
-{"v":1,"path":"ncd_verify_empty_test","verified":true,"checks":[{"check":"exists","passed":true,"expected":"true","actual":"true"},{"check":"is_directory","passed":true,"expected":"true","actual":"true"},{"check":"empty","passed":true,"expected":"true","actual":"true"}]}
