@@ -242,16 +242,25 @@ def build_windows_tests():
     """Build Windows test executables."""
     print("[BUILD] Checking Windows test binaries...")
     needs_build = False
+    # Test binaries link against NCD core sources; include those in dependency check
+    test_source_patterns = [str(p.relative_to(PROJECT_ROOT)) for p in UNIT_TEST_DIR.glob('*.c')]
+    all_dep_patterns = MAIN_SOURCE_PATTERNS + test_source_patterns
     for candidate in sorted(UNIT_TEST_DIR.glob('test_*.c')):
         exe = candidate.with_suffix('.exe')
-        needed, reason = binary_needs_rebuild(exe, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not exe.exists():
+            # Binary has never been built by the unified build; skip it.
+            # (Orphan .c files exist that build-tests.bat doesn't know about.)
+            continue
+        needed, reason = binary_needs_rebuild(exe, all_dep_patterns)
         if needed:
             print(f"[BUILD] {exe.name} needs rebuild: {reason}")
             needs_build = True
     # Also check IPC tests
     for candidate in sorted(UNIT_TEST_DIR.glob('ipc_*.c')):
         exe = candidate.with_suffix('.exe')
-        needed, reason = binary_needs_rebuild(exe, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not exe.exists():
+            continue
+        needed, reason = binary_needs_rebuild(exe, all_dep_patterns)
         if needed:
             print(f"[BUILD] {exe.name} needs rebuild: {reason}")
             needs_build = True
@@ -317,27 +326,38 @@ def build_linux_tests():
     """Build Linux test executables via WSL or natively."""
     print("[BUILD] Checking Linux test binaries...")
     needs_build = False
+    # Test binaries link against NCD core sources; include those in dependency check
+    test_source_patterns = [str(p.relative_to(PROJECT_ROOT)) for p in UNIT_TEST_DIR.glob('*.c')]
+    all_dep_patterns = MAIN_SOURCE_PATTERNS + test_source_patterns
     for candidate in sorted(UNIT_TEST_DIR.glob('test_*.c')):
         binary = candidate.with_suffix('')
-        needed, reason = binary_needs_rebuild(binary, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not binary.exists():
+            continue
+        needed, reason = binary_needs_rebuild(binary, all_dep_patterns)
         if needed:
             print(f"[BUILD] {binary.name} needs rebuild: {reason}")
             needs_build = True
     for candidate in sorted(UNIT_TEST_DIR.glob('fuzz_*.c')):
         binary = candidate.with_suffix('')
-        needed, reason = binary_needs_rebuild(binary, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not binary.exists():
+            continue
+        needed, reason = binary_needs_rebuild(binary, all_dep_patterns)
         if needed:
             print(f"[BUILD] {binary.name} needs rebuild: {reason}")
             needs_build = True
     for candidate in sorted(UNIT_TEST_DIR.glob('bench_*.c')):
         binary = candidate.with_suffix('')
-        needed, reason = binary_needs_rebuild(binary, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not binary.exists():
+            continue
+        needed, reason = binary_needs_rebuild(binary, all_dep_patterns)
         if needed:
             print(f"[BUILD] {binary.name} needs rebuild: {reason}")
             needs_build = True
     for candidate in sorted(UNIT_TEST_DIR.glob('ipc_*.c')):
         binary = candidate.with_suffix('')
-        needed, reason = binary_needs_rebuild(binary, [str(candidate.relative_to(PROJECT_ROOT))])
+        if not binary.exists():
+            continue
+        needed, reason = binary_needs_rebuild(binary, all_dep_patterns)
         if needed:
             print(f"[BUILD] {binary.name} needs rebuild: {reason}")
             needs_build = True

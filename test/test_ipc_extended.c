@@ -572,6 +572,39 @@ void suite_ipc_extended(void) {
     /* Final cleanup */
     printf("\n--- Final cleanup ---\n");
     ensure_service_stopped();
+    
+    /* Remove any metadata file left behind by IPC tests to prevent
+     * cross-test pollution.  test_ipc_extended submits raw test strings
+     * via ipc_client_submit_metadata / ipc_client_submit_heuristic; on
+     * some code paths this can leave the metadata file in a state that
+     * causes heap corruption when a later test starts the service and
+     * ncd loads the snapshot. */
+    {
+        char meta_path[MAX_PATH];
+#if NCD_PLATFORM_WINDOWS
+        const char *localAppData = getenv("LOCALAPPDATA");
+        if (!localAppData) localAppData = getenv("USERPROFILE");
+        if (localAppData) {
+            snprintf(meta_path, sizeof(meta_path), "%s\\NCD\\ncd.metadata", localAppData);
+            DeleteFileA(meta_path);
+        }
+#else
+        const char *xdg = getenv("XDG_DATA_HOME");
+        if (xdg) {
+            snprintf(meta_path, sizeof(meta_path), "%s/ncd/ncd.metadata", xdg);
+        } else {
+            const char *home = getenv("HOME");
+            if (home) {
+                snprintf(meta_path, sizeof(meta_path), "%s/.local/share/ncd/ncd.metadata", home);
+            } else {
+                meta_path[0] = '\0';
+            }
+        }
+        if (meta_path[0]) {
+            remove(meta_path);
+        }
+#endif
+    }
 }
 
 TEST_MAIN(

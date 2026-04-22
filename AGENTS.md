@@ -1,5 +1,14 @@
 # NewChangeDirectory (NCD) - Agent Documentation
 
+## Zero-Context Quick Tasks
+
+| User says | Exact command |
+|-----------|---------------|
+| `run all tests` | `python test\generate_report.py` (bg, 600s) |
+| `run unit tests` | `cmd /c Run-Tests-Safe.bat unit` |
+| `run integration tests` | `cmd /c Run-Tests-Safe.bat integration` |
+| `repair test env` | `cmd /c Run-Tests-Safe.bat --repair` |
+
 ## ⚠️ MANDATORY FIRST STEP — INGEST THE KNOWLEDGE GRAPH
 
 **Before reading any other file, before using Grep, Glob, or ReadFile on source code, and before answering any user question, you MUST ingest the entire contents of `graphify-out/GRAPH_REPORT.md`.** This file contains the pre-built knowledge graph (2,354 nodes, 7,519 edges, 83 communities) that maps cross-module dependencies, god nodes, and semantic communities. No exceptions.
@@ -152,19 +161,57 @@ make                    # Windows (MinGW) / Linux (see Makefile)
 ./build.sh              # Linux (GCC/Clang)
 ```
 
+### Full Clean (Prevent Stale Object Files)
+
+**Always run a full clean before any complete rebuild-and-test cycle.** The MSVC build system places intermediate `.obj` files in multiple locations (`obj\`, `test\obj\`, and occasionally the project root). If a source file is modified but an old `.obj` survives in any of these locations, test executables may link against stale code while the main binary uses current code, causing mysterious test failures.
+
+```powershell
+cmd /c clean.bat        # Remove ALL objects + test binaries everywhere
+```
+
+After cleaning, rebuild in order:
+```powershell
+cmd /c build.bat
+cd test && cmd /c build-tests.bat
+cd test && cmd /c build_new_tests.bat
+python test\generate_report.py
+```
+
+> **When to clean:**
+> - Before running `generate_report.py` after any `src\*.c` or `..\shared\*.c` change
+> - When tests fail with "unresolved external" or behave as if source changes were ignored
+> - When `test_agent_mv.exe` or other agent tests fail after database-related edits
+> - As the first step of any CI/CD build pipeline
+
 ## Testing
 
-> **📋 Comprehensive testing docs live in [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md). Read that file before running any tests.**
+> **📋 Full docs:** [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md)
 
-Quick reference for zero-context agents:
+### Run All Tests (Mandatory Command)
+
+When the user asks to "run all tests", execute **exactly** this command and nothing else:
+
 ```powershell
-python test\generate_report.py           # Unified cross-platform report (recommended)
+python test/generate_report.py
+```
+
+This is the **unified cross-platform runner** — it auto-builds, runs Windows + WSL tests, and writes the detailed `test.results` report. It is the **only** command that produces the mandatory per-suite check counts and ratios required for reporting results. See `AGENT_TESTING_GUIDE.md` § *Expected Output Format — MANDATORY*.
+
+> **Pre-test clean (strongly recommended):** If any `src\*.c` or `..\shared\*.c` file has changed since the last build, run `cmd /c clean.bat` first. Stale `.obj` files in `obj\`, `test\obj\`, or the project root can cause test executables to link against old code while the main binary uses new code, producing failures that look like bugs but are actually build artifacts.
+
+If `generate_report.py` is unavailable, fall back to:
+```powershell
+cmd /c Run-Tests-Safe.bat all
+```
+
+### Quick Reference
+```powershell
 cmd /c Run-Tests-Safe.bat unit           # Unit tests only
 cmd /c Run-Tests-Safe.bat integration    # Integration tests only
 cmd /c Run-Tests-Safe.bat --repair       # Fix corrupted test environment
 ```
 
-Critical rules (also repeated in `AGENT_TESTING_GUIDE.md`):
+### Rules
 - **Never run `test\*.exe` directly** — always use the harness (`Run-Tests-Safe.bat`, `Run-All-Tests.bat`, or `generate_report.py`)
 - **Invoke `.bat` files via `cmd /c`** because the Shell tool runs PowerShell by default
 - Use `run_in_background=true` with timeout `600` for full-suite runs (~3–4 minutes)

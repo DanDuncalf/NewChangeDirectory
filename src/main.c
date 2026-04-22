@@ -150,7 +150,16 @@ static void flush_all_dirty_dbs(void)
             const char *path = g_dirty_dbs[i].path;
             
             if (db && path[0]) {
-                if (db_save_binary_single(db, 0, path)) {
+                bool saved = db_save_binary_single(db, 0, path);
+                
+                /* Debug */
+                FILE *dbg = fopen("C:\\ncd_mv_debug.txt", "a");
+                if (dbg) {
+                    fprintf(dbg, "flush_debug: drive=%c path=%s saved=%d dir_count=%d\n", g_dirty_dbs[i].drive, path, saved, db->drive_count > 0 ? db->drives[0].dir_count : 0);
+                    fclose(dbg);
+                }
+                
+                if (saved) {
                     db_clear_dirty_standalone(g_dirty_dbs[i].drive);
                 }
             }
@@ -2439,6 +2448,14 @@ static bool add_path_to_database(const char *path)
         /* Add to database */
         db_make_mutable(db);
         drv = db_find_drive(db, target_drive);
+        
+        /* Debug */
+        FILE *dbg2 = fopen("C:\\ncd_mv_debug.txt", "a");
+        if (dbg2) {
+            fprintf(dbg2, "add_path_debug: adding leaf=%s parent_idx=%d to drive %c dir_count before=%d\n", leaf_name, parent_idx, target_drive, drv ? drv->dir_count : -1);
+            fclose(dbg2);
+        }
+        
         db_add_dir(drv, leaf_name, parent_idx, false, false);
         
         /* Mark database as dirty for deferred save */
@@ -4118,7 +4135,23 @@ static int agent_mode_mv(const NcdOptions *opts)
             db->last_scan = time(NULL);
         }
 
-        db_remove_path(db, src);
+        bool removed = db_remove_path(db, src);
+
+        /* Debug */
+        FILE *dbg = fopen("C:\\ncd_mv_debug.txt", "a");
+        if (dbg) {
+            fprintf(dbg, "mv_debug: src=%s dst=%s db_path=%s removed=%d drive_count=%d\n", src, dst, db_path, removed, db->drive_count);
+            if (db->drive_count > 0) {
+                DriveData *d = &db->drives[0];
+                fprintf(dbg, "  drive %c label=%s dir_count=%d\n", d->letter, d->label, d->dir_count);
+                char fp[NCD_MAX_PATH];
+                for (int i = 0; i < d->dir_count; i++) {
+                    db_full_path(d, i, fp, sizeof(fp));
+                    fprintf(dbg, "  [%d] parent=%d path=%s\n", i, d->dirs[i].parent, fp);
+                }
+            }
+            fclose(dbg);
+        }
 
         /* Ensure db is tracked for saving */
         if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
@@ -4128,8 +4161,30 @@ static int agent_mode_mv(const NcdOptions *opts)
         /* Add new path to database */
         add_path_to_database(dst);
 
+        /* Debug after add */
+        dbg = fopen("C:\\ncd_mv_debug.txt", "a");
+        if (dbg) {
+            if (db && db->drive_count > 0) {
+                DriveData *d = &db->drives[0];
+                fprintf(dbg, "mv_debug: after add dir_count=%d\n", d->dir_count);
+                char fp[NCD_MAX_PATH];
+                for (int i = 0; i < d->dir_count; i++) {
+                    db_full_path(d, i, fp, sizeof(fp));
+                    fprintf(dbg, "  [%d] parent=%d path=%s\n", i, d->dirs[i].parent, fp);
+                }
+            }
+            fclose(dbg);
+        }
+
         /* Flush dirty databases immediately */
         flush_all_dirty_dbs();
+
+        /* Debug after flush */
+        dbg = fopen("C:\\ncd_mv_debug.txt", "a");
+        if (dbg) {
+            fprintf(dbg, "mv_debug: after flush\n");
+            fclose(dbg);
+        }
     }
 
     if (opts->agent_json) {
