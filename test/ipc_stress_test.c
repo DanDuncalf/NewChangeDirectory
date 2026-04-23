@@ -98,6 +98,8 @@ static int parse_args(int argc, char **argv, StressOptions *opts) {
 }
 
 static double do_operation(const char *op, int thread_id, int iter) {
+    (void)thread_id;
+    (void)iter;
     ipc_time_t start, end;
     NcdIpcClient *client = ipc_client_connect();
     if (!client) {

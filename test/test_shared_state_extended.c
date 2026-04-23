@@ -175,7 +175,7 @@ TEST(shm_validate_header_checks_magic) {
     memset(buf, 0, sizeof(buf));
     
     ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = 0xBADBADBAD; /* Bad magic */
+    hdr->magic = 0xBADBADBA; /* Bad magic */
     hdr->version = NCD_SHM_VERSION;
     hdr->total_size = sizeof(buf);
     

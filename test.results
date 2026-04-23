@@ -1,68 +1,24 @@
 ================================================================================
 NCD Test Results Report
 ================================================================================
-Generated: 2026-04-22T16:15:38Z
-Generator: generate_report.py
+Generated: 2026-04-23T00:45:10Z
+Generator: runner.py
 Platform: Windows
-WSL Available: False
+WSL Available: N/A
 
 ================================================================================
 BUILD INFORMATION
 ================================================================================
 
 [Windows Main Binaries]
-  NCDService.exe                           : 2026-04-22T07:26:37Z
-  NewChangeDirectory.exe                   : 2026-04-22T07:26:36Z
 
 [Linux Main Binaries]
-  NewChangeDirectory                       : 2026-04-22T16:11:48Z
-  ncd_service                              : 2026-04-09T03:08:58Z
 
 ================================================================================
 UNIT TEST RESULTS - WINDOWS
 ================================================================================
 
-  Pass    Fail    Skip  Name                                               Date        Time
-------  ------  ------  ------------------------------------------ ------------  ----------
-    10       0       0  fuzz_database_load.exe                       2026-04-22    16:11:21
-    10       0       0  fuzz_ipc.exe                                 2026-04-22    16:11:24
-    13       0       0  test_agent_mkdir_extended.exe                2026-04-22    16:11:28
-    16       0       0  test_agent_mode.exe                          2026-04-22    16:11:30
-     3       0       2  test_agent_mv.exe                            2026-04-22    16:11:29
-     7       0       0  test_agent_rmdir.exe                         2026-04-22    16:11:29
-     5       0       0  test_agent_verify.exe                        2026-04-22    16:11:29
-    15       0       0  test_bugs.exe                                2026-04-22    16:11:10
-    30       0       0  test_cli_edge_cases.exe                      2026-04-22    16:11:26
-    40       0       0  test_cli_parse.exe                           2026-04-17    17:25:24
-    47       0       0  test_cli_parse_extended.exe                  2026-04-17    17:25:26
-     7       0       0  test_common.exe                              2026-04-22    16:11:11
-    50       0       0  test_database.exe                            2026-04-22    16:11:09
-    50       0       0  test_database_extended.exe                   2026-04-22    16:11:20
-    13       0       0  test_db_corruption.exe                       2026-04-22    16:11:10
-    21       0       4  test_ipc_extended.exe                        2026-04-22    16:11:23
-     7       0       0  test_legacy_service_shutdown.exe             2026-04-22    16:11:15
-    40       0       0  test_main.exe                                2026-04-22    16:11:25
-    23       0       0  test_matcher.exe                             2026-04-22    16:11:09
-    30       0       0  test_matcher_extended.exe                    2026-04-22    16:11:27
-    10       0       0  test_metadata.exe                            2026-04-22    16:11:12
-    30       0       0  test_odd_cases.exe                           2026-04-22    16:11:20
-    12       0       0  test_platform.exe                            2026-04-22    16:11:11
-    20       0       0  test_result_edge_cases.exe                   2026-04-22    16:11:27
-     9       0       0  test_scanner.exe                             2026-04-22    16:11:12
-    35       0       0  test_scanner_extended.exe                    2026-04-22    16:11:26
-     4       0       0  test_service_init_db.exe                     2026-04-22    16:11:22
-    11       0       0  test_service_integration.exe                 2026-04-22    16:11:14
-    22       0       0  test_service_lazy_load.exe                   2026-04-22    16:11:13
-    13       0       0  test_service_lifecycle.exe                   2026-04-22    16:11:13
-    20       0       0  test_service_rescan.exe                      2026-04-22    16:11:22
-    25       0       0  test_service_stress.exe                      2026-04-22    16:11:21
-     6       0       0  test_service_version_compat.exe              2026-04-22    16:11:14
-    10       0       0  test_shared_state.exe                        2026-03-30    14:44:58
-    20       0       0  test_shm_stress.exe                          2026-04-22    16:11:23
-    15       0       0  test_strbuilder.exe                          2026-04-22    16:11:11
-    25       0       0  test_stress.exe                              2026-04-22    16:11:28
-    15       0       0  test_ui_exclusions.exe                       2026-04-22    16:11:25
-    45       0       0  test_ui_extended.exe                         2026-04-22    16:11:24
+(No WINDOWS unit tests executed)
 
 ================================================================================
 UNIT TEST RESULTS - LINUX
@@ -71,45 +27,21 @@ UNIT TEST RESULTS - LINUX
 (No LINUX unit tests executed)
 
 ================================================================================
-FAILING/SKIPPED TESTS SUMMARY - WINDOWS
+INTEGRATION TEST SUITES
 ================================================================================
 
-#     Status     Test Binary                                Test Name
------ ---------- ------------------------------------------ ----------------------------------------
-1     SKIPPED    test_agent_mv.exe                          ln_creates_symlink
-2     SKIPPED    test_agent_mv.exe                          ln_fails_without_privilege_windows
-3     SKIPPED    test_ipc_extended.exe                      ipc_socket_create_with_invalid_path
-4     SKIPPED    test_ipc_extended.exe                      ipc_socket_path_too_long
-5     SKIPPED    test_ipc_extended.exe                      ipc_socket_permission_denied
-6     SKIPPED    test_ipc_extended.exe                      ipc_file_permissions_linux
-
-================================================================================
-INTEGRATION TEST SUITES (Estimated Checks)
-================================================================================
-
-#    Suite                               Platform   Checks       Status  
---------------------------------------------------------------------------------
-1    Service Tests (Isolated)            Windows    ~12          [PASS]
-2    NCD Standalone                      Windows    ~12          [PASS]
-3    NCD with Service                    Windows    ~11          [PASS]
-4    Windows Feature Tests               Windows    ~84          [PASS]
-5    Windows Agent Command Tests         Windows    ~35          [PASS]
-6    WSL Service Tests                   WSL        ~12          [PASS]
-7    WSL NCD Standalone                  WSL        ~16          [PASS]
-8    WSL NCD with Service                WSL        ~16          [PASS]
-9    WSL Feature Tests                   WSL        ~52          [PASS]
-10   WSL Agent Command Tests             WSL        ~34          [PASS]
+  (Integration tests not run)
 
 ================================================================================
 GRAND TOTALS
 ================================================================================
 
-Windows Unit:  790 run,  784 passed,    0 failed,    6 skipped
+Windows Unit:    0 run,    0 passed,    0 failed,    0 skipped
 Linux Unit:      0 run,    0 passed,    0 failed,    0 skipped
-Overall:       790 run,  784 passed,    0 failed,    6 skipped
+Overall:         0 run,    0 passed,    0 failed,    0 skipped
 
 OVERALL STATUS: FAIL
-REASON: 6 test(s) skipped
+REASON: Build failure detected
 
 ================================================================================
 END OF REPORT

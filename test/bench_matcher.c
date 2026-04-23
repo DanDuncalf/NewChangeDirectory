@@ -7,6 +7,7 @@
 
 /* Generate synthetic database with given characteristics */
 NcdDatabase *generate_synthetic_db(int drives, int dirs_per_drive, int avg_name_len) {
+    (void)avg_name_len;
     NcdDatabase *db = db_create();
     const char *name_parts[] = {"src", "bin", "lib", "test", "doc", 
                                 "main", "util", "core", "app", "web"};

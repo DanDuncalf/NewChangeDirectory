@@ -11,21 +11,20 @@ If your context window is empty, run these commands from the repo root (`E:\llam
 python test/generate_report.py
 
 :: Full build + test cycle (Windows integration tests only)
-cmd /c Build-And-Run-All-Tests.bat --windows-only
+python test/runner.py --windows-only
 
 :: If binaries already exist, skip the build
-cmd /c Run-All-Tests.bat --windows-only
+python test/runner.py --skip-build --windows-only
 
 :: Quick unit-test only run
-cmd /c Run-Tests-Safe.bat unit
+python test/runner.py unit
 ```
 
 **Critical facts to avoid footguns:**
 - **`generate_report.py` is the preferred entry point.** It auto-detects outdated binaries, rebuilds them, runs both Windows and Linux unit tests, and writes `test.results`. It exits with code 1 if any test fails or is skipped.
-- **ALWAYS** use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1` for integration tests. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
-- **Shell tool runs PowerShell** — invoke batch files with `cmd /c File.bat`, never bare `File.bat`.
-- `test/build-tests.bat` is the Windows build script. `Run-NcdTests.ps1` calls it. If you add a new `test_*.c`, you **must** add its build rule there or it is **silently skipped**.
-- The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `build-tests.bat` as of 2026-04-18.
+- **ALWAYS** use `python test/runner.py` for integration tests. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
+- `test/ncd_testlib/build.py` is the Windows test build logic. If you add a new `test_*.c`, you **must** add its build rule there or it is **silently skipped**.
+- The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `test/ncd_testlib/build.py` as of 2026-04-22.
 - **Windows batch quoting trap:** `"T:\"` escapes the closing quote. Use `"T:\."` for drive roots; `main.c` normalizes the trailing dot back to `T:\`.
 - **PowerShell `Start-Process -ArgumentList` strips args starting with `-`** (like `-conf`). For tests that pass `-conf`, use direct batch invocation instead of `Start-Process`.
 - Full suite timeout is ~3–4 minutes. Use `run_in_background=true` with timeout `600` for the full suite.
@@ -38,11 +37,11 @@ This guide provides step-by-step instructions for AI agents to run comprehensive
 
 ## ⚠️ CRITICAL: ALWAYS Use the Test Harness
 
-**NEVER run test executables or batch files directly.** Always use the PowerShell test harness (`Run-Tests-Safe.bat` or `Run-NcdTests.ps1`) which provides:
+**NEVER run test executables or batch files directly.** Always use the Python test harness (`python test/runner.py`) which provides:
 
 1. **Environment Isolation** - Tests run with isolated `LOCALAPPDATA` and `NCD_TEST_MODE` variables
 2. **Temporary/Virtual Disk Usage** - Integration tests use VHD (Windows) or ramdisk (WSL) for complete isolation
-3. **Guaranteed Cleanup** - PowerShell's `try/finally` blocks ensure environment is restored even if tests crash or are interrupted with Ctrl+C
+3. **Guaranteed Cleanup** - Python's `atexit` and signal handlers ensure environment is restored even if tests crash or are interrupted with Ctrl+C
 4. **No User Data Pollution** - Tests cannot accidentally scan or modify user's real drives or metadata
 
 ### Dangers of Running Tests Outside the Harness
@@ -58,22 +57,28 @@ This guide provides step-by-step instructions for AI agents to run comprehensive
 
 ### 🚫 AGENT SELF-CORRECTION NOTE — Direct Execution Trap
 
-> **Historical mistake:** An agent ran `test\*.exe` files directly to "get per-test breakdowns" and reported ~22 "failures" as if they were real. These were **100% artifacts** of bypassing isolation (running service tests against real metadata, UI tests without headless mode, etc.). The official isolated runners (`Run-All-Tests.bat`, `Run-Tests-Safe.bat`) reported **0 failures** for the same binaries.
+> **Historical mistake:** An agent ran `test\*.exe` files directly to "get per-test breakdowns" and reported ~22 "failures" as if they were real. These were **100% artifacts** of bypassing isolation (running service tests against real metadata, UI tests without headless mode, etc.). The official isolated Python runner reported **0 failures** for the same binaries.
 >
-> **Rule:** If `generate_report.py` is unavailable, use `Run-All-Tests.bat` or `Run-Tests-Safe.bat`. **Never** run individual `test_*.exe` files directly to validate the test suite.
+> **Rule:** If `generate_report.py` is unavailable, use `python test/runner.py`. **Never** run individual `test_*.exe` files directly to validate the test suite.
 
 ### ✅ Correct Way to Run Tests
 ```batch
 :: ALWAYS use the harness
 cd /d E:\llama\NewChangeDirectory
-Run-Tests-Safe.bat
+python test/runner.py
 ```
+
+### 📋 Mandatory Output Rule
+
+When running tests, the agent **must** display the full output from the test runner in the conversation. Do not suppress, truncate, or summarize away the test runner output. The user needs to see the actual pass/fail results, build warnings, and suite breakdowns.
+
+**If using `generate_report.py`:** After the runner finishes, the agent **must** read and display the complete contents of `test.results` in the response. This is the authoritative report and must always be shown when testing is requested.
 
 ### ⚠️ AI Agent Notes
 
 **Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 3-4 minutes. Use `run_in_background=true` with a longer timeout (e.g., 600s) when invoking the full suite.
 
-**Prefer Run-All-Tests.bat when binaries exist:** If `test\*.exe` files are already present, use `cmd /c Run-All-Tests.bat` instead of `Build-And-Run-All-Tests.bat` to avoid unnecessary rebuild time. Only build if binaries are missing or the user explicitly requests a rebuild.
+**Prefer --skip-build when binaries exist:** If `test\*.exe` files are already present, use `python test/runner.py --skip-build` to avoid unnecessary rebuild time. Only build if binaries are missing or the user explicitly requests a rebuild.
 
 **Proper PowerShell syntax:** The Shell tool runs PowerShell. Do NOT use CMD redirection syntax like `2>nul` or pipes to `findstr`/`head` directly in PowerShell. Use native PowerShell cmdlets instead:
 ```powershell
@@ -99,22 +104,22 @@ Test-NCD-Windows-Standalone.bat
 ### Run All Tests (Windows + WSL)
 ```batch
 cd /d E:\llama\NewChangeDirectory
-Run-Tests-Safe.bat
+python test/runner.py
 ```
 
 ### Run Windows-Only Tests
 ```batch
 cd /d E:\llama\NewChangeDirectory
-Run-Tests-Safe.bat --windows-only
+python test/runner.py --windows-only
 ```
 
 ### Run Specific Test Suites
 ```batch
-Run-Tests-Safe.bat unit              :: Unit tests only
-Run-Tests-Safe.bat integration       :: Integration tests
-Run-Tests-Safe.bat service           :: Service tests
-Run-Tests-Safe.bat windows           :: All Windows tests
-Run-Tests-Safe.bat wsl               :: All WSL tests
+python test/runner.py unit              :: Unit tests only
+python test/runner.py integration       :: Integration tests
+python test/runner.py service           :: Service tests
+python test/runner.py windows           :: All Windows tests
+python test/runner.py wsl               :: All WSL tests
 ```
 
 ### Run Integration Tests Directly (Not Recommended)
@@ -122,20 +127,18 @@ Run-Tests-Safe.bat wsl               :: All WSL tests
 > ⚠️ **WARNING:** Only run directly if you need detailed output AND can ensure cleanup. Prefer the harness.
 
 ```batch
-:: Windows integration tests - run directly at your own risk
-cd /d E:\llama\NewChangeDirectory\test
-Test-Service-Windows.bat
-Test-NCD-Windows-Standalone.bat
-Test-NCD-Windows-With-Service.bat
+:: Windows integration tests - run via Python runner only
+cd /d E:\llama\NewChangeDirectory
+python test/runner.py integration
 
 :: If interrupted, repair:
-Run-Tests-Safe.bat --repair
+python test/runner.py --repair
 ```
 
 ### Check/Repair Environment
 ```batch
-Run-Tests-Safe.bat --check           :: Check environment only
-Run-Tests-Safe.bat --repair          :: Repair corrupted environment
+python test/runner.py --check           :: Check environment only
+python test/runner.py --repair          :: Repair corrupted environment
 ```
 
 ---
@@ -193,13 +196,13 @@ python test/generate_report.py
 
 > ⚠️ **Do NOT run `test_*.exe` directly.** That produces invalid results. Use the safe runners instead:
 > ```batch
-> cmd /c Run-All-Tests.bat          :: All integration suites (unit tests included)
-> cmd /c Run-Tests-Safe.bat unit    :: Unit tests only, fully isolated
+> python test/runner.py integration   :: All integration suites (unit tests included)
+> python test/runner.py unit          :: Unit tests only, fully isolated
 > ```
 >
 > Only if the above are genuinely unavailable should you consider direct execution, and **you must explicitly warn the user that direct execution is unvalidated and may produce false failures.**
 
-1. **Unit tests:** Use `Run-Tests-Safe.bat unit`. If absolutely impossible, running `test_*.exe` directly requires isolated `LOCALAPPDATA`, `NCD_TEST_MODE=1`, and service cleanup between every executable.
+1. **Unit tests:** Use `python test/runner.py unit`. If absolutely impossible, running `test_*.exe` directly requires isolated `LOCALAPPDATA`, `NCD_TEST_MODE=1`, and service cleanup between every executable.
 2. **Integration tests:** List each suite with platform, duration, PASS/FAIL, and the **number of individual checks** performed in that suite.
 3. **Ratios:** For every suite, report `X/Y passed | Z failed | W skipped`.
 4. **Summaries:** Provide module-level and overall totals **only after** the full per-test listing.
@@ -229,12 +232,12 @@ python test/generate_report.py
 
 Unit tests are compiled as individual executables and test specific modules in isolation.
 
-#### Option A: PowerShell Safe Runner (Recommended)
-The PowerShell runner guarantees cleanup even if interrupted with Ctrl+C.
+#### Option A: Python Safe Runner (Recommended)
+The Python runner guarantees cleanup even if interrupted with Ctrl+C.
 
 ```batch
 cd /d E:\llama\NewChangeDirectory
-powershell -ExecutionPolicy Bypass -File "Run-NcdTests.ps1" -TestSuite All
+python test/runner.py
 ```
 
 **Test Suites Available:**
@@ -269,16 +272,16 @@ test_service_version_compat.exe :: 6 version compat tests
 test_legacy_service_shutdown.exe :: 7 legacy shutdown tests
 ```
 
-#### Option C: Batch Test Runners
+#### Option C: Python Unit Test Runner
 ```batch
-cd /d E:\llama\NewChangeDirectory\test
-Run-All-Unit-Tests.bat           :: Run all unit tests
-Run-All-Unit-Tests.bat --skip-fuzz :: Skip fuzz tests (faster)
+cd /d E:\llama\NewChangeDirectory
+python test/runner.py unit           :: Run all unit tests
+python test/runner.py unit --quick   :: Skip fuzz tests (faster)
 ```
 
 ### 2. Integration Tests (Windows)
 
-> ⚠️ **WARNING:** Integration tests create VHD (virtual hard disk) for complete isolation. Running them directly will work but won't have the harness's guaranteed cleanup. Use the PowerShell runner when possible.
+> ⚠️ **WARNING:** Integration tests create VHD (virtual hard disk) for complete isolation. Running them directly will work but won't have the harness's guaranteed cleanup. Use the Python runner when possible.
 
 Integration tests are batch files in the `test\` directory that test end-to-end functionality:
 
@@ -292,23 +295,21 @@ Integration tests are batch files in the `test\` directory that test end-to-end 
 #### Running Windows Integration Tests (Via Harness - Recommended)
 ```batch
 cd /d E:\llama\NewChangeDirectory
-Run-Tests-Safe.bat integration
+python test/runner.py integration
 :: OR
-Run-Tests-Safe.bat windows
+python test/runner.py windows
 ```
 
 #### Running Windows Integration Tests (Direct - Not Recommended)
 Only if you need detailed output and accept the risk:
 ```batch
-cd /d E:\llama\NewChangeDirectory\test
+cd /d E:\llama\NewChangeDirectory
 
-:: These batch files DO have their own setlocal/endlocal but Ctrl+C will skip cleanup
-Test-Service-Windows.bat
-Test-NCD-Windows-Standalone.bat
-Test-NCD-Windows-With-Service.bat
+:: Run via Python runner for guaranteed cleanup
+python test/runner.py integration
 
 :: If interrupted, repair environment:
-Run-Tests-Safe.bat --repair
+python test/runner.py --repair
 ```
 
 #### Windows Integration Test Results (Expected)
@@ -395,7 +396,7 @@ Test 6: Directory search...
 
 ### 5. WSL/Linux Unit Tests
 
-> ⚠️ **WARNING:** WSL tests run outside the PowerShell harness. Ensure you set `NCD_TEST_MODE=1` and isolate `XDG_DATA_HOME` when running directly, or use `Run-Tests-Safe.bat wsl` which handles this automatically.
+> ⚠️ **WARNING:** WSL tests run outside the Python harness. Ensure you set `NCD_TEST_MODE=1` and isolate `XDG_DATA_HOME` when running directly, or use `python test/runner.py wsl` which handles this automatically.
 
 #### Automatic Cross-Platform Testing (Recommended)
 
@@ -419,7 +420,7 @@ wsl bash -c "cd /mnt/e/llama/NewChangeDirectory && ./build.sh"
 
 #### Run Core Tests in WSL (Via Harness - Recommended)
 ```batch
-Run-Tests-Safe.bat wsl
+python test/runner.py wsl
 ```
 
 #### Run Core Tests in WSL (Direct - Not Recommended)
@@ -540,13 +541,13 @@ Some extended test files may fail to compile in WSL due to:
 
 ### Service Test Failures
 - Ensure no previous NCD service is running: `taskkill /F /IM NCDService.exe`
-- Check environment: `Run-Tests-Safe.bat --check`
-- Repair if needed: `Run-Tests-Safe.bat --repair`
+- Check environment: `python test/runner.py --check`
+- Repair if needed: `python test/runner.py --repair`
 
 ### Environment Corruption
 Symptoms: "LOCALAPPDATA points to test temp directory"
 ```batch
-Run-Tests-Safe.bat --repair
+python test/runner.py --repair
 :: Or manually:
 set LOCALAPPDATA=%USERPROFILE%\AppData\Local
 set NCD_TEST_MODE=
@@ -593,16 +594,16 @@ This single command verifies **build health** and **test results** for both plat
 
 ### Manual Verification (if generate_report.py fails)
 - [ ] Windows build succeeds: `build.bat`
-- [ ] Windows test build succeeds: `cd test && build-tests.bat`
+- [ ] Windows test build succeeds: `python test/runner.py --skip-build` (builds implicitly on first run)
 - [ ] WSL build succeeds: `wsl bash -c "./build.sh"`
 - [ ] WSL test build succeeds: `wsl bash -c "cd test && make all"`
-- [ ] Windows unit tests pass: `Run-Tests-Safe.bat --windows-only`
-- [ ] WSL core tests pass: `Run-Tests-Safe.bat wsl`
+- [ ] Windows unit tests pass: `python test/runner.py --windows-only`
+- [ ] WSL core tests pass: `python test/runner.py wsl`
 
 ### Integration Tests (Via Harness)
-- [ ] Windows Integration: `Run-Tests-Safe.bat integration`
-- [ ] Windows All: `Run-Tests-Safe.bat windows`
-- [ ] WSL Integration: `Run-Tests-Safe.bat wsl`
+- [ ] Windows Integration: `python test/runner.py integration`
+- [ ] Windows All: `python test/runner.py windows`
+- [ ] WSL Integration: `python test/runner.py wsl`
 
 ### Final Verification
 - [ ] No memory leaks (run under Valgrind in WSL if available)
@@ -615,14 +616,14 @@ This single command verifies **build health** and **test results** for both plat
 | Task | Windows Command (Via Harness) | WSL Command |
 |------|-------------------------------|-------------|
 | Build | `build.bat` | `wsl ./build.sh` |
-| Full Test | `Run-Tests-Safe.bat` | `wsl make test` |
-| Unit Tests | `Run-Tests-Safe.bat unit` | `wsl make test` |
-| Integration | `Run-Tests-Safe.bat integration` | `Run-Tests-Safe.bat wsl` |
-| Service Tests | `Run-Tests-Safe.bat service` | `wsl ./test_service_lifecycle` |
-| Check Env | `Run-Tests-Safe.bat --check` | N/A |
-| Repair Env | `Run-Tests-Safe.bat --repair` | N/A |
+| Full Test | `python test/runner.py` | `wsl make test` |
+| Unit Tests | `python test/runner.py unit` | `wsl make test` |
+| Integration | `python test/runner.py integration` | `python test/runner.py wsl` |
+| Service Tests | `python test/runner.py service` | `wsl ./test_service_lifecycle` |
+| Check Env | `python test/runner.py --check` | N/A |
+| Repair Env | `python test/runner.py --repair` | N/A |
 
-> ⚠️ **NOTE:** The harness uses PowerShell's `try/finally` to guarantee environment restoration. Direct execution of test files (e.g., `test_database.exe`, `Test-*.bat`) works but lacks guaranteed cleanup on interruption.
+> ⚠️ **NOTE:** The harness uses Python's `atexit` and signal handlers to guarantee environment restoration. Direct execution of test files (e.g., `test_database.exe`) works but lacks guaranteed cleanup on interruption.
 
 ---
 
@@ -666,7 +667,7 @@ If you accidentally ran tests outside the harness and the environment is corrupt
 
 ```batch
 :: Automatic repair
-Run-Tests-Safe.bat --repair
+python test/runner.py --repair
 
 :: Manual repair
 set LOCALAPPDATA=%USERPROFILE%\AppData\Local

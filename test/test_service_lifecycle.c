@@ -136,21 +136,6 @@ static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
     return false;
 }
 
-/* Wait for service IPC to be ready with extended retry logic.
- * This handles the case where the service process starts but the
- * IPC pipe isn't immediately available.
- */
-static bool wait_for_service_ipc_ready(int timeout_seconds) {
-    int retries = timeout_seconds * 10;
-    while (retries-- > 0) {
-        if (ipc_service_exists()) {
-            return true;
-        }
-        platform_sleep_ms(100);
-    }
-    return false;
-}
-
 /* Timeout for graceful shutdown (seconds) */
 #define GRACEFUL_SHUTDOWN_TIMEOUT 3
 
@@ -254,27 +239,13 @@ static void ensure_service_stopped(void) {
     wait_for_service_fully_exited(3);
 }
 
-/* Ensure service is running - starts it if not */
-static bool ensure_service_running(void) {
-    if (ipc_service_exists()) {
-        return true;
-    }
-    
-    if (!service_executable_exists()) {
-        return false;
-    }
-    
-    { char _buf[256]; run_service_command("start", _buf, sizeof(_buf)); }
-    return wait_for_service_state(true, SERVICE_START_TIMEOUT);
-}
-
 /* --------------------------------------------------------- basic lifecycle tests */
 
 TEST(service_status_when_stopped) {
     ensure_service_stopped();
     
     char output[256] = {0};
-    int exit_code = run_service_command("status", output, sizeof(output));
+    (void)run_service_command("status", output, sizeof(output));
     
     /* Should report "stopped" and return 0 or 1 (depending on implementation) */
     ASSERT_TRUE(strstr(output, "stopped") != NULL || !ipc_service_exists());

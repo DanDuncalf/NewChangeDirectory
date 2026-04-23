@@ -423,9 +423,9 @@ TEST(service_state_get_stats_returns_valid_stats) {
     ServiceStats stats;
     service_state_get_stats(state, &stats);
     
-    /* Stats should have valid-looking values */
-    ASSERT_TRUE(stats.meta_generation >= 0);
-    ASSERT_TRUE(stats.db_generation >= 0);
+    /* Stats should have valid-looking values (generations are unsigned, so just verify they exist) */
+    (void)stats.meta_generation;
+    (void)stats.db_generation;
     
     service_state_cleanup(state);
     return 0;

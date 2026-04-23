@@ -1,8 +1,8 @@
 # Makefile for NCD tests
 # This builds and runs all test suites
 
-CC = gcc
-CFLAGS = -Wall -Wextra -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE -DNCD_TEST_BUILD
+CC ?= gcc
+CFLAGS = -Wall -Wextra -Werror -Wno-format-truncation -Wno-stringop-truncation -g -I../src -I../../shared -I. -DPLATFORM_LINUX=1 -D_GNU_SOURCE -DNCD_TEST_BUILD
 LDFLAGS = -lpthread
 
 # Object directory

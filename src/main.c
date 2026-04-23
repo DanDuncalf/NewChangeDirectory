@@ -1091,122 +1091,103 @@ static void agent_json_escape(const char *s)
 
 static void agent_print_usage(void)
 {
-    agent_print(
-        "NCD Agent Mode -- Filesystem oracle for LLM agents\r\n"
-        "\r\n"
-        "Usage:\r\n"
-        "  ncd --agent:query <search> [options]\r\n"
-        "  ncd --agent:ls <path> [options]\r\n"
-        "  ncd --agent:tree <path> [options]\r\n"
-        "  ncd --agent:check <path> | --db-age | --stats | --service-status\r\n"
-        "  ncd --agent:complete <partial> [--limit N] [--json]\r\n"
-        "  ncd --agent:mkdir <path> [options]\r\n"
-        "  ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n"
-        "  ncd --agent:rmdir <path> [--force] [--json]\r\n"
-        "  ncd --agent:rmdirs <path> [--force] [--json]\r\n"
-        "  ncd --agent:mv <src> <dst> [--force] [--json]\r\n"
-        "  ncd --agent:ln <target> <link> [--json]\r\n"
-        "  ncd --agent:verify <path> [--empty] [--mode <octal>] [--tree <spec>] [--json]\r\n"
-        "  ncd --agent:chmod <path> [--mode <octal>] [--recursive] [--json]\r\n"
-        "  ncd --agent:quit [--json]\r\n"
-        "  ncd --agent:help                Show this help\r\n"
-        "\r\n"
-        "Commands:\r\n"
-        "  query <search>    Search the NCD index for directories\r\n"
-        "  ls <path>         List directory contents (live filesystem)\r\n"
-        "  tree <path>       Show directory structure from DB\r\n"
-        "  check <path>      Check if path exists in DB (exit code)\r\n"
-        "  complete <partial>  Shell tab-completion candidates\r\n"
-        "  mkdir <path>        Create a directory and add to database\r\n"
-        "  mkdirs <content>    Create directory tree from JSON or flat format\r\n"
-        "  rmdir <path>        Remove an empty directory\r\n"
-        "  rmdirs <path>       Remove a directory tree (requires --force)\r\n"
-        "  mv <src> <dst>      Move/rename a directory\r\n"
-        "  ln <target> <link>  Create a symbolic link\r\n"
-        "  verify <path>       Verify directory exists and optionally check properties\r\n"
-        "  chmod <path>        Change directory permissions (Linux only)\r\n"
-        "  quit                Request graceful service shutdown\r\n"
-        "  help                Show this help message\r\n"
-        "\r\n"
-        "Query Options:\r\n"
-        "  --json            JSON output instead of compact\r\n"
-        "  --limit N         Cap results (default: unlimited, 0=unlimited)\r\n"
-        "  --all             Include hidden + system directories\r\n"
-        "  --depth, --depth-sort  Sort shallowest first (default: by score)\r\n"
-        "\r\n"
-        "ls Options:\r\n"
-        "  --depth N         Recurse N levels (default: 1)\r\n"
-        "  --dirs-only       Only directories\r\n"
-        "  --files-only      Only files\r\n"
-        "  --pattern <glob>  Filter by name (e.g., *.py)\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "tree Options:\r\n"
-        "  --depth N         Max depth (default: 3)\r\n"
-        "  --json            JSON array of entries with name/depth fields\r\n"
-        "  --flat            Flat list instead of indented\r\n"
-        "                    (with --json, emits flat relative paths)\r\n"
-        "\r\n"
-        "check Options:\r\n"
-        "  --db-age          Output DB age in seconds\r\n"
-        "  --stats           Output dir count per drive\r\n"
-        "  --service-status  Check if NCD service is running and ready\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "complete Options:\r\n"
-        "  --limit N         Max candidates (default: 20)\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "mkdir Options:\r\n"
-        "  --json            JSON output with result code\r\n"
-        "  --force           Recreate if empty directory already exists\r\n"
-        "  --mode <octal>    Set permissions (Linux only)\r\n"
-        "  --verify          Verify after creation\r\n"
-        "\r\n"
-        "mkdirs Options:\r\n"
-        "  --file <path>     Read tree specification from file\r\n"
-        "  --json            JSON output with per-directory results\r\n"
-        "  --atomic          All-or-nothing: rollback on any failure\r\n"
-        "  --verify          Verify tree after creation\r\n"
-        "\r\n"
-        "mkdirs Input Formats:\r\n"
-        "  JSON: [{\"name\":\"dir\",\"children\":[{\"name\":\"subdir\"}]}]\r\n"
-        "  Flat: 2-space indentation indicates child directories\r\n"
-        "        parent\r\n"
-        "          child1\r\n"
-        "          child2\r\n"
-        "            grandchild\r\n"
-        "\r\n"
-        "rmdir Options:\r\n"
-        "  --force           Remove non-empty directory\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "rmdirs Options:\r\n"
-        "  --force           Required flag to remove directory tree\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "mv Options:\r\n"
-        "  --force           Overwrite empty destination directory\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "ln Options:\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "verify Options:\r\n"
-        "  --empty           Check that directory is empty\r\n"
-        "  --mode <octal>    Verify permissions match (Linux only)\r\n"
-        "  --tree <spec>     Verify directory tree structure matches spec\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "chmod Options:\r\n"
-        "  --mode <octal>    Permission mode (e.g., 0755)\r\n"
-        "  --recursive       Apply to entire directory tree\r\n"
-        "  --json            JSON output\r\n"
-        "\r\n"
-        "Exit Codes:\r\n"
-        "  0   Success / Found\r\n"
-        "  1   Not found / Error\r\n"
-    );
+    agent_print("NCD Agent Mode -- Filesystem oracle for LLM agents\r\n\r\n");
+    agent_print("Usage:\r\n");
+    agent_print("  ncd --agent:query <search> [options]\r\n");
+    agent_print("  ncd --agent:ls <path> [options]\r\n");
+    agent_print("  ncd --agent:tree <path> [options]\r\n");
+    agent_print("  ncd --agent:check <path> | --db-age | --stats | --service-status\r\n");
+    agent_print("  ncd --agent:complete <partial> [--limit N] [--json]\r\n");
+    agent_print("  ncd --agent:mkdir <path> [options]\r\n");
+    agent_print("  ncd --agent:mkdirs [--file <path>] [--json] <content>\r\n");
+    agent_print("  ncd --agent:rmdir <path> [--force] [--json]\r\n");
+    agent_print("  ncd --agent:rmdirs <path> [--force] [--json]\r\n");
+    agent_print("  ncd --agent:mv <src> <dst> [--force] [--json]\r\n");
+    agent_print("  ncd --agent:ln <target> <link> [--json]\r\n");
+    agent_print("  ncd --agent:verify <path> [--empty] [--mode <octal>] [--tree <spec>] [--json]\r\n");
+    agent_print("  ncd --agent:chmod <path> [--mode <octal>] [--recursive] [--json]\r\n");
+    agent_print("  ncd --agent:quit [--json]\r\n");
+    agent_print("  ncd --agent:help                Show this help\r\n\r\n");
+    agent_print("Commands:\r\n");
+    agent_print("  query <search>    Search the NCD index for directories\r\n");
+    agent_print("  ls <path>         List directory contents (live filesystem)\r\n");
+    agent_print("  tree <path>       Show directory structure from DB\r\n");
+    agent_print("  check <path>      Check if path exists in DB (exit code)\r\n");
+    agent_print("  complete <partial>  Shell tab-completion candidates\r\n");
+    agent_print("  mkdir <path>        Create a directory and add to database\r\n");
+    agent_print("  mkdirs <content>    Create directory tree from JSON or flat format\r\n");
+    agent_print("  rmdir <path>        Remove an empty directory\r\n");
+    agent_print("  rmdirs <path>       Remove a directory tree (requires --force)\r\n");
+    agent_print("  mv <src> <dst>      Move/rename a directory\r\n");
+    agent_print("  ln <target> <link>  Create a symbolic link\r\n");
+    agent_print("  verify <path>       Verify directory exists and optionally check properties\r\n");
+    agent_print("  chmod <path>        Change directory permissions (Linux only)\r\n");
+    agent_print("  quit                Request graceful service shutdown\r\n");
+    agent_print("  help                Show this help message\r\n\r\n");
+    agent_print("Query Options:\r\n");
+    agent_print("  --json            JSON output instead of compact\r\n");
+    agent_print("  --limit N         Cap results (default: unlimited, 0=unlimited)\r\n");
+    agent_print("  --all             Include hidden + system directories\r\n");
+    agent_print("  --depth, --depth-sort  Sort shallowest first (default: by score)\r\n\r\n");
+    agent_print("ls Options:\r\n");
+    agent_print("  --depth N         Recurse N levels (default: 1)\r\n");
+    agent_print("  --dirs-only       Only directories\r\n");
+    agent_print("  --files-only      Only files\r\n");
+    agent_print("  --pattern <glob>  Filter by name (e.g., *.py)\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("tree Options:\r\n");
+    agent_print("  --depth N         Max depth (default: 3)\r\n");
+    agent_print("  --json            JSON array of entries with name/depth fields\r\n");
+    agent_print("  --flat            Flat list instead of indented\r\n");
+    agent_print("                    (with --json, emits flat relative paths)\r\n\r\n");
+    agent_print("check Options:\r\n");
+    agent_print("  --db-age          Output DB age in seconds\r\n");
+    agent_print("  --stats           Output dir count per drive\r\n");
+    agent_print("  --service-status  Check if NCD service is running and ready\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("complete Options:\r\n");
+    agent_print("  --limit N         Max candidates (default: 20)\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("mkdir Options:\r\n");
+    agent_print("  --json            JSON output with result code\r\n");
+    agent_print("  --force           Recreate if empty directory already exists\r\n");
+    agent_print("  --mode <octal>    Set permissions (Linux only)\r\n");
+    agent_print("  --verify          Verify after creation\r\n\r\n");
+    agent_print("mkdirs Options:\r\n");
+    agent_print("  --file <path>     Read tree specification from file\r\n");
+    agent_print("  --json            JSON output with per-directory results\r\n");
+    agent_print("  --atomic          All-or-nothing: rollback on any failure\r\n");
+    agent_print("  --verify          Verify tree after creation\r\n\r\n");
+    agent_print("mkdirs Input Formats:\r\n");
+    agent_print("  JSON: [{\"name\":\"dir\",\"children\":[{\"name\":\"subdir\"}]}]\r\n");
+    agent_print("  Flat: 2-space indentation indicates child directories\r\n");
+    agent_print("        parent\r\n");
+    agent_print("          child1\r\n");
+    agent_print("          child2\r\n");
+    agent_print("            grandchild\r\n\r\n");
+    agent_print("rmdir Options:\r\n");
+    agent_print("  --force           Remove non-empty directory\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("rmdirs Options:\r\n");
+    agent_print("  --force           Required flag to remove directory tree\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("mv Options:\r\n");
+    agent_print("  --force           Overwrite empty destination directory\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("ln Options:\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("verify Options:\r\n");
+    agent_print("  --empty           Check that directory is empty\r\n");
+    agent_print("  --mode <octal>    Verify permissions match (Linux only)\r\n");
+    agent_print("  --tree <spec>     Verify directory tree structure matches spec\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("chmod Options:\r\n");
+    agent_print("  --mode <octal>    Permission mode (e.g., 0755)\r\n");
+    agent_print("  --recursive       Apply to entire directory tree\r\n");
+    agent_print("  --json            JSON output\r\n\r\n");
+    agent_print("Exit Codes:\r\n");
+    agent_print("  0   Success / Found\r\n");
+    agent_print("  1   Not found / Error\r\n");
 }
 
 static int agent_mode_help(const NcdOptions *opts)
@@ -2838,6 +2819,7 @@ static void agent_txn_add(AgentTxn *txn, const char *path)
     }
 }
 
+#ifdef DEBUG
 static bool agent_txn_rollback(AgentTxn *txn)
 {
     bool ok = true;
@@ -2849,6 +2831,7 @@ static bool agent_txn_rollback(AgentTxn *txn)
     agent_txn_free(txn);
     return ok;
 }
+#endif
 
 /* ------------------------------------------------------------------
  * read_stdin_all  —  slurp entire stdin into a malloc'd string.

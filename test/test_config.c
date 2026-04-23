@@ -43,7 +43,6 @@ TEST(config_rescan_interval_save_load) {
     /* Verify rescan_interval_hours is preserved */
     ASSERT_EQ_INT(24, loaded->cfg.rescan_interval_hours);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -118,7 +117,6 @@ TEST(config_rescan_interval_preserves_value_24_hours) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(24, loaded->cfg.rescan_interval_hours);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -148,7 +146,6 @@ TEST(config_rescan_interval_preserves_value_168_hours) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(168, loaded->cfg.rescan_interval_hours);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -180,7 +177,6 @@ TEST(config_default_fuzzy_match_save_load) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_TRUE(loaded->cfg.default_fuzzy_match);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -222,7 +218,6 @@ TEST(config_default_timeout_save_load) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(120, loaded->cfg.default_timeout);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -277,7 +272,6 @@ TEST(config_has_defaults_flag_persists_through_save_load) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_TRUE(loaded->cfg.has_defaults);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -372,7 +366,6 @@ TEST(config_all_fields_save_load_together) {
     ASSERT_EQ_INT(NCD_TEXT_UTF8, loaded->cfg.text_encoding);
     ASSERT_EQ_INT(20, loaded->cfg.service_retry_count);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -429,7 +422,6 @@ TEST(config_text_encoding_save_load) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(NCD_TEXT_UTF16LE, loaded->cfg.text_encoding);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;
@@ -473,7 +465,6 @@ TEST(config_service_retry_count_save_load) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(15, loaded->cfg.service_retry_count);
     
-cleanup:
     if (loaded) db_metadata_free(loaded);
     remove(test_file);
     return 0;

@@ -46,11 +46,128 @@ const char *state_backend_service_error_string(void) {
 /* --------------------------------------------------------- snapshot loading   */
 
 /*
+ * Deserialize NcdMetadata from a shared memory snapshot.
+ * Allocates a new NcdMetadata that must be freed by the caller.
+ */
+static NcdMetadata *deserialize_metadata_from_shm(const void *base, size_t size)
+{
+    (void)size;  /* size validated by caller */
+    const ShmSnapshotHdr *hdr = (const ShmSnapshotHdr *)base;
+    
+    NcdMetadata *meta = db_metadata_create();
+    if (!meta) return NULL;
+    
+    /* Config section */
+    const ShmSectionDesc *cfg_desc = shm_find_section(hdr, NCD_SHM_SECTION_CONFIG);
+    if (cfg_desc) {
+        const ShmConfigSection *cfg = (const ShmConfigSection *)shm_get_section_ptr(base, cfg_desc);
+        meta->cfg.magic = cfg->magic;
+        meta->cfg.version = cfg->version;
+        meta->cfg.default_show_hidden = cfg->default_show_hidden;
+        meta->cfg.default_show_system = cfg->default_show_system;
+        meta->cfg.default_fuzzy_match = cfg->default_fuzzy_match;
+        meta->cfg.default_timeout = cfg->default_timeout;
+        meta->cfg.has_defaults = cfg->has_defaults;
+        meta->cfg.service_retry_count = cfg->service_retry_count;
+        meta->cfg.rescan_interval_hours = cfg->rescan_interval_hours;
+        meta->cfg.text_encoding = cfg->text_encoding;
+    }
+    
+    /* Groups section */
+    const ShmSectionDesc *groups_desc = shm_find_section(hdr, NCD_SHM_SECTION_GROUPS);
+    if (groups_desc) {
+        const ShmGroupsSection *gs = (const ShmGroupsSection *)shm_get_section_ptr(base, groups_desc);
+        const ShmGroupEntry *entries = SHM_GROUPS_ENTRIES(base, gs);
+        const char *pool = SHM_GROUPS_POOL(base, gs);
+        uint32_t alloc_count = gs->entry_count;
+        if (alloc_count > (uint32_t)NCD_MAX_GROUPS) alloc_count = (uint32_t)NCD_MAX_GROUPS;
+        if (alloc_count > 0) {
+            meta->groups.groups = (NcdGroupEntry *)ncd_malloc_array(alloc_count, sizeof(NcdGroupEntry));
+            meta->groups.capacity = (int)alloc_count;
+        }
+        for (uint32_t i = 0; i < alloc_count; i++) {
+            const char *name = pool + entries[i].name_off - gs->pool_off;
+            const char *path = pool + entries[i].path_off - gs->pool_off;
+            platform_strncpy_s(meta->groups.groups[meta->groups.count].name,
+                               sizeof(meta->groups.groups[0].name), name);
+            platform_strncpy_s(meta->groups.groups[meta->groups.count].path,
+                               sizeof(meta->groups.groups[0].path), path);
+            meta->groups.groups[meta->groups.count].created = (time_t)entries[i].created;
+            meta->groups.count++;
+        }
+    }
+    
+    /* Heuristics section */
+    const ShmSectionDesc *heur_desc = shm_find_section(hdr, NCD_SHM_SECTION_HEURISTICS);
+    if (heur_desc) {
+        const ShmHeuristicsSection *hs = (const ShmHeuristicsSection *)shm_get_section_ptr(base, heur_desc);
+        const ShmHeurEntry *entries = SHM_HEUR_ENTRIES(base, hs);
+        const char *pool = SHM_HEUR_POOL(base, hs);
+        meta->heuristics.entries = (NcdHeurEntryV2 *)calloc(hs->entry_count, sizeof(NcdHeurEntryV2));
+        if (meta->heuristics.entries) {
+            meta->heuristics.capacity = (int)hs->entry_count;
+            for (uint32_t i = 0; i < hs->entry_count && meta->heuristics.count < NCD_HEUR_MAX_ENTRIES; i++) {
+                const char *search = pool + entries[i].search_off - hs->pool_off;
+                const char *target = pool + entries[i].target_off - hs->pool_off;
+                platform_strncpy_s(meta->heuristics.entries[meta->heuristics.count].search,
+                                   sizeof(meta->heuristics.entries[0].search), search);
+                platform_strncpy_s(meta->heuristics.entries[meta->heuristics.count].target,
+                                   sizeof(meta->heuristics.entries[0].target), target);
+                meta->heuristics.entries[meta->heuristics.count].frequency = entries[i].frequency;
+                meta->heuristics.entries[meta->heuristics.count].last_used = entries[i].last_used;
+                meta->heuristics.count++;
+            }
+        }
+    }
+    
+    /* Exclusions section */
+    const ShmSectionDesc *excl_desc = shm_find_section(hdr, NCD_SHM_SECTION_EXCLUSIONS);
+    if (excl_desc) {
+        const ShmExclusionsSection *es = (const ShmExclusionsSection *)shm_get_section_ptr(base, excl_desc);
+        const ShmExclusionEntry *entries = SHM_EXCL_ENTRIES(base, es);
+        const char *pool = SHM_EXCL_POOL(base, es);
+        uint32_t alloc_count = es->entry_count;
+        if (alloc_count > 0) {
+            meta->exclusions.entries = (NcdExclusionEntry *)ncd_malloc_array(alloc_count, sizeof(NcdExclusionEntry));
+            meta->exclusions.capacity = (int)alloc_count;
+        }
+        for (uint32_t i = 0; i < alloc_count; i++) {
+            const char *pattern = pool + entries[i].pattern_off - es->pool_off;
+            platform_strncpy_s(meta->exclusions.entries[meta->exclusions.count].pattern,
+                               sizeof(meta->exclusions.entries[0].pattern), pattern);
+            meta->exclusions.entries[meta->exclusions.count].drive = entries[i].drive;
+            meta->exclusions.entries[meta->exclusions.count].match_from_root = entries[i].match_from_root;
+            meta->exclusions.entries[meta->exclusions.count].has_parent_match = entries[i].has_parent_match;
+            meta->exclusions.count++;
+        }
+    }
+    
+    /* Directory history section */
+    const ShmSectionDesc *hist_desc = shm_find_section(hdr, NCD_SHM_SECTION_DIR_HISTORY);
+    if (hist_desc) {
+        const ShmDirHistorySection *hs = (const ShmDirHistorySection *)shm_get_section_ptr(base, hist_desc);
+        const ShmDirHistoryEntry *entries = SHM_HISTORY_ENTRIES(base, hs);
+        const char *pool = SHM_HISTORY_POOL(base, hs);
+        for (uint32_t i = 0; i < hs->entry_count && meta->dir_history.count < NCD_DIR_HISTORY_MAX; i++) {
+            const char *path = pool + entries[i].path_off - hs->pool_off;
+            platform_strncpy_s(meta->dir_history.entries[meta->dir_history.count].path,
+                               sizeof(meta->dir_history.entries[0].path), path);
+            meta->dir_history.entries[meta->dir_history.count].drive = entries[i].drive;
+            meta->dir_history.entries[meta->dir_history.count].timestamp = (time_t)entries[i].timestamp;
+            meta->dir_history.count++;
+        }
+    }
+    
+    return meta;
+}
+
+/*
  * ZERO-COPY metadata loading.
  * 
  * Instead of copying all metadata into a local structure, we store the base
  * pointer to the shared memory snapshot and use offset-based access macros
- * to read data directly from shared memory.
+ * to read data directly from shared memory. We also build a local NcdMetadata
+ * copy for API compatibility.
  */
 static bool load_metadata_from_snapshot(NcdStateView *view) {
     if (!SERVICE(view).meta_addr) {
@@ -87,11 +204,8 @@ static bool load_metadata_from_snapshot(NcdStateView *view) {
     /* Store the metadata pointer for zero-copy access */
     SERVICE(view).metadata_ptr = SERVICE(view).meta_addr;
     
-    /* 
-     * ZERO-COPY: We don't copy the metadata here.
-     * Instead, state_view_metadata_service() will use SHM_PTR macros
-     * to access data directly from shared memory.
-     */
+    /* Build a local NcdMetadata copy for API compatibility */
+    SERVICE(view).metadata_view = deserialize_metadata_from_shm(SERVICE(view).meta_addr, SERVICE(view).meta_size);
     
     SERVICE(view).has_metadata = true;
     return true;
@@ -536,10 +650,11 @@ void state_backend_close_service(NcdStateView *view) {
         return;
     }
     
-    /* 
-     * ZERO-COPY: No metadata copies to free!
-     * The metadata and database data are in shared memory, not heap.
-     */
+    /* Free the deserialized metadata copy (if any) */
+    if (SERVICE(view).metadata_view) {
+        db_metadata_free(SERVICE(view).metadata_view);
+        SERVICE(view).metadata_view = NULL;
+    }
     
     /* Free the lightweight database_view structure (but not the data it points to) */
     if (SERVICE(view).database_view) {

@@ -89,7 +89,6 @@ TEST(corrupt_magic_number) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -110,7 +109,6 @@ TEST(corrupt_version_invalid) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -133,7 +131,6 @@ TEST(corrupt_drive_count_zero) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -156,7 +153,6 @@ TEST(corrupt_drive_count_overflow) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -179,7 +175,6 @@ TEST(corrupt_drive_count_large) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -197,7 +192,6 @@ TEST(truncate_at_header) {
     write_file(buf, 8);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -215,7 +209,6 @@ TEST(truncate_at_drive_header) {
     write_file(buf, 50);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -243,7 +236,6 @@ TEST(append_garbage) {
     if (db) db_free(db);
     /* Test passes if we get here without crash */
     
-cleanup:
     free(buf);
     free(garbage);
     remove(TEST_FILE);
@@ -296,7 +288,6 @@ TEST(corrupt_dir_count_overflow) {
         ASSERT_TRUE(load_should_fail());
     }
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -459,7 +450,6 @@ TEST(corrupt_checksum_detected) {
     write_file(buf, size);
     ASSERT_TRUE(load_should_fail());
     
-cleanup:
     free(buf);
     remove(TEST_FILE);
     return 0;
@@ -501,7 +491,6 @@ TEST(corrupt_checksum_with_test_nc) {
     /* Reset flag */
     g_test_no_checksum = false;
     
-cleanup:
     if (db) db_free(db);
     g_test_no_checksum = false;  /* Ensure flag is reset even on failure */
     free(buf);
@@ -531,7 +520,6 @@ TEST(valid_checksum_with_test_nc) {
     /* Reset flag */
     g_test_no_checksum = false;
     
-cleanup:
     if (db) db_free(db);
     g_test_no_checksum = false;  /* Ensure flag is reset even on failure */
     remove(TEST_FILE);
@@ -589,7 +577,6 @@ TEST(test_nc_resets_properly) {
     /* Reset flag */
     g_test_no_checksum = false;
     
-cleanup:
     if (db1) db_free(db1);
     if (db2) db_free(db2);
     if (db3) db_free(db3);

@@ -125,7 +125,7 @@ TEST(verify_missing_directory_fails) {
 #else
     snprintf(cmd, sizeof(cmd),
         "%s --agent:verify \"%s\" --json > \"%s\" 2>&1",
-        test_dir, output_file);
+        exe, test_dir, output_file);
 #endif
     int ret = system(cmd);
 

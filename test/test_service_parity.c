@@ -38,7 +38,9 @@
 
 /* Test isolation setup - save original env vars */
 static char g_orig_xdg_data_home[4096] = {0};
+#if NCD_PLATFORM_WINDOWS
 static char g_orig_localappdata[4096] = {0};
+#endif
 static char g_test_data_dir[4096] = {0};
 
 /* Setup test isolation - redirect data directories to temp location */

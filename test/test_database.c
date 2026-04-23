@@ -99,7 +99,6 @@ TEST(binary_save_load_roundtrip) {
     ASSERT_EQ_INT('C', ldrv->letter);
     ASSERT_EQ_INT(3, ldrv->dir_count);
     
-cleanup:
     if (loaded) db_free(loaded);
     if (db) db_free(db);
     remove(test_file);
@@ -124,7 +123,6 @@ TEST(binary_load_corrupted_rejected) {
     db = db_load_binary(test_file);
     ASSERT_NULL(db);
     
-cleanup:
     if (db) db_free(db);
     remove(test_file);
     return 0;
@@ -155,7 +153,6 @@ TEST(binary_load_truncated_rejected) {
     db = db_load_binary(test_file);
     ASSERT_NULL(db);
     
-cleanup:
     if (db) db_free(db);
     remove(test_file);
     return 0;
@@ -180,7 +177,6 @@ TEST(load_auto_detects_binary_format) {
     ASSERT_NOT_NULL(loaded);
     ASSERT_EQ_INT(1, loaded->drive_count);
     
-cleanup:
     if (loaded) db_free(loaded);
     remove(test_file);
     return 0;
@@ -777,7 +773,7 @@ TEST(binary_save_load_utf8_no_bom) {
     FILE *f = fopen(test_file, "rb");
     ASSERT_NOT_NULL(f);
     uint8_t first_bytes[4];
-    size_t read = fread(first_bytes, 1, 4, f);
+    fread(first_bytes, 1, 4, f);
     fclose(f);
     
     /* First 4 bytes should be the magic 'NCDB' (0x4E, 0x43, 0x44, 0x42 in LE) */
@@ -794,7 +790,6 @@ TEST(binary_save_load_utf8_no_bom) {
     /* After loading UTF-8 file, encoding should be UTF-8 */
     ASSERT_EQ_INT(NCD_TEXT_UTF8, db_get_text_encoding());
     
-cleanup:
     if (loaded) db_free(loaded);
     remove(test_file);
     return 0;
@@ -836,7 +831,6 @@ TEST(binary_save_load_utf16_with_bom) {
     /* After loading UTF-16 file, encoding should be UTF-16 */
     ASSERT_EQ_INT(NCD_TEXT_UTF16LE, db_get_text_encoding());
     
-cleanup:
     if (loaded) db_free(loaded);
     remove(test_file);
     /* Reset to default */
@@ -973,7 +967,6 @@ TEST(saved_database_version_matches_current) {
     ASSERT_EQ_INT(1, db->drive_count);
     ASSERT_EQ_INT(3, db->drives[0].dir_count);
     
-cleanup:
     if (db) db_free(db);
     remove(test_file);
     return 0;
@@ -1020,6 +1013,7 @@ TEST(saved_database_version_is_correct_binary_version) {
 
 /* ================================================================ Exclusion Filtering Tests */
 
+#if NCD_PLATFORM_WINDOWS
 TEST(filter_excluded_removes_matching_directories) {
     /* Create a database with some directories */
     NcdDatabase *db = db_create();
@@ -1080,7 +1074,9 @@ TEST(filter_excluded_keeps_non_matching_directories) {
     db_free(db);
     return 0;
 }
+#endif
 
+#if NCD_PLATFORM_WINDOWS
 TEST(filter_excluded_updates_parent_indices) {
     /* Create a database with nested directories */
     NcdDatabase *db = db_create();
@@ -1122,6 +1118,7 @@ TEST(filter_excluded_updates_parent_indices) {
     db_free(db);
     return 0;
 }
+#endif
 
 /* ================================================================ Test Suites */
 

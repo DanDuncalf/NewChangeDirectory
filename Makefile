@@ -1,154 +1,183 @@
 # ===========================================================================
-#  Makefile  --  NewChangeDirectory (NCD) for Windows 64-bit
-#  Toolchain: MinGW-w64  (gcc / x86_64-w64-mingw32-gcc)
-#
-#  Usage:
-#    make            -- build release binary
-#    make debug      -- build with debug symbols and ASAN-style checks
-#    make clean      -- remove build artefacts
-#    make install    -- copy ncd.bat + exe to INSTALL_DIR (set below)
-#
-#  Tested with:
-#    x86_64-w64-mingw32-gcc 12+  (MSYS2 / mingw-w64)
-#    Native Windows gcc from WinLibs / LLVM-MinGW
+#  Unified Makefile -- NewChangeDirectory (NCD)
+#  Builds: main binaries + full test suite
+#  Platforms: Windows (MinGW/MSYS) and Linux
+#  Warnings are treated as errors everywhere
 # ===========================================================================
 
 # --------------------------------------------------------------------------
-#  Target executable names
+#  Platform auto-detection
 # --------------------------------------------------------------------------
-TARGET  := NewChangeDirectory.exe
-SERVICE := NCDService.exe
+UNAME_S := $(shell uname -s 2>/dev/null || echo Unknown)
+UNAME_M := $(shell uname -m 2>/dev/null || echo x86_64)
+
+ifeq ($(OS),Windows_NT)
+    PLATFORM := Windows
+else ifneq (,$(findstring MINGW,$(UNAME_S)))
+    PLATFORM := Windows
+else ifneq (,$(findstring MSYS,$(UNAME_S)))
+    PLATFORM := Windows
+else ifneq (,$(findstring CYGWIN,$(UNAME_S)))
+    PLATFORM := Windows
+else ifeq ($(UNAME_S),Linux)
+    PLATFORM := Linux
+else
+    PLATFORM := Linux
+endif
 
 # --------------------------------------------------------------------------
-#  Install directory (edit or override on the command line)
-#  e.g.  make install INSTALL_DIR=C:/tools
-# --------------------------------------------------------------------------
-INSTALL_DIR ?= C:/Windows/System32
-
-# --------------------------------------------------------------------------
-#  Compiler  (override if cross-compiling: make CC=x86_64-w64-mingw32-gcc)
+#  Compiler & flags
 # --------------------------------------------------------------------------
 CC ?= gcc
 
-# --------------------------------------------------------------------------
-#  Source directories
-# --------------------------------------------------------------------------
-SRCDIR  := src
-SHAREDDIR := ../shared
-OBJDIR  := obj
+# Base flags: strict C11, all warnings, warnings as errors
+# -Wno-format-truncation and -Wno-stringop-truncation are suppressed
+# because bounded snprintf/strncpy copies are an intentional design.
+CFLAGS_BASE := -std=c11 -Wall -Wextra -Werror -Wno-format-truncation -Wno-stringop-truncation
+
+ifeq ($(PLATFORM),Windows)
+    TARGET      := NewChangeDirectory.exe
+    SERVICE     := NCDService.exe
+    CFLAGS_PLAT := -D_WIN32_WINNT=0x0601 -DWINVER=0x0601
+    LDFLAGS     := -mconsole -mthreads -lkernel32 -luser32 -ladvapi32 -lshlwapi
+    PLATFORM_SRC:= src/shm_platform_win.c src/control_ipc_win.c
+else
+    TARGET      := NewChangeDirectory
+    SERVICE     := ncd_service
+    CFLAGS_PLAT := -DPLATFORM_LINUX=1 -D_GNU_SOURCE
+    LDFLAGS     := -lpthread
+    PLATFORM_SRC:= src/shm_platform_posix.c src/control_ipc_posix.c
+endif
 
 # --------------------------------------------------------------------------
-#  Common source files (shared between main and service)
+#  Directories
 # --------------------------------------------------------------------------
-COMMON_SOURCES := \
-    $(SRCDIR)/database.c  \
-    $(SRCDIR)/scanner.c   \
-    $(SRCDIR)/matcher.c   \
-    $(SRCDIR)/platform_ncd.c  \
-    $(SRCDIR)/cli.c       \
-    $(SRCDIR)/result.c    \
+SRCDIR      := src
+SHAREDDIR   := ../shared
+OBJDIR      := build/$(PLATFORM)/obj
+BINDIR      := build/$(PLATFORM)/bin
+
+CFLAGS  := $(CFLAGS_BASE) $(CFLAGS_PLAT) -O2 -DNDEBUG -I$(SRCDIR) -I$(SHAREDDIR)
+CFLAGS_DEBUG := $(CFLAGS_BASE) $(CFLAGS_PLAT) -O0 -g3 -DDEBUG -I$(SRCDIR) -I$(SHAREDDIR)
+
+# --------------------------------------------------------------------------
+#  Sources
+# --------------------------------------------------------------------------
+COMMON_SRC := \
+    $(SRCDIR)/database.c \
+    $(SRCDIR)/scanner.c \
+    $(SRCDIR)/matcher.c \
+    $(SRCDIR)/platform_ncd.c \
+    $(SRCDIR)/cli.c \
+    $(SRCDIR)/result.c \
     $(SRCDIR)/state_backend_local.c \
     $(SRCDIR)/state_backend_service.c \
     $(SRCDIR)/shared_state.c \
-    $(SRCDIR)/shm_platform_win.c \
-    $(SRCDIR)/control_ipc_win.c \
     $(SRCDIR)/service_state.c \
     $(SRCDIR)/service_publish.c \
+    $(PLATFORM_SRC) \
     $(SHAREDDIR)/platform.c \
     $(SHAREDDIR)/strbuilder.c \
     $(SHAREDDIR)/common.c
 
-# Main executable sources
-MAIN_SOURCES := \
-    $(SRCDIR)/main.c      \
-    $(SRCDIR)/ui.c        \
-    $(COMMON_SOURCES)
+MAIN_SRC   := $(SRCDIR)/main.c $(SRCDIR)/ui.c $(COMMON_SRC)
+SERVICE_SRC:= $(SRCDIR)/service_main.c $(SRCDIR)/ui.c $(COMMON_SRC)
 
-# Service executable sources
-SERVICE_SOURCES := \
-    $(SRCDIR)/service_main.c \
-    $(SRCDIR)/ui.c        \
-    $(COMMON_SOURCES)
+# --------------------------------------------------------------------------
+#  Objects
+# --------------------------------------------------------------------------
+MAIN_OBJECTS    := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(MAIN_SRC)))
+SERVICE_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SERVICE_SRC)))
 
-MAIN_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(MAIN_SOURCES)))
-SERVICE_OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(notdir $(SERVICE_SOURCES)))
-
-# VPATH to find source files
 VPATH := $(SRCDIR):$(SHAREDDIR)
 
 # --------------------------------------------------------------------------
-#  Flags
+#  Phony targets
 # --------------------------------------------------------------------------
-CFLAGS_COMMON := \
-    -std=c11               \
-    -Wall                  \
-    -Wextra                \
-    -Wpedantic             \
-    -I$(SRCDIR)            \
-    -I$(SHAREDDIR)         \
-    -D_WIN32_WINNT=0x0601  \
-    -DWINVER=0x0601
-
-CFLAGS_RELEASE := $(CFLAGS_COMMON) -O2 -DNDEBUG
-CFLAGS_DEBUG   := $(CFLAGS_COMMON) -O0 -g3 -DDEBUG
-
-# Link against the Windows subsystem (console) and needed libs
-LDFLAGS := -mconsole -mthreads -lkernel32 -luser32 -ladvapi32 -lshlwapi
-
-# Default to release
-CFLAGS ?= $(CFLAGS_RELEASE)
+.PHONY: all ncd service tests test clean debug install
 
 # --------------------------------------------------------------------------
-#  Build rules
+#  Default: build binaries + tests
 # --------------------------------------------------------------------------
-.PHONY: all debug clean install
+all: ncd service tests
 
-all: $(TARGET) $(SERVICE)
+# --------------------------------------------------------------------------
+#  Main binaries
+# --------------------------------------------------------------------------
+ncd: $(TARGET)
 
-debug: CFLAGS = $(CFLAGS_DEBUG)
-debug: all
+service: $(SERVICE)
 
 $(TARGET): $(MAIN_OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo ""
-	@echo "  Build successful: $(TARGET)"
-	@echo ""
 
 $(SERVICE): $(SERVICE_OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo ""
-	@echo "  Build successful: $(SERVICE)"
-	@echo ""
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OBJDIR):
-	@if not exist $(OBJDIR) mkdir $(OBJDIR)
-	@mkdir -p $(OBJDIR) 2>/dev/null || true
+	mkdir -p $(OBJDIR)
+
+# --------------------------------------------------------------------------
+#  Debug build
+# --------------------------------------------------------------------------
+debug: CFLAGS = $(CFLAGS_DEBUG)
+debug: all
+
+# --------------------------------------------------------------------------
+#  Tests (Linux only; Windows tests use Run-Tests-Safe.bat)
+# --------------------------------------------------------------------------
+ifeq ($(PLATFORM),Linux)
+    TEST_CFLAGS := $(CFLAGS_BASE) $(CFLAGS_PLAT) -g \
+        -I../src -I../../shared -I. \
+        -Wno-error=unused-label \
+        -Wno-error=unused-variable \
+        -Wno-error=unused-function \
+        -Wno-error=type-limits \
+        -Wno-error=return-type \
+        -Wno-error=implicit-function-declaration \
+        -DNCD_TEST_BUILD
+
+    tests: $(TARGET) $(SERVICE)
+	$(MAKE) -C test all CC="$(CC)" CFLAGS="$(TEST_CFLAGS)" LDFLAGS="$(LDFLAGS)"
+
+    test: $(TARGET) $(SERVICE) tests
+	$(MAKE) -C test test CC="$(CC)" CFLAGS="$(TEST_CFLAGS)" LDFLAGS="$(LDFLAGS)"
+else
+    tests:
+	@echo "Windows test runner: cmd /c Run-Tests-Safe.bat"
+
+    test: ncd service tests
+endif
+
+# --------------------------------------------------------------------------
+#  Clean
+# --------------------------------------------------------------------------
+clean:
+	rm -rf build $(TARGET) $(SERVICE) .depend
+	$(MAKE) -C test clean
+
+# --------------------------------------------------------------------------
+#  Install (Windows only; Linux uses deploy.sh)
+# --------------------------------------------------------------------------
+ifeq ($(PLATFORM),Windows)
+INSTALL_DIR ?= C:/Windows/System32
+
+install: all
+	@echo Installing to $(INSTALL_DIR) ...
+	cp -f $(TARGET) "$(INSTALL_DIR)/$(TARGET)"
+	cp -f $(SERVICE) "$(INSTALL_DIR)/$(SERVICE)" || echo "  (Service not copied)"
+	cp -f ncd.bat "$(INSTALL_DIR)/ncd.bat"
+	@echo Done. Make sure $(INSTALL_DIR) is on your PATH.
+endif
 
 # --------------------------------------------------------------------------
 #  Dependency includes (optional -- regenerate with make deps)
 # --------------------------------------------------------------------------
 .PHONY: deps
 deps:
-	$(CC) -MM $(CFLAGS) $(MAIN_SOURCES) $(SERVICE_SOURCES) > .depend 2>/dev/null || true
+	$(CC) -MM $(CFLAGS) $(MAIN_SRC) $(SERVICE_SRC) > .depend 2>/dev/null || true
 
 -include .depend
-
-# --------------------------------------------------------------------------
-#  Clean
-# --------------------------------------------------------------------------
-clean:
-	@if exist $(OBJDIR) rmdir /s /q $(OBJDIR) 2>nul
-	@rm -rf $(OBJDIR) $(TARGET) $(SERVICE) .depend 2>/dev/null || true
-
-# --------------------------------------------------------------------------
-#  Install  (copy exe + batch wrapper to INSTALL_DIR)
-# --------------------------------------------------------------------------
-install: all
-	@echo Installing to $(INSTALL_DIR) ...
-	copy /y $(TARGET) "$(INSTALL_DIR)\$(TARGET)"
-	copy /y $(SERVICE) "$(INSTALL_DIR)\$(SERVICE)" 2>nul || echo "  (Service not copied)"
-	copy /y ncd.bat   "$(INSTALL_DIR)\ncd.bat"
-	@echo Done.  Make sure $(INSTALL_DIR) is on your PATH.

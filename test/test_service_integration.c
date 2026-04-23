@@ -625,6 +625,7 @@ TEST(a_flag_is_not_agent_alias) {
 /* /agdb is an internal debug path; keep implementation out of the compile unit
  * when not wired into RUN_TEST (avoids -Werror=unused-function on Linux). */
 #if 0
+#if 0
 TEST(agentic_debug_mode_with_service_exits_cleanly) {
     ensure_service_stopped();
     
@@ -648,6 +649,7 @@ TEST(agentic_debug_mode_with_service_exits_cleanly) {
     ensure_service_stopped();
     return 0;
 }
+#endif
 #endif
 
 /* --------------------------------------------------------- test suite         */

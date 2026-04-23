@@ -5,9 +5,9 @@
 | User says | Exact command |
 |-----------|---------------|
 | `run all tests` | `python test\generate_report.py` (bg, 600s) |
-| `run unit tests` | `cmd /c Run-Tests-Safe.bat unit` |
-| `run integration tests` | `cmd /c Run-Tests-Safe.bat integration` |
-| `repair test env` | `cmd /c Run-Tests-Safe.bat --repair` |
+| `run unit tests` | `python test\runner.py unit` |
+| `run integration tests` | `python test\runner.py integration` |
+| `repair test env` | `python test\runner.py --repair` |
 
 ## ⚠️ MANDATORY FIRST STEP — INGEST THE KNOWLEDGE GRAPH
 
@@ -21,7 +21,7 @@
 
 > **🗺️ GRAPH-FIRST NAVIGATION RULE (Reminder):** This project has a pre-built knowledge graph at `graphify-out/GRAPH_REPORT.md` (2,354 nodes, 7,519 edges, 83 communities). **Before using Glob or Grep on raw source files, you MUST read `graphify-out/GRAPH_REPORT.md` first.** Use the graph's god nodes, communities, and surprising connections to orient yourself. Only read raw files after the graph has directed you to specific functions or modules. For cross-module questions, use `graphify query` or `graphify path` instead of grepping. This reduces context usage from ~100K+ tokens (naive file search) to ~2K tokens (graph query).
 >
-> **Agent Quick Reference (Testing):** If you need to run tests with no context, see [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) § *Zero-Context Quick Reference*. The one-liner is `cmd /c Run-Tests-Safe.bat unit`.
+> **Agent Quick Reference (Testing):** If you need to run tests with no context, see [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md) § *Zero-Context Quick Reference*. The one-liner is `python test\runner.py unit`.
 
 ## Project Overview
 
@@ -201,21 +201,23 @@ This is the **unified cross-platform runner** — it auto-builds, runs Windows +
 
 If `generate_report.py` is unavailable, fall back to:
 ```powershell
-cmd /c Run-Tests-Safe.bat all
+python test\runner.py
 ```
 
 ### Quick Reference
 ```powershell
-cmd /c Run-Tests-Safe.bat unit           # Unit tests only
-cmd /c Run-Tests-Safe.bat integration    # Integration tests only
-cmd /c Run-Tests-Safe.bat --repair       # Fix corrupted test environment
+python test\runner.py unit           # Unit tests only
+python test\runner.py integration    # Integration tests only
+python test\runner.py --repair       # Fix corrupted test environment
 ```
 
 ### Rules
-- **Never run `test\*.exe` directly** — always use the harness (`Run-Tests-Safe.bat`, `Run-All-Tests.bat`, or `generate_report.py`)
+- **Never run `test\*.exe` directly** — always use the harness (`generate_report.py` or `runner.py`)
 - **Invoke `.bat` files via `cmd /c`** because the Shell tool runs PowerShell by default
 - Use `run_in_background=true` with timeout `600` for full-suite runs (~3–4 minutes)
 - Set `NCD_TEST_MODE=1` to disable background rescans during tests
+- **Always show the test runner output** — do not suppress, truncate, or summarize away the actual pass/fail results and suite breakdowns
+- **When `generate_report.py` is used, display the full `test.results` file content** in the response. Do not skip showing the report file.
 
 ### Keystroke Injection for TUI Testing
 
@@ -335,12 +337,12 @@ typedef struct {
 - `ncd --agent:check --db-age` shows wrong location
 - Environment check reports corruption
 
-**Cause:** Previous test was interrupted with Ctrl+C (batch file limitation)
+**Cause:** Previous test was interrupted with Ctrl+C
 
 **Fix:**
 ```powershell
 # Quick repair
-cmd /c Run-Tests-Safe.bat --repair
+python test\runner.py --repair
 
 # Or manually
 $env:LOCALAPPDATA="$env:USERPROFILE\AppData\Local"
@@ -349,15 +351,12 @@ $env:NCD_TEST_MODE=""
 
 #### "Tests interrupted and environment not cleaned up"
 
-**Cause:** Batch files cannot trap Ctrl+C
+**Cause:** Python signal handlers guarantee cleanup on Ctrl+C
 
 **Prevention:**
 ```powershell
-# Use PowerShell runner (Ctrl+C safe!)
-cmd /c Run-Tests-Safe.bat
-
-# Or use isolated mode (runs in subprocess)
-cmd /c test\Run-Isolated.bat test\Test-Service-Windows.bat
+# Use Python runner (Ctrl+C safe!)
+python test\runner.py
 ```
 
 **Repair:**
@@ -365,8 +364,8 @@ cmd /c test\Run-Isolated.bat test\Test-Service-Windows.bat
 # Comprehensive repair
 .\Check-Environment.ps1 -Repair
 
-# Or use the batch wrapper
-cmd /c Run-Tests-Safe.bat --repair
+# Or use the Python runner
+python test\runner.py --repair
 ```
 
 #### "Cannot run PowerShell scripts"
@@ -378,8 +377,8 @@ cmd /c Run-Tests-Safe.bat --repair
 # Run as Administrator
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
-# Or use the batch wrapper (bypasses policy)
-cmd /c Run-Tests-Safe.bat
+# Or use the Python runner (no policy issues)
+python test\runner.py
 ```
 
 #### "Service tests timeout or hang"

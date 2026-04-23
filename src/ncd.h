@@ -70,9 +70,9 @@ typedef long          LONG;
  */
 #if defined(DEBUG) && !defined(NDEBUG)
 #include <stdio.h>
-#define NCD_DEBUG_LOG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#define NCD_DEBUG_LOG(...) fprintf(stderr, __VA_ARGS__)
 #else
-#define NCD_DEBUG_LOG(fmt, ...) ((void)0)
+#define NCD_DEBUG_LOG(...) ((void)0)
 #endif
 
 /* --------------------------------------------------------- binary format   */
