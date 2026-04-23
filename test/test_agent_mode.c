@@ -6,26 +6,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Helper to create test database */
-static NcdDatabase *create_test_db(void) {
-    NcdDatabase *db = db_create();
-    DriveData *drv = db_add_drive(db, 'C');
-    
-    /* Build tree */
-    int users = db_add_dir(drv, "Users", -1, false, false);
-    int scott = db_add_dir(drv, "scott", users, false, false);
-    int admin = db_add_dir(drv, "admin", users, false, false);
-    
-    db_add_dir(drv, "Downloads", scott, false, false);
-    db_add_dir(drv, "Documents", scott, false, false);
-    db_add_dir(drv, "Downloads", admin, false, false);
-    
-    int windows = db_add_dir(drv, "Windows", -1, false, true);
-    db_add_dir(drv, "System32", windows, false, true);
-    
-    return db;
-}
-
 /* ================================================================ Tier 3: Agent Mode Tests */
 
 TEST(glob_match_exact) {
@@ -182,10 +162,6 @@ TEST(agent_check_flags) {
 TEST(parse_agent_args_consumes_correctly) {
     NcdOptions opts;
     memset(&opts, 0, sizeof(opts));
-    
-    /* Test that parse_agent_args properly advances the consumed counter */
-    char *argv[] = {(char *)"ncd", (char *)"--agent:query", (char *)"downloads"};
-    int consumed = 0;
     
     /* We can't easily call parse_agent_args without the full agent mode setup */
     /* So just verify the structure is set up correctly */

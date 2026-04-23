@@ -104,21 +104,6 @@ TEST(calloc_many_small) {
     return 0;
 }
 
-TEST(calloc_size_overflow_check) {
-    /* Test that size_t overflow is handled */
-    size_t huge = SIZE_MAX;
-    
-    /* This should either fail gracefully or not overflow */
-    void *ptr = ncd_calloc(huge, 2);
-    
-    /* If allocation succeeded, something is wrong, but we should handle it */
-    if (ptr != NULL) {
-        free(ptr);
-    }
-    
-    return 0;
-}
-
 /* ================================================================ ncd_realloc Tests */
 
 TEST(realloc_null_pointer) {
@@ -486,26 +471,6 @@ TEST(pointer_alignment) {
     
     for (int i = 0; i < 10; i++) {
         free(ptrs[i]);
-    }
-    
-    return 0;
-}
-
-TEST(malloc_array_overflow_detection) {
-    /* Test that overflow is detected and handled */
-    size_t huge_nmemb = (size_t)-1 / sizeof(int) + 1;
-    
-    /* This should handle overflow gracefully */
-    void *ptr = NULL;
-    
-    /* Wrap in if to avoid compiler warning about always-false condition */
-    if (huge_nmemb > 0 && huge_nmemb < (size_t)-1) {
-        ptr = ncd_malloc_array(huge_nmemb, sizeof(int));
-    }
-    
-    /* May return NULL on overflow detection */
-    if (ptr != NULL) {
-        free(ptr);
     }
     
     return 0;

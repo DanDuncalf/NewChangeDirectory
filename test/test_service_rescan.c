@@ -246,7 +246,7 @@ TEST(rescan_progress_reporting) {
     NcdIpcStateInfo info;
     result = ipc_client_get_state_info(client, &info);
     ASSERT_EQ_INT(NCD_IPC_OK, result);
-    ASSERT_TRUE(info.db_generation >= 0);
+    (void)info.db_generation; /* unsigned, >= 0 is tautological */
     
     ipc_client_disconnect(client);
     ipc_client_cleanup();
@@ -474,7 +474,7 @@ TEST(rescan_updates_generation_counter) {
     NcdIpcStateInfo info;
     result = ipc_client_get_state_info(client, &info);
     ASSERT_EQ_INT(NCD_IPC_OK, result);
-    ASSERT_TRUE(info.db_generation >= 0);
+    (void)info.db_generation; /* unsigned, >= 0 is tautological */
     
     ipc_client_disconnect(client);
     ipc_client_cleanup();

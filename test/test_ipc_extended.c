@@ -122,7 +122,6 @@ TEST(ipc_pipe_disconnect_mid_transfer) {
     if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
     
     /* Start service */
-    char _buf[256];
 #if NCD_PLATFORM_WINDOWS
     system("NCDService.exe start");
 #else

@@ -627,7 +627,7 @@ TEST(rapid_append_and_clear) {
         }
     }
     
-    ASSERT_TRUE(sb.len >= 0);
+    /* sb.len is size_t (unsigned), so >= 0 is always true; skip tautological check */
     
     sb_free(&sb);
     return 0;

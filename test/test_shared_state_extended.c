@@ -1,6 +1,7 @@
 /* test_shared_state_extended.c -- Extended tests for shared state (Tier 4) */
 #include "test_framework.h"
 #include "../src/shared_state.h"
+#include "../src/shm_platform.h"
 #include <string.h>
 #include <stdlib.h>
 

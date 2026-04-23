@@ -6,20 +6,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Helper: Capture write_result output to a string */
-static char *capture_write_result(bool ok, const char *drive, const char *path, const char *message) {
-    /* Redirect to temp file and read back */
-    FILE *fp = tmpfile();
-    if (!fp) return NULL;
-    
-    /* We can't easily capture since write_result writes to a fixed path */
-    /* For now, just verify the function doesn't crash */
-    write_result(ok, drive, path, message);
-    
-    fclose(fp);
-    return NULL;
-}
-
 /* ================================================================ Tier 3: Result Output Tests */
 
 TEST(write_result_ok_doesnt_crash) {

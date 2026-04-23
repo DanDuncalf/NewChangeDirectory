@@ -79,24 +79,6 @@ static bool dir_exists(const char *path) {
 #endif
 }
 
-/* Remove file if exists */
-static void remove_file_if_exists(const char *path) {
-#if NCD_PLATFORM_WINDOWS
-    DeleteFileA(path);
-#else
-    unlink(path);
-#endif
-}
-
-/* Remove directory if exists (must be empty) */
-static void remove_dir_if_exists(const char *path) {
-#if NCD_PLATFORM_WINDOWS
-    RemoveDirectoryA(path);
-#else
-    rmdir(path);
-#endif
-}
-
 /* --------------------------------------------------------- tests              */
 
 /* Test 1: db_logs_path returns a valid path */
@@ -108,6 +90,7 @@ TEST(logs_path_returns_valid_path) {
     
     /* Path should contain "ncd" (database directory) */
     ASSERT_TRUE(strstr(path, "ncd") != NULL);
+    return 0;
 }
 
 /* Test 2: Database directory is created automatically */
@@ -123,6 +106,7 @@ TEST(database_directory_created_automatically) {
     
     /* The database directory should now exist */
     ASSERT_TRUE(dir_exists(db_dir));
+    return 0;
 }
 
 /* Test 3: Log file path is correct */
@@ -142,6 +126,7 @@ TEST(log_file_path_correct) {
 #endif
     
     ASSERT_TRUE(strcmp(log_path, expected_path) == 0);
+    return 0;
 }
 
 /* Test 4: Log file format validation */
@@ -184,6 +169,7 @@ TEST(log_file_format_validation) {
             ASSERT_TRUE(found_header || found_timestamp);
         }
     }
+    return 0;
 }
 
 /* Test 5: Multiple calls to db_logs_path return same path */
@@ -195,6 +181,7 @@ TEST(logs_path_consistent) {
     ASSERT_TRUE(db_logs_path(path2, sizeof(path2)) != NULL);
     
     ASSERT_TRUE(strcmp(path1, path2) == 0);
+    return 0;
 }
 
 /* Test 6: Logs path with override uses override directory */
@@ -232,6 +219,7 @@ TEST(logs_path_with_override) {
     /* Verify we're back to default */
     ASSERT_TRUE(db_logs_path(override_path, sizeof(override_path)) != NULL);
     ASSERT_TRUE(strcmp(original_path, override_path) == 0);
+    return 0;
 }
 
 /* Test 7: Buffer size handling */
@@ -246,6 +234,7 @@ TEST(logs_path_buffer_size) {
     
     /* Normal buffer should succeed */
     ASSERT_TRUE(db_logs_path(normal_buf, sizeof(normal_buf)) != NULL);
+    return 0;
 }
 
 void suite_service_logging(void) {

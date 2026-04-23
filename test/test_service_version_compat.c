@@ -228,8 +228,8 @@ TEST(version_check_mismatch_triggers_shutdown) {
     
     /* Use a fake version that doesn't match */
     NcdIpcVersionCheckResult result;
-    NcdIpcResult ipc_result = ipc_client_check_version(client, "0.0.0", 
-                                                        "Jan 01 2020 00:00:00", &result);
+    (void)ipc_client_check_version(client, "0.0.0", 
+                                    "Jan 01 2020 00:00:00", &result);
     
     /* Should report mismatch */
     ASSERT_FALSE(result.versions_match);

@@ -72,13 +72,6 @@ static bool ensure_service_running(void) {
     return false;
 }
 
-/* Simple random number generator for fuzzing */
-static unsigned int fuzz_seed = 12345;
-static unsigned int fuzz_rand(void) {
-    fuzz_seed = fuzz_seed * 1103515245 + 12345;
-    return (fuzz_seed >> 16) & 0x7FFF;
-}
-
 /* --------------------------------------------------------- fuzz tests */
 
 TEST(fuzz_ipc_message_header_random_bytes) {

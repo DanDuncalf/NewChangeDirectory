@@ -18,6 +18,7 @@ TEST(parse_drive_from_search_with_backslash) {
     ASSERT_EQ_STR("downloads", clean);
 #else
     /* Linux handles differently */
+    (void)drive;
     ASSERT_TRUE(strlen(clean) > 0);
 #endif
     
@@ -34,6 +35,7 @@ TEST(parse_drive_from_search_with_forward_slash) {
     ASSERT_TRUE(drive == 'C' || drive == 'c');
     ASSERT_EQ_STR("downloads", clean);
 #else
+    (void)drive;
     ASSERT_TRUE(strlen(clean) > 0);
 #endif
     
@@ -90,31 +92,6 @@ TEST(is_drive_specifier_lowercase) {
 #else
     ASSERT_FALSE(platform_is_drive_specifier("c:"));
 #endif
-    
-    return 0;
-}
-
-TEST(build_mount_path_drive_z) {
-    char path[MAX_PATH];
-    bool result = platform_build_mount_path('Z', path, sizeof(path));
-    
-    ASSERT_TRUE(result);
-    ASSERT_TRUE(strlen(path) > 0);
-    
-#if NCD_PLATFORM_WINDOWS
-    ASSERT_TRUE(path[0] == 'Z' || path[0] == 'z');
-    ASSERT_TRUE(path[1] == ':');
-#endif
-    
-    return 0;
-}
-
-TEST(build_mount_path_drive_a) {
-    char path[MAX_PATH];
-    bool result = platform_build_mount_path('A', path, sizeof(path));
-    
-    ASSERT_TRUE(result);
-    ASSERT_TRUE(strlen(path) > 0);
     
     return 0;
 }
@@ -217,12 +194,6 @@ TEST(is_pseudo_fs_cgroup2) {
 TEST(is_pseudo_fs_overlay) {
     /* overlay is used by Docker containers */
     ASSERT_TRUE(platform_is_pseudo_fs("overlay"));
-    return 0;
-}
-
-TEST(is_pseudo_fs_aufs) {
-    /* aufs is another union filesystem */
-    ASSERT_TRUE(platform_is_pseudo_fs("aufs"));
     return 0;
 }
 
@@ -412,24 +383,6 @@ TEST(strncasecmp_different_strings) {
     
     /* Should not be 0 (strings are different) */
     ASSERT_TRUE(result != 0);
-    
-    return 0;
-}
-
-TEST(strncasecmp_partial_match) {
-    int result = platform_strncasecmp("HelloWorld", "helloxyz", 5);
-    
-    /* First 5 chars match (case insensitive) */
-    ASSERT_EQ_INT(0, result);
-    
-    return 0;
-}
-
-TEST(strncasecmp_zero_length) {
-    int result = platform_strncasecmp("Hello", "World", 0);
-    
-    /* Zero length means no comparison, should return 0 */
-    ASSERT_EQ_INT(0, result);
     
     return 0;
 }

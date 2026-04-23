@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <time.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define PLATFORM_WINDOWS 1

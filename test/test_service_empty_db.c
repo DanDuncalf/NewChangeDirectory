@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "test_framework.h"
+#include "../src/platform.h"
 
 /* Platform detection */
 #if defined(_WIN32) || defined(_WIN64)

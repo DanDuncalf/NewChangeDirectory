@@ -158,7 +158,7 @@ TEST(init_db_help_shows_option) {
     }
 
     char output[1024] = {0};
-    int exit_code = run_service_command("", output, sizeof(output));
+    (void)run_service_command("", output, sizeof(output));
 
     ASSERT_TRUE(strstr(output, "-init") != NULL);
     return 0;

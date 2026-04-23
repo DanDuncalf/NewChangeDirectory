@@ -68,8 +68,6 @@ static void add_to_history(const char *line) {
 static char *read_line(void) {
     static char line[MAX_LINE_LEN];
     int pos = 0;
-    int len = 0;
-    int display_pos = 0;
     
     memset(line, 0, sizeof(line));
     
@@ -220,7 +218,7 @@ static int get_token(char *line, char *token, int max_len) {
 static void cmd_ping(char *args) {
     int count = 1;
     char count_str[32];
-    int n = get_token(args, count_str, sizeof(count_str));
+    (void)get_token(args, count_str, sizeof(count_str));
     
     if (count_str[0]) {
         count = atoi(count_str);
