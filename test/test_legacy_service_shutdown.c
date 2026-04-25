@@ -40,7 +40,7 @@ static const char* get_service_exe(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
-    if (access("ncd_service", X_OK) == 0) return "ncd_service";
+    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
     return "../ncd_service";
 #endif
 }
@@ -115,7 +115,7 @@ static void force_terminate_service(void) {
         CloseHandle(hSnap);
     }
 #else
-    system("pkill -9 -f ncd_service 2>/dev/null || killall -9 ncd_service 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null || killall -9 NCDService 2>/dev/null");
 #endif
     platform_sleep_ms(500);
 }

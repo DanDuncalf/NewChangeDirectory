@@ -298,8 +298,16 @@ TEST(snapshot_checksum_validation) {
     ASSERT_NOT_NULL(addr);
     ASSERT_TRUE(size > 0);
     
-    /* Validate header */
-    ASSERT_TRUE(shm_validate_header(addr, size, NCD_SHM_DB_MAGIC));
+    /* Validate database snapshot header */
+    {
+        const ShmDatabaseHeader *hdr = (const ShmDatabaseHeader *)addr;
+        ASSERT_EQ_INT(NCD_SHM_DB_MAGIC, hdr->magic);
+        ASSERT_EQ_INT(NCD_SHM_TYPES_VERSION, hdr->version);
+        ASSERT_TRUE(size >= hdr->total_size);
+        ASSERT_TRUE(hdr->header_size >= sizeof(ShmDatabaseHeader));
+        ASSERT_EQ_INT(1, (int)hdr->mount_count);
+        ASSERT_TRUE(hdr->generation > 0);
+    }
     
     /* Validate checksum - current API takes just (base, size) */
     ASSERT_TRUE(shm_validate_checksum(addr, size));

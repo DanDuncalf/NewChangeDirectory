@@ -24,6 +24,20 @@ def run_cmd(cmd, cwd=None, timeout=300, shell=False):
         return -1, "", str(e)
 
 
+def _cleanup_linux_service_state(path):
+    """Best-effort cleanup between Linux test binaries when running under WSL."""
+    from .build import wsl_path
+
+    wsl_dir = wsl_path(path.parent)
+    cleanup_cmd = (
+        f'cd "{wsl_dir}" && '
+        'pkill -9 -x NCDService 2>/dev/null; '
+        'killall -9 NCDService 2>/dev/null; '
+        'rm -f "${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid" 2>/dev/null'
+    )
+    run_cmd(["wsl", "bash", "-lc", cleanup_cmd], timeout=15)
+
+
 def run_test_binary(path, platform_label, timeout=60):
     """Run a single test binary and return raw output."""
     if platform_label == "linux" and platform.system() == "Windows":
@@ -31,11 +45,13 @@ def run_test_binary(path, platform_label, timeout=60):
         wsl_p = wsl_path(path)
         binary_name = Path(path).name
         wsl_dir = wsl_path(path.parent)
+        _cleanup_linux_service_state(path)
         rc, out, err = run_cmd(
             ["wsl", "bash", "-c",
              f'cd "{wsl_dir}" && NCD_TEST_MODE=1 ./{binary_name}'],
             timeout=timeout
         )
+        _cleanup_linux_service_state(path)
         return out + err
     else:
         rc, out, err = run_cmd([str(path)], timeout=timeout)

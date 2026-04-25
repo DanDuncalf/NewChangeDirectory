@@ -13,6 +13,7 @@
 #define rmdir(path) _rmdir(path)
 #else
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 /* Helper to create temp directory path */
@@ -25,12 +26,6 @@ static void get_temp_dir(char *buf, size_t size, const char *suffix) {
 #else
     snprintf(buf, size, "%s/ncd_verify_test_%s", tmp, suffix);
 #endif
-}
-
-/* Helper to check if directory exists */
-static bool dir_exists(const char *path) {
-    struct stat st;
-    return (stat(path, &st) == 0 && (st.st_mode & S_IFDIR));
 }
 
 /* Helper to recursively remove a directory */
@@ -61,6 +56,16 @@ static const char* find_exe(void) {
     return NULL;
 }
 
+static int normalize_exit_code(int status) {
+#if NCD_PLATFORM_WINDOWS
+    return status;
+#else
+    if (status == -1) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return status;
+#endif
+}
+
 TEST(verify_existing_directory_passes) {
     char test_dir[NCD_MAX_PATH];
     get_temp_dir(test_dir, sizeof(test_dir), "exists");
@@ -85,7 +90,7 @@ TEST(verify_existing_directory_passes) {
         "%s --agent:verify \"%s\" --json > \"%s\" 2>&1",
         exe, test_dir, output_file);
 #endif
-    int ret = system(cmd);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *f = fopen(output_file, "r");
@@ -127,7 +132,7 @@ TEST(verify_missing_directory_fails) {
         "%s --agent:verify \"%s\" --json > \"%s\" 2>&1",
         exe, test_dir, output_file);
 #endif
-    int ret = system(cmd);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *f = fopen(output_file, "r");
@@ -167,7 +172,7 @@ TEST(verify_empty_directory_passes) {
         "%s --agent:verify \"%s\" --empty --json > \"%s\" 2>&1",
         exe, test_dir, output_file);
 #endif
-    int ret = system(cmd);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *f = fopen(output_file, "r");
@@ -195,10 +200,15 @@ TEST(verify_mode_mismatch_fails) {
     char output_file[NCD_MAX_PATH];
     snprintf(output_file, sizeof(output_file), "%s/output.txt", test_dir);
 
+    const char *exe = find_exe();
+    if (!exe) {
+        printf("SKIP: NCD executable not found\n");
+        return 0;
+    }
     snprintf(cmd, sizeof(cmd),
-        "./NewChangeDirectory --agent:verify \"%s\" --mode 0700 --json > \"%s\" 2>&1",
-        test_dir, output_file);
-    int ret = system(cmd);
+        "%s --agent:verify \"%s\" --mode 0700 --json > \"%s\" 2>&1",
+        exe, test_dir, output_file);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *f = fopen(output_file, "r");
@@ -260,7 +270,7 @@ TEST(verify_tree_structure_matches) {
         "%s --agent:verify \"%s\" --tree \"%s\" --json > \"%s\" 2>&1",
         exe, test_dir, spec_file, output_file);
 #endif
-    int ret = system(cmd);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *out = fopen(output_file, "r");
@@ -288,10 +298,15 @@ TEST(chmod_changes_mode) {
     char output_file[NCD_MAX_PATH];
     snprintf(output_file, sizeof(output_file), "%s/output.txt", test_dir);
 
+    const char *exe = find_exe();
+    if (!exe) {
+        printf("SKIP: NCD executable not found\n");
+        return 0;
+    }
     snprintf(cmd, sizeof(cmd),
-        "./NewChangeDirectory --agent:chmod \"%s\" 0700 --json > \"%s\" 2>&1",
-        test_dir, output_file);
-    int ret = system(cmd);
+        "%s --agent:chmod \"%s\" --mode 0700 --json > \"%s\" 2>&1",
+        exe, test_dir, output_file);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *out = fopen(output_file, "r");
@@ -330,10 +345,15 @@ TEST(chmod_recursive_changes_all) {
     char output_file[NCD_MAX_PATH];
     snprintf(output_file, sizeof(output_file), "%s/output.txt", test_dir);
 
+    const char *exe = find_exe();
+    if (!exe) {
+        printf("SKIP: NCD executable not found\n");
+        return 0;
+    }
     snprintf(cmd, sizeof(cmd),
-        "./NewChangeDirectory --agent:chmod \"%s\" 0700 --recursive --json > \"%s\" 2>&1",
-        test_dir, output_file);
-    int ret = system(cmd);
+        "%s --agent:chmod \"%s\" --mode 0700 --recursive --json > \"%s\" 2>&1",
+        exe, test_dir, output_file);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *out = fopen(output_file, "r");
@@ -378,9 +398,9 @@ TEST(chmod_returns_unsupported_on_windows) {
         return 0;
     }
     snprintf(cmd, sizeof(cmd),
-        "%s /agent:chmod \"%s\" 0700 --json > \"%s\" 2>&1",
+        "%s /agent:chmod \"%s\" --mode 0700 --json > \"%s\" 2>&1",
         exe, test_dir, output_file);
-    int ret = system(cmd);
+    int ret = normalize_exit_code(system(cmd));
 
     char output[1024];
     FILE *out = fopen(output_file, "r");

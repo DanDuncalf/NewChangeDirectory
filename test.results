@@ -1,47 +1,155 @@
 ================================================================================
 NCD Test Results Report
 ================================================================================
-Generated: 2026-04-23T00:45:10Z
+Generated: 2026-04-25T00:47:37Z
 Generator: runner.py
 Platform: Windows
-WSL Available: N/A
+WSL Available: True
 
 ================================================================================
 BUILD INFORMATION
 ================================================================================
 
 [Windows Main Binaries]
+  NCDService.exe                           : 2026-04-25T00:33:18Z
+  NewChangeDirectory.exe                   : 2026-04-25T00:33:17Z
 
 [Linux Main Binaries]
+  NCDService                               : 2026-04-24T17:09:11Z
+  NewChangeDirectory                       : 2026-04-24T17:09:01Z
 
 ================================================================================
 UNIT TEST RESULTS - WINDOWS
 ================================================================================
 
-(No WINDOWS unit tests executed)
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load.exe                       2026-04-25    00:38:20
+    10       0       0  fuzz_ipc.exe                                 2026-04-25    00:38:23
+    13       0       0  test_agent_mkdir_extended.exe                2026-04-25    00:38:28
+    16       0       0  test_agent_mode.exe                          2026-04-25    00:38:30
+     4       0       0  test_agent_mv.exe                            2026-04-25    00:38:29
+     7       0       0  test_agent_rmdir.exe                         2026-04-25    00:38:28
+     5       0       0  test_agent_verify.exe                        2026-04-25    00:38:29
+    15       0       0  test_bugs.exe                                2026-04-25    00:38:07
+    30       0       0  test_cli_edge_cases.exe                      2026-04-25    00:38:25
+    40       0       0  test_cli_parse.exe                           2026-04-22    22:28:54
+    47       0       0  test_cli_parse_extended.exe                  2026-04-17    17:25:26
+     7       0       0  test_common.exe                              2026-04-25    00:38:08
+    50       0       0  test_database.exe                            2026-04-25    00:38:06
+    50       0       0  test_database_extended.exe                   2026-04-25    00:38:19
+    13       0       0  test_db_corruption.exe                       2026-04-25    00:38:07
+    19       0       0  test_ipc_extended.exe                        2026-04-25    00:38:22
+     7       0       0  test_legacy_service_shutdown.exe             2026-04-25    00:38:12
+    40       0       0  test_main.exe                                2026-04-25    00:38:25
+    23       0       0  test_matcher.exe                             2026-04-25    00:38:06
+    30       0       0  test_matcher_extended.exe                    2026-04-25    00:38:26
+    10       0       0  test_metadata.exe                            2026-04-25    00:38:09
+    30       0       0  test_odd_cases.exe                           2026-04-25    00:38:19
+    12       0       0  test_platform.exe                            2026-04-25    00:38:08
+    20       0       0  test_result_edge_cases.exe                   2026-04-25    00:38:27
+     9       0       0  test_scanner.exe                             2026-04-25    00:38:09
+    35       0       0  test_scanner_extended.exe                    2026-04-25    00:38:26
+     4       0       0  test_service_init_db.exe                     2026-04-25    00:38:21
+    11       0       0  test_service_integration.exe                 2026-04-25    00:38:11
+    22       0       0  test_service_lazy_load.exe                   2026-04-25    00:38:10
+    13       0       0  test_service_lifecycle.exe                   2026-04-25    00:38:11
+    20       0       0  test_service_rescan.exe                      2026-04-25    00:38:21
+    25       0       0  test_service_stress.exe                      2026-04-25    00:38:20
+     6       0       0  test_service_version_compat.exe              2026-04-25    00:38:12
+    10       0       0  test_shared_state.exe                        2026-03-30    14:44:58
+    20       0       0  test_shm_stress.exe                          2026-04-25    00:38:22
+    15       0       0  test_strbuilder.exe                          2026-04-25    00:38:08
+    25       0       0  test_stress.exe                              2026-04-25    00:38:28
+    15       0       0  test_ui_exclusions.exe                       2026-04-25    00:38:24
+    45       0       0  test_ui_extended.exe                         2026-04-25    00:38:24
 
 ================================================================================
 UNIT TEST RESULTS - LINUX
 ================================================================================
 
-(No LINUX unit tests executed)
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load                           2026-04-24    17:11:38
+    10       0       0  fuzz_ipc                                     2026-04-24    17:12:27
+    58       0       0  test_agent_cli_extended                      2026-04-24    17:10:37
+    12       0       0  test_agent_complete_mkdir_quit               2026-04-24    17:10:46
+    26       0       0  test_agent_integration                       2026-04-24    17:10:31
+    15       0       0  test_agent_ls_check                          2026-04-24    17:10:43
+    13       0       0  test_agent_mkdir_extended                    2026-04-24    17:12:46
+    16       0       0  test_agent_mode                              2026-04-24    17:10:27
+     4       0       0  test_agent_mv                                2026-04-24    17:12:51
+    14       0       0  test_agent_query_tree                        2026-04-24    17:10:40
+     7       0       0  test_agent_rmdir                             2026-04-24    17:12:48
+     7       0       0  test_agent_verify                            2026-04-24    17:12:53
+    15       0       0  test_bugs                                    2026-04-24    17:11:47
+    30       0       0  test_cli_edge_cases                          2026-04-24    17:12:30
+    40       0       0  test_cli_parse                               2026-04-24    17:10:24
+    46       0       0  test_cli_parse_extended                      2026-04-24    17:10:57
+     7       0       0  test_common                                  2026-04-24    17:09:29
+    33       0       0  test_common_extended                         2026-04-24    17:11:02
+    22       0       0  test_config                                  2026-04-24    17:09:27
+    45       0       0  test_database                                2026-04-24    17:09:18
+    50       0       0  test_database_extended                       2026-04-24    17:11:30
+    13       0       0  test_db_corruption                           2026-04-24    17:11:44
+    17       0       0  test_history                                 2026-04-24    17:09:23
+    13       0       0  test_integration_extended                    2026-04-24    17:11:04
+    13       0       0  test_ipc                                     2026-04-24    17:10:54
+    19       0       0  test_ipc_extended                            2026-04-24    17:12:22
+     7       0       0  test_legacy_service_shutdown                 2026-04-24    17:10:21
+    40       0       0  test_main                                    2026-04-24    17:11:27
+    23       0       0  test_matcher                                 2026-04-24    17:09:21
+    30       0       0  test_matcher_extended                        2026-04-24    17:12:37
+    10       0       0  test_metadata                                2026-04-24    17:09:35
+    30       0       0  test_odd_cases                               2026-04-24    17:11:33
+    12       0       0  test_platform                                2026-04-24    17:09:32
+    33       0       0  test_platform_extended                       2026-04-24    17:11:00
+    20       0       0  test_result_edge_cases                       2026-04-24    17:12:40
+    13       0       0  test_result_output                           2026-04-24    17:10:34
+     9       0       0  test_scanner                                 2026-04-24    17:09:38
+    35       0       0  test_scanner_extended                        2026-04-24    17:12:34
+     9       0       0  test_service_database                        2026-04-24    17:09:59
+     4       0       0  test_service_empty_db                        2026-04-24    17:10:10
+     4       0       0  test_service_init_db                         2026-04-24    20:51:10
+    11       0       0  test_service_integration                     2026-04-24    17:09:55
+    13       0       0  test_service_ipc                             2026-04-24    17:20:06
+    22       0       0  test_service_lazy_load                       2026-04-24    17:09:42
+    13       0       0  test_service_lifecycle                       2026-04-24    17:09:51
+     7       0       0  test_service_logging                         2026-04-24    17:10:13
+     9       0       0  test_service_parity                          2026-04-24    17:09:47
+    20       0       0  test_service_rescan                          2026-04-24    17:12:15
+    25       0       0  test_service_stress                          2026-04-24    17:27:06
+     6       0       0  test_service_version_compat                  2026-04-24    17:10:17
+    10       0       0  test_shared_state                            2026-04-24    17:10:48
+    10       0       0  test_shared_state_extended                   2026-04-24    17:10:50
+    11       0       0  test_shm_platform                            2026-04-24    17:10:52
+    18       0       0  test_shm_stress                              2026-04-24    17:12:24
+    15       0       0  test_strbuilder                              2026-04-24    17:09:28
+    41       0       0  test_strbuilder_extended                     2026-04-24    17:11:01
+    25       0       0  test_stress                                  2026-04-24    17:12:43
+     8       0       0  test_ui_config                               2026-04-24    17:11:14
+    15       0       0  test_ui_exclusions                           2026-04-24    17:11:24
+    45       0       0  test_ui_extended                             2026-04-24    17:11:21
+     9       0       0  test_ui_history                              2026-04-24    17:11:11
+     9       0       0  test_ui_navigator                            2026-04-24    17:11:18
+    10       0       0  test_ui_selector                             2026-04-24    17:11:08
 
 ================================================================================
 INTEGRATION TEST SUITES
 ================================================================================
 
-  (Integration tests not run)
+  All Integration Suites                             PENDING MIGRATION
 
 ================================================================================
 GRAND TOTALS
 ================================================================================
 
-Windows Unit:    0 run,    0 passed,    0 failed,    0 skipped
-Linux Unit:      0 run,    0 passed,    0 failed,    0 skipped
-Overall:         0 run,    0 passed,    0 failed,    0 skipped
+Windows Unit:  783 run,  783 passed,    0 failed,    0 skipped
+Linux Unit:   1186 run, 1186 passed,    0 failed,    0 skipped
+Overall:      1969 run, 1969 passed,    0 failed,    0 skipped
 
-OVERALL STATUS: FAIL
-REASON: Build failure detected
+OVERALL STATUS: PASS
+REASON: All tests passed with zero failures
 
 ================================================================================
 END OF REPORT

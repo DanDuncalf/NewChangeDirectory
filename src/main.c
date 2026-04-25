@@ -2464,14 +2464,17 @@ static bool add_path_to_database(const char *path)
 /* Helper: create all parent directories for a path */
 static bool mkdir_create_parents(const char *path)
 {
+    if (!path || !path[0])
+        return false;
+    if (platform_dir_exists(path))
+        return true;
+
     char parent[NCD_MAX_PATH];
     if (!path_parent(path, parent, sizeof(parent)))
         return false;
-    if (platform_dir_exists(parent))
-        return true;
-    if (!mkdir_create_parents(parent))
+    if (!platform_dir_exists(parent) && !mkdir_create_parents(parent))
         return false;
-    return platform_create_dir(parent);
+    return platform_create_dir(path);
 }
 
 /* Structure to hold a directory tree node */
@@ -3536,35 +3539,35 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
     int limit = opts->agent_limit > 0 ? opts->agent_limit : 20;
     int printed = 0;
 
-    /* Track printed names for deduplication - using fixed-size array for simplicity */
-    /* Max 256 entries for dedup tracking */
+    /* Track printed names for deduplication and optional JSON output. */
     #define MAX_PRINTED 256
     char printed_names[MAX_PRINTED][NCD_MAX_NAME];
     int printed_count = 0;
 
+    if (limit > MAX_PRINTED)
+        limit = MAX_PRINTED;
+
     NcdMetadata *meta = db_metadata_load();
 
-    /* Helper macro: add name to printed list */
     #define RECORD_PRINTED(name) \
         do { \
             if (printed_count < MAX_PRINTED) { \
                 platform_strncpy_s(printed_names[printed_count], NCD_MAX_NAME, (name)); \
                 printed_count++; \
             } \
-        } while(0)
+        } while (0)
 
     /* Group name completion (@prefix) */
     if (partial[0] == '@') {
         if (meta) {
             for (int i = 0; i < meta->groups.count && printed < limit; i++) {
                 if (_strnicmp(meta->groups.groups[i].name, partial, strlen(partial)) == 0) {
-                    agent_printf("%s\r\n", meta->groups.groups[i].name);
+                    RECORD_PRINTED(meta->groups.groups[i].name);
                     printed++;
                 }
             }
         }
-        if (meta) db_metadata_free(meta);
-        return 0;
+        goto emit_results;
     }
 
     /* History matches (sorted first - higher signal) */
@@ -3581,7 +3584,6 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
                     if (_stricmp(printed_names[j], name) == 0) found = true;
                 }
                 if (!found) {
-                    agent_printf("%s\r\n", name);
                     RECORD_PRINTED(name);
                     printed++;
                 }
@@ -3591,7 +3593,6 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
 
     /* Database matches */
     if (printed < limit && db) {
-        /* Load all directory names and filter by prefix */
         for (int d = 0; d < db->drive_count && printed < limit; d++) {
             DriveData *drive = &db->drives[d];
             for (int i = 0; i < drive->dir_count && printed < limit; i++) {
@@ -3602,7 +3603,6 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
                         if (_stricmp(printed_names[j], name) == 0) found = true;
                     }
                     if (!found) {
-                        agent_printf("%s\r\n", name);
                         RECORD_PRINTED(name);
                         printed++;
                     }
@@ -3611,8 +3611,25 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
         }
     }
 
+emit_results:
+    if (opts->agent_json) {
+        agent_print("{\"v\":1,\"partial\":\"");
+        agent_json_escape(partial);
+        agent_print("\",\"results\":[");
+        for (int i = 0; i < printed_count; i++) {
+            if (i > 0) agent_print(",");
+            agent_print("\"");
+            agent_json_escape(printed_names[i]);
+            agent_print("\"");
+        }
+        agent_print("]}\r\n");
+    } else {
+        for (int i = 0; i < printed_count; i++) {
+            agent_printf("%s\r\n", printed_names[i]);
+        }
+    }
+
     #undef MAX_PRINTED
-    #undef IS_ALREADY_PRINTED
     #undef RECORD_PRINTED
 
     if (meta) db_metadata_free(meta);

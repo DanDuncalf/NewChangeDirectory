@@ -2,6 +2,7 @@
 #include "test_framework.h"
 #include "../src/result.h"
 #include "../src/ncd.h"
+#include "../src/platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -13,15 +14,17 @@
 #endif
 
 /* Helper to read result file content */
+static bool get_result_file_path(char *path, size_t size) {
+    char temp[NCD_MAX_PATH];
+    if (!platform_get_temp_path(temp, sizeof(temp))) {
+        return false;
+    }
+    return snprintf(path, size, "%s%s", temp, NCD_RESULT_FILE) > 0;
+}
+
 static char *read_result_file(void) {
     char path[NCD_MAX_PATH];
-#if NCD_PLATFORM_WINDOWS
-    const char *temp = getenv("TEMP");
-    if (!temp) temp = ".";
-    snprintf(path, sizeof(path), "%s\\%s", temp, NCD_RESULT_FILE);
-#else
-    snprintf(path, sizeof(path), "/tmp/%s", NCD_RESULT_FILE);
-#endif
+    if (!get_result_file_path(path, sizeof(path))) return NULL;
     
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
@@ -43,13 +46,7 @@ static char *read_result_file(void) {
 /* Helper to clean up result file */
 static void cleanup_result_file(void) {
     char path[NCD_MAX_PATH];
-#if NCD_PLATFORM_WINDOWS
-    const char *temp = getenv("TEMP");
-    if (!temp) temp = ".";
-    snprintf(path, sizeof(path), "%s\\%s", temp, NCD_RESULT_FILE);
-#else
-    snprintf(path, sizeof(path), "/tmp/%s", NCD_RESULT_FILE);
-#endif
+    if (!get_result_file_path(path, sizeof(path))) return;
     remove(path);
 }
 

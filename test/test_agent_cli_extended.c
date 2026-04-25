@@ -476,13 +476,13 @@ TEST(glob_question_at_start) {
 TEST(glob_multiple_questions) {
     ASSERT_TRUE(glob_match("???", "abc"));
     ASSERT_FALSE(glob_match("???", "ab"));
-    ASSERT_TRUE(glob_match("?e?s?", "tests"));
+    ASSERT_FALSE(glob_match("?e?s?", "tests"));
     return 0;
 }
 
 TEST(glob_mixed_star_and_question) {
     ASSERT_TRUE(glob_match("*.?", "a.b"));
-    ASSERT_TRUE(glob_match("*.?", "filename.txt"));
+    ASSERT_FALSE(glob_match("*.?", "filename.txt"));
     ASSERT_FALSE(glob_match("*.?", "file"));
     return 0;
 }

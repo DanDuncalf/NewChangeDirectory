@@ -149,7 +149,7 @@ static void force_terminate_service(void) {
     }
 #else
     /* Kill both the shell wrapper (ncd_service) and the actual binary (NCDService) */
-    system("pkill -9 -f NCDService 2>/dev/null; pkill -9 -f ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
     /* Clean up PID file so the shell wrapper doesn't think it's still running */
     system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
 #endif
@@ -212,7 +212,7 @@ static const char* get_service_exe(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
-    if (access("ncd_service", X_OK) == 0) return "ncd_service";
+    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
     return "../ncd_service";
 #endif
 }
@@ -225,7 +225,7 @@ static const char* get_ncd_exe(void) {
         return "NewChangeDirectory.exe";
     return "..\\NewChangeDirectory.exe";
 #else
-    if (access("NewChangeDirectory", X_OK) == 0) return "NewChangeDirectory";
+    if (access("NewChangeDirectory", X_OK) == 0) return "./NewChangeDirectory";
     return "../NewChangeDirectory";
 #endif
 }

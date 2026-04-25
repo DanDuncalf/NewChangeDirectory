@@ -2,7 +2,6 @@
 
 import os
 import platform
-import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +17,7 @@ MAIN_SOURCE_PATTERNS = [
 ]
 
 WINDOWS_MAIN_BINARIES = ["NewChangeDirectory.exe", "NCDService.exe"]
-LINUX_MAIN_BINARIES = ["NewChangeDirectory", "ncd_service"]
+LINUX_MAIN_BINARIES = ["NewChangeDirectory", "NCDService"]
 
 
 def run_cmd(cmd, cwd=None, timeout=300, shell=False):
@@ -240,19 +239,17 @@ def build_linux_tests():
 
 
 def ensure_ncd_service_for_tests():
-    """Ensure ncd_service binary exists where Linux tests expect it."""
-    service_binary = PROJECT_ROOT / "ncd_service"
-    test_binary = UNIT_TEST_DIR / "ncd_service"
-    if test_binary.exists():
-        try:
-            rc, out, _ = run_cmd(["wsl", "file", str(wsl_path(test_binary))], timeout=10)
-            if rc == 0 and "ELF" in out:
-                if not service_binary.exists() or get_mtime(test_binary) > get_mtime(service_binary):
-                    print("[BUILD] Copying test/ncd_service to project root for service tests...")
-                    shutil.copy2(test_binary, service_binary)
-                    return True
-        except Exception:
-            pass
+    """Ensure Linux service launcher scripts exist where tests expect them."""
+    required_paths = [
+        PROJECT_ROOT / "ncd_service",
+        UNIT_TEST_DIR / "ncd_service",
+    ]
+    missing = [str(path) for path in required_paths if not path.exists()]
+    if missing:
+        print("[BUILD] Missing Linux service launcher(s):")
+        for path in missing:
+            print(f"[BUILD]   {path}")
+        return False
     return True
 
 
@@ -277,7 +274,8 @@ def build_all(skip_build=False, windows_only=False, wsl_only=False):
             if not build_linux_tests():
                 ok = False
             if not ensure_ncd_service_for_tests():
-                print("[WARN] Could not ensure ncd_service for Linux service tests")
+                print("[BUILD] ERROR: Linux service launcher scripts are missing")
+                ok = False
     else:
         if not build_linux_main():
             ok = False

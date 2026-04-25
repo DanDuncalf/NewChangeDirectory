@@ -7,6 +7,21 @@
 
 /* ================================================================ Tier 4: Shared State Extended Tests */
 
+static void init_valid_snapshot(uint8_t *buf, size_t size, uint32_t magic, uint32_t section_count) {
+    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
+
+    memset(buf, 0, size);
+    hdr->magic = magic;
+    hdr->version = NCD_SHM_VERSION;
+    hdr->generation = 1;
+    hdr->total_size = (uint32_t)size;
+    hdr->header_size = (uint32_t)(sizeof(ShmSnapshotHdr) + (section_count * sizeof(ShmSectionDesc)));
+    hdr->section_count = section_count;
+    hdr->text_encoding = NCD_SHM_ENCODING_UTF8;
+    hdr->flags = NCD_SHM_FLAG_COMPLETE;
+    hdr->checksum = shm_crc64(buf + hdr->header_size, size - hdr->header_size);
+}
+
 TEST(shm_compute_checksum_returns_deterministic_value) {
     /* Create test data */
     uint8_t data[] = "Hello, World! Test data for checksum.";
@@ -26,23 +41,10 @@ TEST(shm_compute_checksum_returns_deterministic_value) {
 TEST(shm_validate_checksum_passes_for_valid_data) {
     /* Create a simple snapshot structure in memory */
     uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 0);
     
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = NCD_SHM_META_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
-    hdr->total_size = sizeof(buf);
-    hdr->header_size = sizeof(ShmSnapshotHdr);
-    hdr->section_count = 0;
-    hdr->generation = 1;
-    
-    /* Compute checksum over data after header */
-    size_t data_size = sizeof(buf) - sizeof(ShmSnapshotHdr);
-    hdr->checksum = shm_crc64(buf + sizeof(ShmSnapshotHdr), data_size);
-    
-    /* Validate should pass */
-    bool valid = shm_validate_header(buf, sizeof(buf), NCD_SHM_META_MAGIC);
-    ASSERT_TRUE(valid);
+    ASSERT_TRUE(shm_validate_header(buf, sizeof(buf), NCD_SHM_META_MAGIC));
+    ASSERT_TRUE(shm_validate_checksum(buf, sizeof(buf)));
     
     return 0;
 }
@@ -50,21 +52,13 @@ TEST(shm_validate_checksum_passes_for_valid_data) {
 TEST(shm_validate_checksum_fails_for_corrupted_data) {
     /* Create a simple snapshot structure */
     uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
-    
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = NCD_SHM_META_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
-    hdr->total_size = sizeof(buf);
-    hdr->header_size = sizeof(ShmSnapshotHdr);
-    hdr->section_count = 0;
-    hdr->generation = 1;
-    
-    /* Set a checksum */
-    hdr->checksum = 0xDEADBEEFCAFEBABEULL;
+    ShmSnapshotHdr *hdr;
+
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 0);
+    hdr = (ShmSnapshotHdr *)buf;
     
     /* Corrupt the data after header */
-    buf[sizeof(ShmSnapshotHdr) + 10] = 0xFF;
+    buf[hdr->header_size + 10] = 0xFF;
     
     /* Checksum validation should fail */
     bool valid = shm_validate_checksum(buf, sizeof(buf));
@@ -117,14 +111,10 @@ TEST(shm_round_up_size_rounds_correctly) {
 TEST(shm_find_section_finds_section_by_type) {
     /* Create buffer with header and section table */
     uint8_t buf[512];
-    memset(buf, 0, sizeof(buf));
-    
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = NCD_SHM_META_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
-    hdr->total_size = sizeof(buf);
-    hdr->header_size = sizeof(ShmSnapshotHdr) + sizeof(ShmSectionDesc);
-    hdr->section_count = 1;
+    ShmSnapshotHdr *hdr;
+
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 1);
+    hdr = (ShmSnapshotHdr *)buf;
     
     /* Add a config section */
     ShmSectionDesc *section = (ShmSectionDesc *)(buf + sizeof(ShmSnapshotHdr));
@@ -149,14 +139,10 @@ TEST(shm_find_section_finds_section_by_type) {
 TEST(shm_get_info_returns_snapshot_info) {
     /* Create a valid snapshot */
     uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
-    
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = NCD_SHM_META_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
-    hdr->total_size = sizeof(buf);
-    hdr->header_size = sizeof(ShmSnapshotHdr);
-    hdr->section_count = 2;
+    ShmSnapshotHdr *hdr;
+
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 2);
+    hdr = (ShmSnapshotHdr *)buf;
     hdr->generation = 42;
     
     ShmSnapshotInfo info;
@@ -173,12 +159,11 @@ TEST(shm_get_info_returns_snapshot_info) {
 
 TEST(shm_validate_header_checks_magic) {
     uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
-    
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
+    ShmSnapshotHdr *hdr;
+
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 0);
+    hdr = (ShmSnapshotHdr *)buf;
     hdr->magic = 0xBADBADBA; /* Bad magic */
-    hdr->version = NCD_SHM_VERSION;
-    hdr->total_size = sizeof(buf);
     
     /* Should fail with wrong magic */
     bool result = shm_validate_header(buf, sizeof(buf), NCD_SHM_META_MAGIC);
@@ -194,11 +179,10 @@ TEST(shm_validate_header_checks_magic) {
 
 TEST(shm_validate_header_checks_bounds) {
     uint8_t buf[256];
-    memset(buf, 0, sizeof(buf));
-    
-    ShmSnapshotHdr *hdr = (ShmSnapshotHdr *)buf;
-    hdr->magic = NCD_SHM_META_MAGIC;
-    hdr->version = NCD_SHM_VERSION;
+    ShmSnapshotHdr *hdr;
+
+    init_valid_snapshot(buf, sizeof(buf), NCD_SHM_META_MAGIC, 0);
+    hdr = (ShmSnapshotHdr *)buf;
     hdr->total_size = 1024; /* Claims to be larger than buffer */
     
     /* Should fail because total_size > actual size */

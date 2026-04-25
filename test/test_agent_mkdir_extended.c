@@ -27,6 +27,18 @@
  * Helpers
  * ------------------------------------------------------------------ */
 
+static void get_temp_dir(char *buf, size_t size, const char *suffix)
+{
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = getenv("TMP");
+    if (!tmp) tmp = "/tmp";
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\ncd_a1_%s", tmp, suffix);
+#else
+    snprintf(buf, size, "%s/ncd_a1_%s", tmp, suffix);
+#endif
+}
+
 static void rm_rf(const char *path)
 {
 #if NCD_PLATFORM_WINDOWS
@@ -144,7 +156,10 @@ static int run_agent_mkdirs(const char *extra_args,
 static void make_input_file(const char *path, const char *content)
 {
     FILE *f = fopen(path, "w");
-    ASSERT_NOT_NULL(f);
+    if (!f) {
+        fprintf(stderr, "FAIL: %s:%d: fopen failed for %s\n", __FILE__, __LINE__, path);
+        return;
+    }
     fprintf(f, "%s", content);
     fclose(f);
 }
@@ -249,7 +264,12 @@ TEST(mkdir_force_fails_on_non_empty)
 
 TEST(mkdir_mode_0700)
 {
-    const char *dir = "ncd_a1_mkdir_mode";
+    char dir[NCD_MAX_PATH];
+#if NCD_PLATFORM_WINDOWS
+    snprintf(dir, sizeof(dir), "%s", "ncd_a1_mkdir_mode");
+#else
+    get_temp_dir(dir, sizeof(dir), "mkdir_mode");
+#endif
     rm_rf(dir);
 
     char args[NCD_MAX_PATH];

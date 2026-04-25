@@ -180,8 +180,8 @@ TEST(shm_read_only_mapping) {
 
 /* --------------------------------------------------------- encoding tests */
 
-TEST(shm_utf8_to_utf16_conversion_roundtrip) {
 #if NCD_PLATFORM_WINDOWS
+TEST(shm_utf8_to_utf16_conversion_roundtrip) {
     /* Windows uses UTF-16 for SHM paths */
     /* Test that path conversion works */
     const char *utf8_path = "C:\\Test\\Path";
@@ -192,22 +192,15 @@ TEST(shm_utf8_to_utf16_conversion_roundtrip) {
     WideCharToMultiByte(CP_UTF8, 0, wpath, -1, back_to_utf8, MAX_PATH, NULL, NULL);
     
     ASSERT_EQ_STR(utf8_path, back_to_utf8);
-#else
-    /* Linux uses UTF-8 directly */
-    printf("SKIP: Windows-specific test\n");
-#endif
     return 0;
 }
 
 TEST(shm_utf16_to_utf8_with_surrogate_pairs) {
-#if NCD_PLATFORM_WINDOWS
     /* Test surrogate pair handling for Unicode characters outside BMP */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Windows-specific test\n");
-#endif
     return 0;
 }
+#endif
 
 TEST(shm_utf8_invalid_sequence_handling) {
     /* Test that invalid UTF-8 sequences are handled gracefully */
@@ -489,8 +482,10 @@ void suite_shm_stress(void) {
     RUN_TEST(shm_read_only_mapping);
     
     /* Encoding (4 tests) */
+#if NCD_PLATFORM_WINDOWS
     RUN_TEST(shm_utf8_to_utf16_conversion_roundtrip);
     RUN_TEST(shm_utf16_to_utf8_with_surrogate_pairs);
+#endif
     RUN_TEST(shm_utf8_invalid_sequence_handling);
     RUN_TEST(shm_path_with_mixed_encoding_rejected);
     

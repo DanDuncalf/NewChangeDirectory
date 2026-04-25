@@ -64,10 +64,10 @@ for %%f in ("%ROOTDIR%*.obj") do (
     del /q "%%f" 2>nul
     set /a ROOT_OBJ_COUNT+=1
 )
-if %ROOT_OBJ_COUNT%==0 (
+if !ROOT_OBJ_COUNT!==0 (
     echo [clean] No stray .obj files in project root
 ) else (
-    echo [clean] Removed %ROOT_OBJ_COUNT% .obj file(s) from project root
+    echo [clean] Removed !ROOT_OBJ_COUNT! root object files
 )
 
 :: ---------------------------------------------------------------------------
@@ -79,10 +79,10 @@ for %%f in ("%TESTDIR%\*.obj") do (
     del /q "%%f" 2>nul
     set /a TEST_OBJ_COUNT+=1
 )
-if %TEST_OBJ_COUNT%==0 (
+if !TEST_OBJ_COUNT!==0 (
     echo [clean] No stray .obj files in test directory
 ) else (
-    echo [clean] Removed %TEST_OBJ_COUNT% .obj file(s) from test directory
+    echo [clean] Removed !TEST_OBJ_COUNT! test object files
 )
 
 :: ---------------------------------------------------------------------------
@@ -94,7 +94,44 @@ if exist "%ROOTDIR%vc140.pdb" (
 )
 
 :: ---------------------------------------------------------------------------
-:: 6. Remove test executables so generate_report.py rebuilds from scratch
+:: 6. Remove main binaries so they are rebuilt from scratch
+::     (Also removes stale copies that may have been left in test\)
+:: ---------------------------------------------------------------------------
+set "MAIN_EXE_COUNT=0"
+for %%p in (NCDService NewChangeDirectory) do (
+    for %%s in ("" _arm64 _riscv64) do (
+        if exist "%ROOTDIR%%%p%%~s.exe" (
+            echo [clean] Deleting main binary: %%p%%~s.exe
+            del /q "%ROOTDIR%%%p%%~s.exe" 2>nul
+            set /a MAIN_EXE_COUNT+=1
+        )
+        if exist "%ROOTDIR%%%p%%~s.pdb" (
+            del /q "%ROOTDIR%%%p%%~s.pdb" 2>nul
+        )
+        if exist "%ROOTDIR%%%p%%~s.ilk" (
+            del /q "%ROOTDIR%%%p%%~s.ilk" 2>nul
+        )
+        if exist "%TESTDIR%%%p%%~s.exe" (
+            echo [clean] Deleting stale test-dir binary: %%p%%~s.exe
+            del /q "%TESTDIR%%%p%%~s.exe" 2>nul
+            set /a MAIN_EXE_COUNT+=1
+        )
+        if exist "%TESTDIR%%%p%%~s.pdb" (
+            del /q "%TESTDIR%%%p%%~s.pdb" 2>nul
+        )
+        if exist "%TESTDIR%%%p%%~s.ilk" (
+            del /q "%TESTDIR%%%p%%~s.ilk" 2>nul
+        )
+    )
+)
+if !MAIN_EXE_COUNT!==0 (
+    echo [clean] No main binaries to remove
+) else (
+    echo [clean] Removed !MAIN_EXE_COUNT! main binaries
+)
+
+:: ---------------------------------------------------------------------------
+:: 7. Remove test executables so generate_report.py rebuilds from scratch
 :: ---------------------------------------------------------------------------
 set "TEST_EXE_COUNT=0"
 for %%p in (test_* fuzz_* ipc_* bench_* tui_test_driver) do (
@@ -110,10 +147,10 @@ for %%p in (test_* fuzz_* ipc_* bench_* tui_test_driver) do (
         del /q "%TESTDIR%\%%p.ilk" 2>nul
     )
 )
-if %TEST_EXE_COUNT%==0 (
+if !TEST_EXE_COUNT!==0 (
     echo [clean] No test executables to remove
 ) else (
-    echo [clean] Removed %TEST_EXE_COUNT% test executable(s)
+    echo [clean] Removed !TEST_EXE_COUNT! test executables
 )
 
 :: ---------------------------------------------------------------------------

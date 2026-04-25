@@ -664,11 +664,13 @@ UiIoOps *ui_get_io_backend(void)
 
 typedef struct {
     char grid[TEST_GRID_MAX_ROWS][TEST_GRID_MAX_COLS];
+    char last_grid[TEST_GRID_MAX_ROWS][TEST_GRID_MAX_COLS];
     int  cols;
     int  rows;
     int  cur_row;
     int  cur_col;
     bool cursor_hidden;
+    bool has_last_frame;
 } TestBackendState;
 
 static TestBackendState g_test_backend;
@@ -742,9 +744,58 @@ static void test_backend_show_cursor(void)
     g_test_backend.cursor_hidden = false;
 }
 
+static bool test_backend_grid_has_content(const char grid[TEST_GRID_MAX_ROWS][TEST_GRID_MAX_COLS],
+                                          int rows, int cols)
+{
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (grid[r][c] != ' ' && grid[r][c] != '\0') {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void test_backend_save_last_frame(void)
+{
+    if (!g_test_backend_active) return;
+    if (!test_backend_grid_has_content(g_test_backend.grid, g_test_backend.rows, g_test_backend.cols)) {
+        return;
+    }
+    for (int r = 0; r < g_test_backend.rows; r++) {
+        memcpy(g_test_backend.last_grid[r], g_test_backend.grid[r], (size_t)g_test_backend.cols + 1);
+    }
+    g_test_backend.has_last_frame = true;
+}
+
+static int test_backend_find_row_in_grid(const char grid[TEST_GRID_MAX_ROWS][TEST_GRID_MAX_COLS],
+                                         const char *substring)
+{
+    char line[TEST_GRID_MAX_COLS + 1];
+
+    for (int r = 0; r < g_test_backend.rows; r++) {
+        memcpy(line, grid[r], (size_t)g_test_backend.cols);
+        line[g_test_backend.cols] = '\0';
+        for (int len = g_test_backend.cols; len > 0; len--) {
+            if (line[len - 1] == ' ') {
+                line[len - 1] = '\0';
+            } else {
+                break;
+            }
+        }
+        if (strstr(line, substring) != NULL) {
+            return r;
+        }
+    }
+
+    return -1;
+}
+
 static void test_backend_clear_area(int top_row, int num_rows, int width)
 {
     if (!g_test_backend_active) return;
+    test_backend_save_last_frame();
     for (int r = top_row; r < top_row + num_rows && r < g_test_backend.rows; r++) {
         if (r < 0) continue;
         int w = width < g_test_backend.cols ? width : g_test_backend.cols;
@@ -793,9 +844,12 @@ UiIoOps *ui_create_test_backend(int cols, int rows)
     g_test_backend.cur_row = 0;
     g_test_backend.cur_col = 0;
     g_test_backend.cursor_hidden = false;
+    g_test_backend.has_last_frame = false;
     for (int r = 0; r < rows; r++) {
         memset(g_test_backend.grid[r], ' ', (size_t)cols);
         g_test_backend.grid[r][cols] = '\0';
+        memset(g_test_backend.last_grid[r], ' ', (size_t)cols);
+        g_test_backend.last_grid[r][cols] = '\0';
     }
     g_test_backend_active = true;
     return ops;
@@ -822,9 +876,14 @@ const char *ui_test_backend_row(int row)
 int ui_test_backend_find_row(const char *substring)
 {
     if (!g_test_backend_active || !substring) return -1;
-    for (int r = 0; r < g_test_backend.rows; r++) {
-        if (strstr(ui_test_backend_row(r), substring) != NULL)
-            return r;
+    {
+        int row = test_backend_find_row_in_grid(g_test_backend.grid, substring);
+        if (row >= 0) {
+            return row;
+        }
+    }
+    if (g_test_backend.has_last_frame) {
+        return test_backend_find_row_in_grid(g_test_backend.last_grid, substring);
     }
     return -1;
 }

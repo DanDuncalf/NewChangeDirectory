@@ -33,9 +33,41 @@ static void get_temp_dir(char *buf, size_t size, const char *suffix) {
     if (!tmp) tmp = getenv("TMP");
     if (!tmp) tmp = "/tmp";
 #if NCD_PLATFORM_WINDOWS
-    snprintf(buf, size, "%s\ncd_cq_%s", tmp, suffix);
+    snprintf(buf, size, "%s\\ncd_cq_%s", tmp, suffix);
 #else
     snprintf(buf, size, "%s/ncd_cq_%s", tmp, suffix);
+#endif
+}
+
+static void build_ncd_dir(char *buf, size_t size, const char *base) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\NCD", base);
+#else
+    snprintf(buf, size, "%s/ncd", base);
+#endif
+}
+
+static char test_drive_letter(void) {
+#if NCD_PLATFORM_WINDOWS
+    return 'C';
+#else
+    char cwd[NCD_MAX_PATH];
+    if (platform_get_current_dir(cwd, sizeof(cwd))) {
+        return platform_get_drive_letter(cwd);
+    }
+    return 0;
+#endif
+}
+
+static void build_test_drive_root(char *buf, size_t size) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%c:\\", test_drive_letter());
+#else
+    char drive = test_drive_letter();
+    if (platform_build_mount_path(drive, buf, size)) {
+        return;
+    }
+    platform_strncpy_s(buf, size, "/");
 #endif
 }
 
@@ -64,7 +96,7 @@ static bool dir_exists(const char *path) {
 static bool create_test_db(const char *ncd_dir, char drive_letter) {
     char db_path[NCD_MAX_PATH];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(db_path, sizeof(db_path), "%s\ncd_%c.database", ncd_dir, toupper((unsigned char)drive_letter));
+    snprintf(db_path, sizeof(db_path), "%s\\ncd_%c.database", ncd_dir, toupper((unsigned char)drive_letter));
 #else
     snprintf(db_path, sizeof(db_path), "%s/ncd_%02x.database", ncd_dir, (unsigned char)drive_letter);
 #endif
@@ -72,12 +104,21 @@ static bool create_test_db(const char *ncd_dir, char drive_letter) {
     if (!db) return false;
     db->last_scan = time(NULL);
     DriveData *drv = db_add_drive(db, drive_letter);
+#if !NCD_PLATFORM_WINDOWS
+    {
+        char drive_root[NCD_MAX_PATH];
+        build_test_drive_root(drive_root, sizeof(drive_root));
+        platform_strncpy_s(drv->label, sizeof(drv->label), drive_root);
+    }
+#endif
     int users = db_add_dir(drv, "Users", -1, false, false);
     int scott = db_add_dir(drv, "scott", users, false, false);
     db_add_dir(drv, "Downloads", scott, false, false);
     db_add_dir(drv, "Documents", scott, false, false);
-    db_add_dir(drv, "Windows", -1, false, true);
-    db_add_dir(drv, "System32", 2, false, true); /* parent Windows idx=2 */
+    {
+        int windows = db_add_dir(drv, "Windows", -1, false, true);
+        db_add_dir(drv, "System32", windows, false, true);
+    }
     bool ok = db_save_binary_single(db, 0, db_path);
     db_free(db);
     return ok;
@@ -85,8 +126,8 @@ static bool create_test_db(const char *ncd_dir, char drive_letter) {
 
 static const char* find_exe(void) {
 #if NCD_PLATFORM_WINDOWS
-    if (GetFileAttributesA("..\NewChangeDirectory.exe") != INVALID_FILE_ATTRIBUTES) return "..\NewChangeDirectory.exe";
-    if (GetFileAttributesA(".\NewChangeDirectory.exe") != INVALID_FILE_ATTRIBUTES) return ".\NewChangeDirectory.exe";
+    if (GetFileAttributesA("..\\NewChangeDirectory.exe") != INVALID_FILE_ATTRIBUTES) return "..\\NewChangeDirectory.exe";
+    if (GetFileAttributesA(".\\NewChangeDirectory.exe") != INVALID_FILE_ATTRIBUTES) return ".\\NewChangeDirectory.exe";
 #else
     if (access("../NewChangeDirectory", X_OK) == 0) return "../NewChangeDirectory";
     if (access("./NewChangeDirectory", X_OK) == 0) return "./NewChangeDirectory";
@@ -103,11 +144,11 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
-        "set LOCALAPPDATA=%s&& set NCD_TEST_MODE=1 && %s /agent %s",
+        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
         ncd_dir, exe, agent_args);
 #else
     snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 %s --agent:%s",
+        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
         ncd_dir, exe, agent_args);
 #endif
     FILE *fp = POPEN(cmd, "r");
@@ -117,18 +158,18 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     return PCLOSE(fp);
 }
 
+#define SETUP_DB(base, ncd_dir, suffix) do { \
+    get_temp_dir(base, sizeof(base), suffix); \
+    build_ncd_dir(ncd_dir, sizeof(ncd_dir), base); \
+    rm_rf(base); \
+    mkdir(base, 0755); \
+    mkdir(ncd_dir, 0755); \
+    ASSERT_TRUE(create_test_db(ncd_dir, test_drive_letter())); \
+} while (0)
+
 TEST(agent_complete_basic) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "cb");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "cb");
     char out[4096] = {0};
     int status = run_agent(base, "complete Do", out, sizeof(out));
     ASSERT_TRUE(status == 0);
@@ -139,16 +180,7 @@ TEST(agent_complete_basic) {
 
 TEST(agent_complete_json) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "cj");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "cj");
     char out[4096] = {0};
     int status = run_agent(base, "complete Sys --json", out, sizeof(out));
     ASSERT_TRUE(status == 0);
@@ -159,16 +191,7 @@ TEST(agent_complete_json) {
 
 TEST(agent_complete_limit) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "cl");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "cl");
     char out[4096] = {0};
     int status = run_agent(base, "complete s --json --limit 2", out, sizeof(out));
     ASSERT_TRUE(status == 0);
@@ -179,16 +202,7 @@ TEST(agent_complete_limit) {
 
 TEST(agent_complete_no_match) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "cn");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "cn");
     char out[4096] = {0};
     int status = run_agent(base, "complete xyz123nonexistent", out, sizeof(out));
     ASSERT_TRUE(status == 0);
@@ -203,7 +217,7 @@ TEST(agent_mkdir_creates_directory) {
     mkdir(base, 0755);
     char test_dir[NCD_MAX_PATH];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(test_dir, sizeof(test_dir), "%s\newdir_test", base);
+    snprintf(test_dir, sizeof(test_dir), "%s\\newdir_test", base);
 #else
     snprintf(test_dir, sizeof(test_dir), "%s/newdir_test", base);
 #endif
@@ -224,7 +238,7 @@ TEST(agent_mkdir_existing_directory) {
     mkdir(base, 0755);
     char test_dir[NCD_MAX_PATH];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(test_dir, sizeof(test_dir), "%s\existing_dir", base);
+    snprintf(test_dir, sizeof(test_dir), "%s\\existing_dir", base);
 #else
     snprintf(test_dir, sizeof(test_dir), "%s/existing_dir", base);
 #endif
@@ -246,7 +260,7 @@ TEST(agent_mkdir_nested_path) {
     mkdir(base, 0755);
     char test_dir[NCD_MAX_PATH];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(test_dir, sizeof(test_dir), "%s\a\b\c", base);
+    snprintf(test_dir, sizeof(test_dir), "%s\\a\\b\\c", base);
 #else
     snprintf(test_dir, sizeof(test_dir), "%s/a/b/c", base);
 #endif

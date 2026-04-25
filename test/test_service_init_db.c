@@ -20,16 +20,19 @@
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
 #include <process.h>
+#include <tlhelp32.h>
 #else
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <dirent.h>
 #endif
 
 /* --------------------------------------------------------- test utilities     */
 
 #define SERVICE_START_TIMEOUT 15
 #define SERVICE_STOP_TIMEOUT 5
+#define GRACEFUL_SHUTDOWN_TIMEOUT 3
 
 #if NCD_PLATFORM_WINDOWS
 #define SERVICE_EXE "NCDService.exe"
@@ -103,21 +106,248 @@ static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
     return false;
 }
 
+static void force_terminate_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = {sizeof(pe)};
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
+#endif
+    for (int i = 0; i < 20; i++) {
+        if (!ipc_service_exists()) {
+            break;
+        }
+        platform_sleep_ms(100);
+    }
+}
+
+#if NCD_PLATFORM_WINDOWS
+static void wait_for_service_fully_exited(int timeout_seconds) {
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+        if (!hMutex) {
+            return;
+        }
+        CloseHandle(hMutex);
+        platform_sleep_ms(100);
+    }
+}
+
+static bool service_process_still_running(void) {
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+    if (!hMutex) {
+        return false;
+    }
+    CloseHandle(hMutex);
+    return true;
+}
+#else
+static bool is_live_ncd_service_process(pid_t pid) {
+    if (pid <= 0) {
+        return false;
+    }
+    if (kill(pid, 0) != 0) {
+        return false;
+    }
+
+    {
+        char stat_path[256];
+        snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", (int)pid);
+        FILE *f = fopen(stat_path, "r");
+        if (!f) {
+            return true;
+        }
+
+        {
+            int parsed_pid = 0;
+            char comm[256];
+            char state = '\0';
+            bool live = true;
+            if (fscanf(f, "%d (%255[^)]) %c", &parsed_pid, comm, &state) == 3) {
+                if (strcmp(comm, "NCDService") != 0 || state == 'Z') {
+                    live = false;
+                }
+            }
+            fclose(f);
+            return live;
+        }
+    }
+}
+
+static bool find_live_ncd_service_process(pid_t *out_pid) {
+    const char *pid_file = NULL;
+    const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
+    char pid_path_buf[256];
+
+    if (xdg_runtime && *xdg_runtime) {
+        snprintf(pid_path_buf, sizeof(pid_path_buf), "%s/ncd_service.pid", xdg_runtime);
+        pid_file = pid_path_buf;
+    } else {
+        pid_file = "/tmp/ncd_service.pid";
+    }
+
+    {
+        FILE *f = fopen(pid_file, "r");
+        if (f) {
+            pid_t pid = 0;
+            if (fscanf(f, "%d", &pid) == 1 && is_live_ncd_service_process(pid)) {
+                fclose(f);
+                if (out_pid) {
+                    *out_pid = pid;
+                }
+                return true;
+            }
+            fclose(f);
+        }
+    }
+
+    {
+        DIR *proc = opendir("/proc");
+        if (!proc) {
+            return false;
+        }
+
+        {
+            struct dirent *entry;
+            pid_t my_pid = getpid();
+            while ((entry = readdir(proc)) != NULL) {
+                pid_t pid = 0;
+                char comm_path[256];
+                FILE *fcomm;
+                char name[256];
+                size_t len;
+
+                if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {
+                    continue;
+                }
+                pid = (pid_t)atoi(entry->d_name);
+                if (pid <= 0 || pid == my_pid) {
+                    continue;
+                }
+
+                snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)pid);
+                fcomm = fopen(comm_path, "r");
+                if (!fcomm) {
+                    continue;
+                }
+
+                if (!fgets(name, sizeof(name), fcomm)) {
+                    fclose(fcomm);
+                    continue;
+                }
+                fclose(fcomm);
+
+                len = strlen(name);
+                if (len > 0 && name[len - 1] == '\n') {
+                    name[len - 1] = '\0';
+                }
+
+                if (strcmp(name, "NCDService") == 0 && is_live_ncd_service_process(pid)) {
+                    if (out_pid) {
+                        *out_pid = pid;
+                    }
+                    closedir(proc);
+                    return true;
+                }
+            }
+            closedir(proc);
+            return false;
+        }
+    }
+}
+
+static void wait_for_service_fully_exited(int timeout_seconds) {
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        pid_t pid = 0;
+        if (!find_live_ncd_service_process(&pid)) {
+            return;
+        }
+        platform_sleep_ms(100);
+    }
+}
+
+static bool service_process_still_running(void) {
+    return find_live_ncd_service_process(NULL);
+}
+#endif
+
 static void ensure_service_stopped(void) {
-    if (!ipc_service_exists()) return;
-    char _buf[256];
-    run_service_command("stop", _buf, sizeof(_buf));
-    wait_for_service_state(false, SERVICE_STOP_TIMEOUT);
+    if (!ipc_service_exists()) {
+        wait_for_service_fully_exited(5);
+        if (service_process_still_running()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+        }
+        return;
+    }
+
+    {
+        char _buf[256];
+        run_service_command("stop", _buf, sizeof(_buf));
+    }
+
+    if (!wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT)) {
+        force_terminate_service();
+    }
+
+    wait_for_service_fully_exited(SERVICE_STOP_TIMEOUT);
+    if (service_process_still_running()) {
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
+    }
 }
 
 static bool ensure_service_running_with_args(const char *args) {
-    if (ipc_service_exists()) return true;
-    if (!service_executable_exists()) return false;
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "start %s", args ? args : "");
-    char _buf[256];
-    run_service_command(cmd, _buf, sizeof(_buf));
-    return wait_for_service_state(true, SERVICE_START_TIMEOUT);
+    if (ipc_service_exists()) {
+        return true;
+    }
+    if (!service_executable_exists()) {
+        return false;
+    }
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        char cmd[256];
+        char output[256] = {0};
+        int rc;
+
+        wait_for_service_fully_exited(5);
+        if (service_process_still_running()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+        }
+
+        snprintf(cmd, sizeof(cmd), "start%s%s", (args && *args) ? " " : "", args ? args : "");
+        rc = run_service_command(cmd, output, sizeof(output));
+        if (rc != 0 && !ipc_service_exists()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+            continue;
+        }
+
+        if (wait_for_service_state(true, SERVICE_START_TIMEOUT)) {
+            return true;
+        }
+
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
+    }
+
+    return false;
 }
 
 /* Temporarily rename metadata file to simulate first run */
@@ -158,7 +388,7 @@ TEST(init_db_help_shows_option) {
     }
 
     char output[1024] = {0};
-    (void)run_service_command("", output, sizeof(output));
+    (void)run_service_command("-?", output, sizeof(output));
 
     ASSERT_TRUE(strstr(output, "-init") != NULL);
     return 0;

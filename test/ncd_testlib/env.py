@@ -96,6 +96,21 @@ class TestIsolation:
                     )
                 except Exception:
                     pass
+            try:
+                subprocess.run(
+                    [
+                        "wsl",
+                        "bash",
+                        "-lc",
+                        'pkill -9 -x NCDService 2>/dev/null; '
+                        'pkill -9 -f NewChangeDirectory 2>/dev/null; '
+                        'killall -9 NCDService 2>/dev/null; '
+                        'rm -f "${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid" 2>/dev/null',
+                    ],
+                    capture_output=True,
+                )
+            except Exception:
+                pass
         else:
             for name in ("ncd_service", "NCDService", "NewChangeDirectory"):
                 try:

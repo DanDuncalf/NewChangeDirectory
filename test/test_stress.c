@@ -478,7 +478,7 @@ TEST(stress_scan_with_100_exclusions) {
     ASSERT_NOT_NULL(db);
     
     clock_t start = clock();
-    int count = scan_mount(db, test_dir, false, false, NULL, NULL, &exclusions);
+    (void)scan_mount(db, test_dir, false, false, NULL, NULL, &exclusions);
     clock_t end = clock();
     
     double elapsed = (double)(end - start) / CLOCKS_PER_SEC;

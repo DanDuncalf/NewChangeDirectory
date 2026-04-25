@@ -1586,6 +1586,34 @@ static void print_stale_process_error(DWORD pid) {
 }
 #else
 /* Check PID file or scan /proc for existing NCDService process */
+static bool is_live_ncd_service_process(pid_t pid) {
+    if (pid <= 0) {
+        return false;
+    }
+    if (kill(pid, 0) != 0) {
+        return false;
+    }
+
+    char stat_path[256];
+    snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", (int)pid);
+    FILE *f = fopen(stat_path, "r");
+    if (!f) {
+        return true;
+    }
+
+    int parsed_pid = 0;
+    char comm[256];
+    char state = '\0';
+    bool live = true;
+    if (fscanf(f, "%d (%255[^)]) %c", &parsed_pid, comm, &state) == 3) {
+        if (strcmp(comm, "NCDService") != 0 || state == 'Z') {
+            live = false;
+        }
+    }
+    fclose(f);
+    return live;
+}
+
 static bool find_existing_ncd_service_process(pid_t *out_pid) {
     const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
     char pid_path[256];
@@ -1600,7 +1628,7 @@ static bool find_existing_ncd_service_process(pid_t *out_pid) {
     if (f) {
         pid_t pid = 0;
         if (fscanf(f, "%d", &pid) == 1 && pid > 0) {
-            if (kill(pid, 0) == 0) {
+            if (is_live_ncd_service_process(pid)) {
                 *out_pid = pid;
                 fclose(f);
                 return true;
@@ -1630,7 +1658,7 @@ static bool find_existing_ncd_service_process(pid_t *out_pid) {
             if (fgets(name, sizeof(name), fcomm)) {
                 size_t len = strlen(name);
                 if (len > 0 && name[len - 1] == '\n') name[len - 1] = '\0';
-                if (strcmp(name, "NCDService") == 0) {
+                if (strcmp(name, "NCDService") == 0 && is_live_ncd_service_process(pid)) {
                     *out_pid = pid;
                     found = true;
                 }
@@ -1645,7 +1673,7 @@ static bool find_existing_ncd_service_process(pid_t *out_pid) {
 
 static bool wait_for_process_exit(pid_t pid, int timeout_seconds) {
     for (int i = 0; i < timeout_seconds * 10; i++) {
-        if (kill(pid, 0) != 0) return true;
+        if (!is_live_ncd_service_process(pid)) return true;
         platform_sleep_ms(100);
     }
     return false;
@@ -1989,9 +2017,11 @@ int main(int argc, char *argv[]) {
     }
 
     /* Check for log level option at position 1+offset */
-    int log_opt = parse_log_option(argv[1 + arg_offset]);
-    if (log_opt >= 0) {
-        arg_offset++;  /* Skip the -log<n> argument */
+    if (argc > 1 + arg_offset) {
+        int log_opt = parse_log_option(argv[1 + arg_offset]);
+        if (log_opt >= 0) {
+            arg_offset++;  /* Skip the -log<n> argument */
+        }
     }
 
     /* Check for config override */
@@ -2028,7 +2058,15 @@ int main(int argc, char *argv[]) {
     if (argc > 1 + arg_offset) {
         const char *cmd = argv[1 + arg_offset];
 
-        if (strcmp(cmd, "start") == 0) {
+        if (strcmp(cmd, "-?") == 0 ||
+            strcmp(cmd, "-h") == 0 ||
+            strcmp(cmd, "--help") == 0 ||
+            strcmp(cmd, "help") == 0) {
+            print_usage();
+            log_close();
+            return 0;
+        }
+        else if (strcmp(cmd, "start") == 0) {
             LOG_EVENT("Start command received");
             if (is_service_running()) {
                 printf("NCD Service: Already running\n");

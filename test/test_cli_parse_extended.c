@@ -227,6 +227,7 @@ TEST(exclusion_list_dash_variant) {
     return 0;
 }
 
+#if NCD_PLATFORM_WINDOWS
 TEST(exclusion_add_slash_variant) {
     NcdOptions opts;
     init_options(&opts);
@@ -240,6 +241,7 @@ TEST(exclusion_add_slash_variant) {
     
     return 0;
 }
+#endif
 
 /* ================================================================ Timeout Tests */
 
@@ -739,7 +741,9 @@ void suite_cli_parse_extended(void) {
     RUN_TEST(exclusion_add_dash_variant);
     RUN_TEST(exclusion_remove_dash_variant);
     RUN_TEST(exclusion_list_dash_variant);
+#if NCD_PLATFORM_WINDOWS
     RUN_TEST(exclusion_add_slash_variant);
+#endif
     
     /* Timeout and retry tests */
     RUN_TEST(timeout_with_no_space);

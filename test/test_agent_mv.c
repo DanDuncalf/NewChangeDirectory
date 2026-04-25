@@ -30,12 +30,21 @@
 #endif
 
 static void get_temp_dir(char *buf, size_t size, const char *suffix) {
+#if NCD_PLATFORM_WINDOWS
+    char user_profile[NCD_MAX_PATH] = {0};
+    const char *tmp = NULL;
+    DWORD n = GetEnvironmentVariableA("USERPROFILE", user_profile, (DWORD)sizeof(user_profile));
+    if (n > 0 && n < sizeof(user_profile)) {
+        tmp = user_profile;
+    }
+    if (!tmp) tmp = getenv("USERPROFILE");
+    if (!tmp) tmp = getenv("TEMP");
+    if (!tmp) tmp = "C:\\";
+    snprintf(buf, size, "%s\\ncd_mv_%s", tmp, suffix);
+#else
     const char *tmp = getenv("TEMP");
     if (!tmp) tmp = getenv("TMP");
     if (!tmp) tmp = "/tmp";
-#if NCD_PLATFORM_WINDOWS
-    snprintf(buf, size, "%s\\ncd_mv_%s", tmp, suffix);
-#else
     snprintf(buf, size, "%s/ncd_mv_%s", tmp, suffix);
 #endif
 }
@@ -259,23 +268,32 @@ TEST(mv_force_overwrite_empty) {
 }
 
 TEST(ln_creates_symlink) {
-#if NCD_PLATFORM_WINDOWS
-    printf("SKIP: ln_creates_symlink on Windows\n");
-    return 0;
-#else
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "ln1");
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/ncd", base);
     char target[NCD_MAX_PATH], link[NCD_MAX_PATH];
+    const char test_drive =
+#if NCD_PLATFORM_WINDOWS
+        'C';
+#else
+        '/';
+#endif
+
+    get_temp_dir(base, sizeof(base), "ln1");
+#if NCD_PLATFORM_WINDOWS
+    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
+    snprintf(target, sizeof(target), "%s\\TargetDir", base);
+    snprintf(link, sizeof(link), "%s\\LinkDir", base);
+#else
+    snprintf(ncd_dir, sizeof(ncd_dir), "%s/ncd", base);
     snprintf(target, sizeof(target), "%s/TargetDir", base);
     snprintf(link, sizeof(link), "%s/LinkDir", base);
+#endif
 
     rm_rf(base);
     mkdir(base, 0755);
     mkdir(ncd_dir, 0755);
     mkdir(target, 0755);
 
-    ASSERT_TRUE(create_test_db(ncd_dir, '/', base));
+    ASSERT_TRUE(create_test_db(ncd_dir, test_drive, base));
 
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
@@ -291,53 +309,14 @@ TEST(ln_creates_symlink) {
     ASSERT_EQ_INT(0, status);
     ASSERT_STR_CONTAINS(out, "\"result\":\"created\"");
 
+#if NCD_PLATFORM_WINDOWS
+    DWORD attrs = GetFileAttributesA(link);
+    ASSERT_TRUE(attrs != INVALID_FILE_ATTRIBUTES);
+    ASSERT_TRUE((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+#else
     struct stat st;
     ASSERT_TRUE(lstat(link, &st) == 0 && S_ISLNK(st.st_mode));
-
-    rm_rf(base);
-    return 0;
 #endif
-}
-
-TEST(ln_fails_without_privilege_windows) {
-#if !NCD_PLATFORM_WINDOWS
-    printf("SKIP: ln_fails_without_privilege_windows on Linux\n");
-    return 0;
-#endif
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "lnw");
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-    char target[NCD_MAX_PATH], link[NCD_MAX_PATH];
-    snprintf(target, sizeof(target), "%s\\TargetDir", base);
-    snprintf(link, sizeof(link), "%s\\LinkDir", base);
-
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    mkdir(target, 0755);
-
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C', base));
-
-    char out[4096] = {0};
-    char args[NCD_MAX_PATH * 2];
-    snprintf(args, sizeof(args), "ln \"%s\" \"%s\" --json", target, link);
-    int status = run_agent(base, args, out, sizeof(out));
-
-    if (strstr(out, "EXE_NOT_FOUND")) {
-        printf("SKIP: NCD executable not found\n");
-        rm_rf(base);
-        return 0;
-    }
-
-    /* On Windows without developer mode, symlink creation should fail with error_unsupported.
-     * If it succeeds, the test environment has privileges. */
-    if (status == 0 && strstr(out, "\"result\":\"created\"")) {
-        printf("SKIP: Symlink creation succeeded (developer mode or elevated privileges present)\n");
-        rm_rf(base);
-        return 0;
-    }
-
-    ASSERT_STR_CONTAINS(out, "error_unsupported");
 
     rm_rf(base);
     return 0;
@@ -349,7 +328,6 @@ void suite_agent_mv(void) {
     RUN_TEST(mv_updates_database);
     RUN_TEST(mv_force_overwrite_empty);
     RUN_TEST(ln_creates_symlink);
-    RUN_TEST(ln_fails_without_privilege_windows);
 }
 
 TEST_MAIN(

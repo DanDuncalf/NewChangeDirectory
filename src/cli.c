@@ -807,16 +807,17 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
         return true;
         
     } else if (_stricmp(sub, "chmod") == 0) {
-        if (argc < 4) {
+        if (argc < 3) {
             ncd_println("NCD: --agent chmod requires a path and mode");
             return false;
         }
         opts->agent_subcommand = AGENT_SUB_CHMOD;
         platform_strncpy_s(opts->search, sizeof(opts->search), argv[2]);
         opts->has_search = true;
-        opts->agent_mode_octal = (int)strtol(argv[3], NULL, 8);
-        *consumed = 3;
-        for (int i = 4; i < argc; i++) {
+        *consumed = 2;
+
+        bool have_mode = false;
+        for (int i = 3; i < argc; i++) {
             const char *opt = argv[i];
             if (strcmp(opt, "--json") == 0) {
                 opts->agent_json = true;
@@ -824,9 +825,23 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
             } else if (strcmp(opt, "--recursive") == 0) {
                 opts->agent_recursive = true;
                 (*consumed)++;
+            } else if (strcmp(opt, "--mode") == 0 && i + 1 < argc) {
+                opts->agent_mode_octal = (int)strtol(argv[i + 1], NULL, 8);
+                have_mode = true;
+                (*consumed) += 2;
+                i++;
+            } else if (!have_mode && opt[0] != '-') {
+                opts->agent_mode_octal = (int)strtol(opt, NULL, 8);
+                have_mode = true;
+                (*consumed)++;
             } else {
                 break;
             }
+        }
+
+        if (!have_mode) {
+            ncd_println("NCD: --agent chmod requires a path and mode");
+            return false;
         }
         return true;
         
@@ -854,6 +869,15 @@ bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts)
     } else if (_stricmp(sub, "quit") == 0) {
         opts->agent_subcommand = AGENT_SUB_QUIT;
         *consumed = 1;
+        for (int i = 2; i < argc; i++) {
+            const char *opt = argv[i];
+            if (strcmp(opt, "--json") == 0) {
+                opts->agent_json = true;
+                (*consumed)++;
+            } else {
+                break;
+            }
+        }
         return true;
         
     } else {

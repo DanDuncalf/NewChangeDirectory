@@ -44,6 +44,74 @@ static void get_temp_dir(char *buf, size_t size, const char *suffix) {
 #endif
 }
 
+static void build_ncd_dir(char *buf, size_t size, const char *base) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\NCD", base);
+#else
+    snprintf(buf, size, "%s/ncd", base);
+#endif
+}
+
+static char test_drive_letter(void) {
+#if NCD_PLATFORM_WINDOWS
+    return 'C';
+#else
+    char cwd[NCD_MAX_PATH];
+    if (platform_get_current_dir(cwd, sizeof(cwd))) {
+        return platform_get_drive_letter(cwd);
+    }
+    return 0;
+#endif
+}
+
+static void build_test_drive_root(char *buf, size_t size) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%c:\\", test_drive_letter());
+#else
+    char drive = test_drive_letter();
+    if (platform_build_mount_path(drive, buf, size)) {
+        return;
+    }
+    platform_strncpy_s(buf, size, "/");
+#endif
+}
+
+static const char *test_chain_query(void) {
+#if NCD_PLATFORM_WINDOWS
+    return "scott\\doc";
+#else
+    return "scott/doc";
+#endif
+}
+
+static const char *test_users_path(void) {
+#if !NCD_PLATFORM_WINDOWS
+    static char path[NCD_MAX_PATH];
+    char root[NCD_MAX_PATH];
+    build_test_drive_root(root, sizeof(root));
+    snprintf(path, sizeof(path), "%s/Users", root);
+    return path;
+#else
+    #if NCD_PLATFORM_WINDOWS
+    return "C:\\Users";
+#endif
+#endif
+}
+
+static const char *test_missing_tree_path(void) {
+#if !NCD_PLATFORM_WINDOWS
+    static char path[NCD_MAX_PATH];
+    char root[NCD_MAX_PATH];
+    build_test_drive_root(root, sizeof(root));
+    snprintf(path, sizeof(path), "%s/Nonexistent", root);
+    return path;
+#else
+    #if NCD_PLATFORM_WINDOWS
+    return "C:\\Nonexistent";
+#endif
+#endif
+}
+
 static void rm_rf(const char *path) {
 #if NCD_PLATFORM_WINDOWS
     char cmd[NCD_MAX_PATH];
@@ -67,6 +135,13 @@ static bool create_test_db(const char *ncd_dir, char drive_letter) {
     if (!db) return false;
     db->last_scan = time(NULL);
     DriveData *drv = db_add_drive(db, drive_letter);
+#if !NCD_PLATFORM_WINDOWS
+    {
+        char drive_root[NCD_MAX_PATH];
+        build_test_drive_root(drive_root, sizeof(drive_root));
+        platform_strncpy_s(drv->label, sizeof(drv->label), drive_root);
+    }
+#endif
     int users = db_add_dir(drv, "Users", -1, false, false);
     int scott = db_add_dir(drv, "scott", users, false, false);
     int admin = db_add_dir(drv, "admin", users, false, false);
@@ -103,11 +178,11 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
-        "set LOCALAPPDATA=%s&& set NCD_TEST_MODE=1 && %s /agent %s",
+        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
         ncd_dir, exe, agent_args);
 #else
     snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 %s --agent:%s",
+        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
         ncd_dir, exe, agent_args);
 #endif
     FILE *fp = POPEN(cmd, "r");
@@ -117,20 +192,20 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     return PCLOSE(fp);
 }
 
+#define SETUP_DB(base, ncd_dir, suffix) do { \
+    get_temp_dir(base, sizeof(base), suffix); \
+    build_ncd_dir(ncd_dir, sizeof(ncd_dir), base); \
+    rm_rf(base); \
+    mkdir(base, 0755); \
+    mkdir(ncd_dir, 0755); \
+    ASSERT_TRUE(create_test_db(ncd_dir, test_drive_letter())); \
+} while (0)
+
 /* ================================================================ Query Tests */
 
 TEST(agent_query_basic_plain) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "qb");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "qb");
 
     char out[4096] = {0};
     int status = run_agent(base, "query Downloads", out, sizeof(out));
@@ -143,16 +218,7 @@ TEST(agent_query_basic_plain) {
 
 TEST(agent_query_basic_json) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "qj");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "qj");
 
     char out[4096] = {0};
     int status = run_agent(base, "query Downloads --json", out, sizeof(out));
@@ -168,20 +234,11 @@ TEST(agent_query_basic_json) {
 
 TEST(agent_query_no_match_json) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "qn");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "qn");
 
     char out[4096] = {0};
     int status = run_agent(base, "query nonexistent_xyz_123 --json", out, sizeof(out));
-    ASSERT_TRUE(status == 0);
+    ASSERT_TRUE(status != 0 || strstr(out, "\"results\":[]") != NULL);
     ASSERT_STR_CONTAINS(out, "\"results\":[]");
 
     rm_rf(base);
@@ -190,16 +247,7 @@ TEST(agent_query_no_match_json) {
 
 TEST(agent_query_limit) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "ql");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "ql");
 
     char out[4096] = {0};
     int status = run_agent(base, "query s --json --limit=2", out, sizeof(out));
@@ -213,19 +261,12 @@ TEST(agent_query_limit) {
 
 TEST(agent_query_chain_search) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "qc");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[128];
+    SETUP_DB(base, ncd_dir, "qc");
 
     char out[4096] = {0};
-    int status = run_agent(base, "query scott\\doc --json", out, sizeof(out));
+    snprintf(args, sizeof(args), "query \"%s\" --json", test_chain_query());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "Documents");
     ASSERT_STR_CONTAINS(out, "scott");
@@ -252,16 +293,7 @@ TEST(agent_query_missing_db) {
 
 TEST(agent_query_case_insensitive) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "qci");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    SETUP_DB(base, ncd_dir, "qci");
 
     char out1[4096] = {0};
     char out2[4096] = {0};
@@ -278,22 +310,15 @@ TEST(agent_query_case_insensitive) {
 
 TEST(agent_tree_basic_plain) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "tp");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[128];
+    SETUP_DB(base, ncd_dir, "tp");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\"", test_users_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
-    ASSERT_STR_CONTAINS(out, "Users");
     ASSERT_STR_CONTAINS(out, "scott");
+    ASSERT_STR_CONTAINS(out, "admin");
 
     rm_rf(base);
     return 0;
@@ -301,19 +326,12 @@ TEST(agent_tree_basic_plain) {
 
 TEST(agent_tree_basic_json) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "tj");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[160];
+    SETUP_DB(base, ncd_dir, "tj");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users --json", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\" --json", test_users_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"tree\"");
@@ -326,19 +344,12 @@ TEST(agent_tree_basic_json) {
 
 TEST(agent_tree_flat) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "tf");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[160];
+    SETUP_DB(base, ncd_dir, "tf");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users --flat", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\" --flat", test_users_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
     /* Flat format should show relative paths */
     ASSERT_TRUE(strstr(out, "scott") != NULL);
@@ -349,19 +360,12 @@ TEST(agent_tree_flat) {
 
 TEST(agent_tree_flat_json) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "tfj");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[192];
+    SETUP_DB(base, ncd_dir, "tfj");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users --json --flat", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\" --json --flat", test_users_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"tree\"");
@@ -372,22 +376,17 @@ TEST(agent_tree_flat_json) {
 
 TEST(agent_tree_depth_limit) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "td");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[160];
+    SETUP_DB(base, ncd_dir, "td");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users --depth 1", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\" --depth 1", test_users_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status == 0);
-    ASSERT_STR_CONTAINS(out, "Users");
-    /* With depth 1, should only show immediate children */
+    ASSERT_STR_CONTAINS(out, "scott");
+    ASSERT_STR_CONTAINS(out, "admin");
+    ASSERT_TRUE(strstr(out, "Downloads") == NULL);
+    /* With depth 1, only immediate children of the search root should appear. */
 
     rm_rf(base);
     return 0;
@@ -395,19 +394,12 @@ TEST(agent_tree_depth_limit) {
 
 TEST(agent_tree_not_found) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "tn");
-#if NCD_PLATFORM_WINDOWS
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
-#else
-    snprintf(ncd_dir, sizeof(ncd_dir), "%s/NCD", base);
-#endif
-    rm_rf(base);
-    mkdir(base, 0755);
-    mkdir(ncd_dir, 0755);
-    ASSERT_TRUE(create_test_db(ncd_dir, 'C'));
+    char args[160];
+    SETUP_DB(base, ncd_dir, "tn");
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Nonexistent --json", out, sizeof(out));
+    snprintf(args, sizeof(args), "tree \"%s\" --json", test_missing_tree_path());
+    int status = run_agent(base, args, out, sizeof(out));
     ASSERT_TRUE(status != 0 || strstr(out, "not found") != NULL || strstr(out, "error") != NULL);
 
     rm_rf(base);

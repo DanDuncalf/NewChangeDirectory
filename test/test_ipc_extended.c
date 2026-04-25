@@ -57,14 +57,13 @@ static void ensure_service_stopped(void) {
 
 /* --------------------------------------------------------- windows named pipe tests */
 
-TEST(ipc_pipe_create_with_invalid_name) {
+/* --------------------------------------------------------- windows named pipe tests */
+
 #if NCD_PLATFORM_WINDOWS
+TEST(ipc_pipe_create_with_invalid_name) {
     /* Windows pipe names cannot contain certain characters */
     /* This tests platform validation */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Windows-specific test\n");
-#endif
     return 0;
 }
 
@@ -154,22 +153,19 @@ TEST(ipc_pipe_permission_denied) {
     
     return 0;
 }
+#endif
 
 /* --------------------------------------------------------- unix socket tests */
 
-TEST(ipc_socket_create_with_invalid_path) {
 #if NCD_PLATFORM_LINUX
+TEST(ipc_socket_create_with_invalid_path) {
     /* Unix sockets have path length limits and restrictions */
     /* This tests platform validation */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Linux-specific test\n");
-#endif
     return 0;
 }
 
 TEST(ipc_socket_path_too_long) {
-#if NCD_PLATFORM_LINUX
     /* Unix domain socket paths are limited to about 108 bytes */
     char long_path[300];
     memset(long_path, 'a', sizeof(long_path) - 1);
@@ -177,19 +173,12 @@ TEST(ipc_socket_path_too_long) {
     
     /* The IPC implementation should handle this gracefully */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Linux-specific test\n");
-#endif
     return 0;
 }
 
 TEST(ipc_socket_permission_denied) {
-#if NCD_PLATFORM_LINUX
     /* Socket is in user's runtime directory, so permission denied is unlikely */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Linux-specific test\n");
-#endif
     return 0;
 }
 
@@ -211,6 +200,7 @@ TEST(ipc_socket_unlink_race_condition) {
     
     return 0;
 }
+#endif
 
 TEST(ipc_socket_connection_refused) {
     ensure_service_stopped();
@@ -495,26 +485,24 @@ TEST(ipc_timeout_recovery_reconnect) {
 
 /* --------------------------------------------------------- security tests */
 
-TEST(ipc_access_control_windows) {
+/* --------------------------------------------------------- security tests */
+
 #if NCD_PLATFORM_WINDOWS
+TEST(ipc_access_control_windows) {
     /* Windows named pipes have ACL-based access control */
     /* The IPC pipe should be accessible only to the current user */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Windows-specific test\n");
-#endif
     return 0;
 }
+#endif
 
-TEST(ipc_file_permissions_linux) {
 #if NCD_PLATFORM_LINUX
+TEST(ipc_file_permissions_linux) {
     /* Unix socket should have appropriate permissions */
     ASSERT_TRUE(1);
-#else
-    printf("SKIP: Linux-specific test\n");
-#endif
     return 0;
 }
+#endif
 
 TEST(ipc_same_user_only) {
     ensure_service_stopped();
@@ -534,18 +522,22 @@ void suite_ipc_extended(void) {
     printf("\n=== Extended IPC Tests ===\n\n");
     
     /* Windows Named Pipes (5 tests) */
+#if NCD_PLATFORM_WINDOWS
     RUN_TEST(ipc_pipe_create_with_invalid_name);
     RUN_TEST(ipc_pipe_create_already_exists);
     RUN_TEST(ipc_pipe_connect_timeout);
     RUN_TEST(ipc_pipe_disconnect_mid_transfer);
     RUN_TEST(ipc_pipe_permission_denied);
+#endif
     
     /* Unix Sockets (5 tests) */
+#if NCD_PLATFORM_LINUX
     RUN_TEST(ipc_socket_create_with_invalid_path);
     RUN_TEST(ipc_socket_path_too_long);
     RUN_TEST(ipc_socket_permission_denied);
     RUN_TEST(ipc_socket_unlink_race_condition);
     RUN_TEST(ipc_socket_connection_refused);
+#endif
     
     /* Message Handling (7 tests) */
     RUN_TEST(ipc_message_partial_read_handling);
@@ -564,8 +556,12 @@ void suite_ipc_extended(void) {
     RUN_TEST(ipc_timeout_recovery_reconnect);
     
     /* Security (3 tests) */
+#if NCD_PLATFORM_WINDOWS
     RUN_TEST(ipc_access_control_windows);
+#endif
+#if NCD_PLATFORM_LINUX
     RUN_TEST(ipc_file_permissions_linux);
+#endif
     RUN_TEST(ipc_same_user_only);
     
     /* Final cleanup */

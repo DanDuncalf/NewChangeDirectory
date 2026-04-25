@@ -34,6 +34,7 @@ Exit codes:
 """
 
 import argparse
+import ctypes
 import os
 import platform
 import sys
@@ -57,6 +58,37 @@ from ncd_testlib.discovery import discover_unit_tests
 from ncd_testlib.executor import run_test_binary, parse_unit_output
 
 RESULTS_FILE = PROJECT_ROOT / "test.results"
+
+
+def is_shell_elevated():
+    """Return True when the current shell has the privileges required by the suite."""
+    if platform.system() == "Windows":
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return False
+    return geteuid() == 0
+
+
+def suite_requires_wsl(args):
+    """Return True when the selected suite expects Linux/WSL coverage on Windows."""
+    if args.windows_only:
+        return False
+    return args.suite in ("all", "unit", "wsl")
+
+
+def get_preflight_error(args):
+    """Return a fatal preflight error string, or None when the suite can proceed."""
+    if not is_shell_elevated():
+        return "Test runner must be launched from an elevated shell. Aborting before build and test execution."
+
+    if platform.system() == "Windows" and suite_requires_wsl(args) and not is_wsl_available():
+        return "WSL is required for the selected suite, but it is not available."
+
+    return None
 
 
 def format_timestamp(dt):
@@ -86,14 +118,15 @@ def write_results_file(build_info, windows_results, linux_results, integration_s
 
     overall_status = "PASS"
     reason = "All tests passed with zero failures"
-    if total_failed > 0:
+    if build_info.get('preflight_error'):
+        overall_status = "FAIL"
+        reason = build_info['preflight_error']
+    elif total_failed > 0:
         overall_status = "FAIL"
         reason = f"{total_failed} test(s) failed"
-    if total_skipped > 0:
-        if total_failed > 0:
-            reason += f", {total_skipped} test(s) skipped"
-        else:
-            reason = f"All tests passed, {total_skipped} test(s) skipped (platform-specific)"
+    elif total_skipped > 0:
+        overall_status = "FAIL"
+        reason = f"{total_skipped} test(s) skipped"
     if build_info.get('build_failed'):
         overall_status = "FAIL"
         reason = "Build failure detected"
@@ -364,6 +397,20 @@ def main():
     print(f"Quick Mode:     {args.quick}")
     print()
 
+    preflight_error = get_preflight_error(args)
+    if preflight_error:
+        write_results_file(
+            {
+                "wsl_available": is_wsl_available() if platform.system() == "Windows" else "N/A",
+                "build_failed": False,
+                "preflight_error": preflight_error,
+            },
+            {},
+            {},
+        )
+        print(f"[FATAL] {preflight_error}")
+        sys.exit(1)
+
     # Build phase
     if not build_all(
         skip_build=args.skip_build,
@@ -444,7 +491,7 @@ def main():
             print(f"Skipped:       {total_skipped}")
             print()
 
-            if total_failed > 0:
+            if total_failed > 0 or total_skipped > 0:
                 print("[RESULT] FAIL - See test.results for details")
                 sys.exit(1)
             else:

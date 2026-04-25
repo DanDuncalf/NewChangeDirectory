@@ -40,7 +40,7 @@ static const char* get_service_exe(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
-    if (access("ncd_service", X_OK) == 0) return "ncd_service";
+    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
     return "../ncd_service";
 #endif
 }
