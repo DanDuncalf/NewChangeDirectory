@@ -3,6 +3,13 @@
 ###############################################################################
 * text=auto
 
+# Shell scripts must always use LF line endings (they run in WSL even when checked out on Windows)
+*.sh text eol=lf
+ncd text eol=lf
+ncd_service text eol=lf
+build.sh text eol=lf
+deploy.sh text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

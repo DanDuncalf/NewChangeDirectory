@@ -20,12 +20,12 @@ WINDOWS_MAIN_BINARIES = ["NewChangeDirectory.exe", "NCDService.exe"]
 LINUX_MAIN_BINARIES = ["NewChangeDirectory", "NCDService"]
 
 
-def run_cmd(cmd, cwd=None, timeout=300, shell=False):
+def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None):
     """Run a command and return (returncode, stdout, stderr)."""
     try:
         result = subprocess.run(
             cmd, cwd=cwd, capture_output=True, text=False,
-            timeout=timeout, shell=shell
+            timeout=timeout, shell=shell, stdin=stdin
         )
         out = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
         err = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
@@ -160,8 +160,13 @@ def build_windows_tests():
     return True
 
 
-def build_linux_main():
-    """Build Linux main binaries via WSL or natively."""
+def build_linux_main(test_build=False):
+    """Build Linux main binaries via WSL or natively.
+
+    Args:
+        test_build: When True, build with -DNCD_TEST_BUILD so the stdio TUI
+                    test backend is available for headless feature tests.
+    """
     print("[BUILD] Checking Linux main binaries...")
     needs_build = False
     for binary in LINUX_MAIN_BINARIES:
@@ -173,6 +178,7 @@ def build_linux_main():
         print("[BUILD] Linux main binaries are up-to-date.")
         return True
 
+    build_cmd = "./build.sh test" if test_build else "./build.sh"
     if platform.system() == "Windows":
         if not is_wsl_available():
             print("[BUILD] ERROR: WSL not available, cannot build Linux binaries.")
@@ -180,12 +186,12 @@ def build_linux_main():
         wsl_proj = wsl_path(PROJECT_ROOT)
         print(f"[BUILD] Building Linux main binaries via WSL ({wsl_proj})...")
         rc, out, err = run_cmd(
-            ["wsl", "bash", "-c", f'cd "{wsl_proj}" && ./build.sh'],
+            ["wsl", "bash", "-c", f'cd "{wsl_proj}" && {build_cmd}'],
             timeout=300
         )
     else:
-        print("[BUILD] Building Linux main binaries natively...")
-        rc, out, err = run_cmd(["./build.sh"], cwd=PROJECT_ROOT, timeout=300)
+        print(f"[BUILD] Building Linux main binaries natively ({build_cmd})...")
+        rc, out, err = run_cmd([build_cmd], cwd=PROJECT_ROOT, timeout=300)
 
     if rc != 0:
         print(f"[BUILD] Linux main build FAILED (exit {rc})")
@@ -269,7 +275,7 @@ def build_all(skip_build=False, windows_only=False, wsl_only=False):
             if not build_windows_tests():
                 ok = False
         if is_wsl_available() and not windows_only:
-            if not build_linux_main():
+            if not build_linux_main(test_build=True):
                 ok = False
             if not build_linux_tests():
                 ok = False
@@ -277,7 +283,7 @@ def build_all(skip_build=False, windows_only=False, wsl_only=False):
                 print("[BUILD] ERROR: Linux service launcher scripts are missing")
                 ok = False
     else:
-        if not build_linux_main():
+        if not build_linux_main(test_build=True):
             ok = False
         if not build_linux_tests():
             ok = False

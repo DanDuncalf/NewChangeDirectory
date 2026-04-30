@@ -564,7 +564,7 @@ static bool con_list_subdirs(const char *dir_path, NameList *out)
 static UiIoOps g_default_ops;
 static UiIoOps *g_ui_ops = NULL;
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) || defined(NCD_TEST_BUILD)
 /* Forward declaration for stdio TUI test backend.
  * Returns pointer to static ops struct, or NULL if NCD_TEST_MODE is not set. */
 static UiIoOps *stdio_backend_init(void);
@@ -638,8 +638,8 @@ UiIoOps *ui_get_io_backend(void)
         /* Auto-load keys from environment (enables testing and automation) */
         load_keys_from_env();
 
-#ifndef NDEBUG
-        /* In debug builds, check for stdio TUI test mode */
+#if !defined(NDEBUG) || defined(NCD_TEST_BUILD)
+        /* In debug or test builds, check for stdio TUI test mode */
         {
             UiIoOps *stdio_ops = stdio_backend_init();
             if (stdio_ops) {
@@ -1113,7 +1113,7 @@ void ui_snapshot_free(UiSnapshot *snap)
  * NCD_TEST_MODE may optionally specify terminal dimensions as "cols,rows"
  * (e.g., NCD_TEST_MODE=80,25).  If no comma is present, defaults are used.
  */
-#ifndef NDEBUG
+#if !defined(NDEBUG) || defined(NCD_TEST_BUILD)
 
 #define STDIO_GRID_MAX_COLS 160
 #define STDIO_GRID_MAX_ROWS 60
@@ -1268,7 +1268,7 @@ static UiIoOps *stdio_backend_init(void)
     return &g_stdio_ops;
 }
 
-#endif /* !NDEBUG -- stdio TUI test backend */
+#endif /* !NDEBUG || NCD_TEST_BUILD -- stdio TUI test backend */
 
 /* ======================================================================== */
 /* =================== Shared helpers (use ops from above) ================ */

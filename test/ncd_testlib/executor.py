@@ -1,5 +1,6 @@
 """Test execution and output parsing."""
 
+import os
 import platform
 import re
 import subprocess
@@ -33,7 +34,8 @@ def _cleanup_linux_service_state(path):
         f'cd "{wsl_dir}" && '
         'pkill -9 -x NCDService 2>/dev/null; '
         'killall -9 NCDService 2>/dev/null; '
-        'rm -f "${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid" 2>/dev/null'
+        'rm -f "${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid" 2>/dev/null; '
+        'rm -f "${XDG_RUNTIME_DIR:-/tmp}"/ncd_*_control.sock 2>/dev/null'
     )
     run_cmd(["wsl", "bash", "-lc", cleanup_cmd], timeout=15)
 
@@ -46,9 +48,28 @@ def run_test_binary(path, platform_label, timeout=60):
         binary_name = Path(path).name
         wsl_dir = wsl_path(path.parent)
         _cleanup_linux_service_state(path)
+
+        # WSL inherits Windows environment variables, but XDG_DATA_HOME
+        # set to a Windows path (C:\...) is invalid inside Linux binaries.
+        # Translate isolation paths to WSL /mnt/ paths so the service
+        # can actually write its metadata and database files.
+        env_setup = ""
+        xdg = os.environ.get("XDG_DATA_HOME", "")
+        if xdg:
+            wsl_xdg = wsl_path(xdg)
+            env_setup += f"export XDG_DATA_HOME='{wsl_xdg}'; "
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        if localappdata:
+            wsl_local = wsl_path(localappdata)
+            env_setup += f"export LOCALAPPDATA='{wsl_local}'; "
+        temp = os.environ.get("TEMP", "")
+        if temp:
+            wsl_temp = wsl_path(temp)
+            env_setup += f"export TEMP='{wsl_temp}'; export TMP='{wsl_temp}'; "
+
         rc, out, err = run_cmd(
             ["wsl", "bash", "-c",
-             f'cd "{wsl_dir}" && NCD_TEST_MODE=1 ./{binary_name}'],
+             f'{env_setup}cd "{wsl_dir}" && NCD_TEST_MODE=1 ./{binary_name}'],
             timeout=timeout
         )
         _cleanup_linux_service_state(path)

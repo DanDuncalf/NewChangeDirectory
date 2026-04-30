@@ -139,16 +139,23 @@ CC=clang ./build.sh
 
 ## Running Tests
 
-### Unified Test Report (Recommended)
+### Preferred Entry Points
 
-The `generate_report.py` script is the single entry point for comprehensive testing across **both Windows and Linux/WSL**:
+Use the Python harness directly:
 
 ```powershell
-:: From project root - auto-builds if needed, runs all tests, writes test.results
+:: Full cross-platform report with test.results
 python test\generate_report.py
+
+:: Direct runner entry points
+python test\runner.py unit
+python test\runner.py integration
+python test\runner.py --repair
 ```
 
-**What it does:**
+`test/generate_report.py` is a thin compatibility wrapper over `test/runner.py`, which is the current build-and-test engine.
+
+**What the Python harness does:**
 - Detects outdated or missing binaries and rebuilds them automatically
 - Runs Windows unit tests (`.exe`) and Linux unit tests (ELF via WSL)
 - Detects build failures and aborts with clear diagnostics
@@ -197,16 +204,9 @@ make bench      # Performance benchmarks
 make corruption # Corruption handling tests
 ```
 
-### Full Per-Test Report
+### Compatibility Wrappers
 
-For a detailed breakdown of every individual unit test and integration check:
-
-```powershell
-:: From project root - produces complete per-test listing with pass/fail ratios
-python test\generate_report.py
-```
-
-This script is self-isolating and outputs a full table of all unit tests and integration checks for **both platforms**.
+`Run-Tests-Safe.bat` and `Run-NcdTests.ps1` still exist, but they are compatibility wrappers around the same workflow rather than the primary source of truth.
 
 ### test.results File
 
@@ -267,6 +267,8 @@ ncd --agent:verify <path> [--empty]   # Verify directory properties
 ncd --agent:chmod <path> --mode 0755  # Change permissions (Linux only)
 ncd --agent:help                      # Show all agent commands
 ```
+
+See [docs/agent_mode.md](docs/agent_mode.md) for the current command/flag matrix, including the implemented filesystem-mutation flags such as `--dry-run`, `--atomic`, `--parents-required`, `--stop-on-error`, `--tree`, and `--recursive`.
 
 Exit codes:
 - `0` - Success / Found
@@ -345,6 +347,7 @@ MIT License - See LICENSE file for details.
 
 Additional documentation is available in the `docs/` directory:
 
+- **[docs/agent_mode.md](docs/agent_mode.md)** - Agent mode command and flag reference
 - **[docs/architecture/](docs/architecture/)** - Technical architecture docs
 - **[docs/history/](docs/history/)** - Project history and lessons learned
 - **[AGENTS.md](AGENTS.md)** - Comprehensive technical documentation for developers

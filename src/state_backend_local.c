@@ -513,15 +513,9 @@ int state_backend_open_best_effort(NcdStateView **out, NcdStateSourceInfo *info)
         if (result == 0) {
             return 0;  /* Service connection successful */
         }
-        /* Service exists but is busy (loading/scanning) - do NOT fall back */
-        const char *service_err = state_backend_service_error_string();
-        if (service_err && strstr(service_err, "not yet available")) {
-            /* Copy service error to local error buffer */
-            set_error(service_err);
-            /* Propagate the error up - client should know service is busy */
-            return -1;
-        }
-        /* For other errors (version mismatch, etc.), fall back to local */
+        /* Service connection failed (shutting down, busy timeout, version
+         * mismatch, etc.). Fall back to local disk. The service had its
+         * chance (including any wait/retry logic inside the service backend). */
     }
 
     /* Fall back to local mode */

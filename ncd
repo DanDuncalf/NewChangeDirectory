@@ -68,6 +68,23 @@ NCD_PATH=""
 NCD_MESSAGE="NewChangeDirectory did not produce a result."
 
 # -----------------------------------------------------------------------
+# 2a. Detect informational commands that don't produce a directory result
+# -----------------------------------------------------------------------
+NCD_INFO_CMD=""
+case "${1:-}" in
+    -r|--r|-c|--c|-v|--v|--help|-?|/?|-l|--list|--history-list|--history-clear|--history-browse)
+        NCD_INFO_CMD="1" ;;
+    --agent:*)
+        NCD_INFO_CMD="1" ;;
+    -g)
+        [[ -z "${2:-}" ]] && NCD_INFO_CMD="1" ;;
+esac
+
+if [[ -n "$NCD_INFO_CMD" ]]; then
+    NCD_MESSAGE=""
+fi
+
+# -----------------------------------------------------------------------
 # 3.  Run the binary -- pass all arguments straight through
 # -----------------------------------------------------------------------
 "${_ncd_bin}" "$@"
@@ -96,5 +113,5 @@ fi
 # -----------------------------------------------------------------------
 # 6.  Clean up variables
 # -----------------------------------------------------------------------
-unset NCD_STATUS NCD_DRIVE NCD_PATH NCD_MESSAGE
+unset NCD_STATUS NCD_DRIVE NCD_PATH NCD_MESSAGE NCD_INFO_CMD
 unset _ncd_script_dir _ncd_bin _ncd_result

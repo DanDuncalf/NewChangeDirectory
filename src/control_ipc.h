@@ -72,6 +72,7 @@ typedef enum {
     NCD_IPC_ERROR_BUSY_LOADING = -5,  /* Service loading databases */
     NCD_IPC_ERROR_BUSY_SCANNING = -6, /* Service scanning filesystem */
     NCD_IPC_ERROR_NOT_READY = -7,     /* Service not initialized yet */
+    NCD_IPC_ERROR_SHUTTING_DOWN = -8, /* Service is shutting down */
 } NcdIpcResult;
 
 /* --------------------------------------------------------- message headers    */

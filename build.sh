@@ -38,7 +38,17 @@ BUILD_X64=0
 BUILD_ARM64=0
 BUILD_RISCV=0
 BUILD_DEBUG=0
+BUILD_TEST=0
 TARGET_ARCH="${1:-host}"
+
+# Check for "test" argument (can be first or second)
+if [ "$TARGET_ARCH" = "test" ] || [ "${2:-}" = "test" ]; then
+    BUILD_TEST=1
+    # When "test" is first arg, default to host arch
+    if [ "$TARGET_ARCH" = "test" ]; then
+        TARGET_ARCH="host"
+    fi
+fi
 
 case "$TARGET_ARCH" in
     x64|amd64|x86_64)
@@ -77,7 +87,7 @@ case "$TARGET_ARCH" in
 esac
 
 # Check for "debug" as second argument
-if [ "${2:-}" = "debug" ]; then
+if [ "${2:-}" = "debug" ] || [ "${3:-}" = "debug" ]; then
     BUILD_DEBUG=1
 fi
 
@@ -124,6 +134,8 @@ COMMON_SOURCES=(
 # -Wno-stringop-truncation: strncpy with proper null-termination is safe
 if [ $BUILD_DEBUG -eq 1 ]; then
     BASE_CFLAGS="-std=c11 -Wall -Wextra -Wno-format-truncation -Wno-stringop-truncation -O0 -g3 -DDEBUG -D_GNU_SOURCE"
+elif [ $BUILD_TEST -eq 1 ]; then
+    BASE_CFLAGS="-std=c11 -Wall -Wextra -Wno-format-truncation -Wno-stringop-truncation -O2 -DNDEBUG -DNCD_TEST_BUILD -D_GNU_SOURCE"
 else
     BASE_CFLAGS="-std=c11 -Wall -Wextra -Wno-format-truncation -Wno-stringop-truncation -O2 -DNDEBUG -D_GNU_SOURCE"
 fi

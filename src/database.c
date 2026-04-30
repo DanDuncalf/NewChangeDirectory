@@ -3430,3 +3430,94 @@ void db_drive_restore_from_backup(DriveData *dst, const DriveData *backup)
         dst->name_pool = NULL;
     }
 }
+
+/* ================================================================ subtree removal */
+
+bool db_drive_remove_subtree(NcdDatabase *db, DriveData *drv, int dir_idx)
+{
+    if (!drv || dir_idx < 0 || dir_idx >= drv->dir_count) return false;
+
+    /* Mark the target entry and all descendants for removal */
+    bool *to_remove = ncd_calloc((size_t)drv->dir_count, sizeof(bool));
+    to_remove[dir_idx] = true;
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < drv->dir_count; i++) {
+            if (to_remove[i]) continue;
+            int parent = drv->dirs[i].parent;
+            if (parent >= 0 && parent < drv->dir_count && to_remove[parent]) {
+                to_remove[i] = true;
+                changed = true;
+            }
+        }
+    }
+
+    /* Build index mapping: old index -> new index */
+    int *old_to_new = ncd_malloc_array((size_t)drv->dir_count, sizeof(int));
+    for (int i = 0; i < drv->dir_count; i++) old_to_new[i] = -1;
+
+    /* Calculate new name pool size */
+    size_t new_pool_size = 0;
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (!to_remove[i]) {
+            const char *name = drv->name_pool + drv->dirs[i].name_off;
+            new_pool_size += strlen(name) + 1;
+        }
+    }
+
+    DirEntry *new_dirs = ncd_malloc_array((size_t)drv->dir_count, sizeof(DirEntry));
+    char *new_pool = new_pool_size > 0 ? (char *)ncd_malloc(new_pool_size) : NULL;
+
+    /* First pass: copy kept entries and build mapping */
+    int new_count = 0;
+    size_t pool_pos = 0;
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (to_remove[i]) continue;
+
+        old_to_new[i] = new_count;
+        new_dirs[new_count] = drv->dirs[i];
+
+        const char *name = drv->name_pool + drv->dirs[i].name_off;
+        size_t name_len = strlen(name) + 1;
+        if (new_pool) {
+            memcpy(new_pool + pool_pos, name, name_len);
+            new_dirs[new_count].name_off = (uint32_t)pool_pos;
+            pool_pos += name_len;
+        }
+        new_count++;
+    }
+
+    /* Second pass: update parent references */
+    for (int i = 0; i < new_count; i++) {
+        if (new_dirs[i].parent >= 0) {
+            new_dirs[i].parent = old_to_new[new_dirs[i].parent];
+        }
+    }
+
+    /* Replace old arrays */
+    free(drv->dirs);
+    free(drv->name_pool);
+
+    if (new_count > 0) {
+        drv->dirs = new_dirs;
+    } else {
+        drv->dirs = NULL;
+        free(new_dirs);
+    }
+    drv->dir_count = new_count;
+    drv->dir_capacity = new_count;
+
+    drv->name_pool = new_pool;
+    drv->name_pool_len = pool_pos;
+    drv->name_pool_cap = pool_pos;
+
+    free(old_to_new);
+    free(to_remove);
+
+    if (db) {
+        db->name_index_generation++;
+    }
+    return true;
+}

@@ -37,7 +37,7 @@ The local implementation (`state_backend_local.c`) demonstrates how to:
 3. Provide fallback when individual drives fail to load
 
 ### Key Insight: Service-First Design
-`state_backend_open_best_effort()` currently falls back to local immediately (since service isn't implemented). When Phase 6 adds service support, the integration point is already in place.
+`state_backend_open_best_effort()` tries the service first. If the service is running but busy (starting, loading, or scanning with no existing database), it waits up to `NCD_IPC_TIMEOUT_MS` (5 seconds) for the service to become ready. This prevents both the service and the client from scanning drives simultaneously. If the service is shutting down or does not respond, it falls back to local disk immediately. Only if both service and local disk fail does it return an error.
 
 ---
 

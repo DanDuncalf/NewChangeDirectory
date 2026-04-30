@@ -64,6 +64,7 @@ const char *ipc_error_string(NcdIpcResult result) {
         case NCD_IPC_ERROR_BUSY_LOADING: return "Service loading databases";
         case NCD_IPC_ERROR_BUSY_SCANNING: return "Service scanning filesystem";
         case NCD_IPC_ERROR_NOT_READY: return "Service not ready";
+        case NCD_IPC_ERROR_SHUTTING_DOWN: return "Service shutting down";
         default: return "Unknown error";
     }
 }

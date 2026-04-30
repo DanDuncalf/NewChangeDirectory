@@ -16,6 +16,10 @@
 #include <unistd.h>
 #endif
 
+/* Forward declarations for helpers defined later in this file */
+static void rm_rf(const char *path);
+static bool make_dir(const char *path);
+
 TEST(scan_mount_populates_database) {
     /* Create a temporary directory to scan */
     const char *test_dir = "test_scan_temp";
@@ -154,42 +158,198 @@ TEST(scan_mount_applies_exclusions) {
     return 0;
 }
 
-TEST(scan_subdirectory_merges_into_existing_db) {
-    const char *test_dir = "test_scan_subdir";
-    
-#if NCD_PLATFORM_WINDOWS
-    _rmdir(test_dir);
-#else
-    rmdir(test_dir);
-#endif
-    
-#if NCD_PLATFORM_WINDOWS
-    if (_mkdir(test_dir) != 0) {
-#else
-    if (mkdir(test_dir, 0755) != 0) {
-#endif
+TEST(scan_subdirectory_preserves_sibling_directories) {
+    char cwd[MAX_PATH];
+    platform_get_current_dir(cwd, sizeof(cwd));
+
+    char test_dir[MAX_PATH];
+    path_join(test_dir, sizeof(test_dir), cwd, "test_scan_partial_keep");
+
+    rm_rf(test_dir);
+
+    char keep_dir[MAX_PATH];
+    path_join(keep_dir, sizeof(keep_dir), test_dir, "keep_dir");
+    char rescan_dir[MAX_PATH];
+    path_join(rescan_dir, sizeof(rescan_dir), test_dir, "rescan_dir");
+
+    if (!make_dir(test_dir) || !make_dir(keep_dir) || !make_dir(rescan_dir)) {
+        rm_rf(test_dir);
         printf("    SKIPPED (cannot create test directory)\n");
         return 0;
     }
-    
-    /* Create initial database */
+
     NcdDatabase *db = db_create();
     int count1 = scan_mount(db, test_dir, true, true, NULL, NULL, NULL);
-    ASSERT_TRUE(count1 >= 0);
-    
-    /* Scan subdirectory and merge */
-    int count2 = scan_subdirectory(db, 'C', test_dir, true, true, NULL);
+    ASSERT_TRUE(count1 >= 2);
+    ASSERT_EQ_INT(1, db->drive_count);
+    char drive_letter = db->drives[0].letter;
+
+    /* Verify both directories exist before partial rescan */
+    bool found_keep = false, found_rescan = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "keep_dir")) found_keep = true;
+        if (strstr(fp, "rescan_dir")) found_rescan = true;
+    }
+    ASSERT_TRUE(found_keep);
+    ASSERT_TRUE(found_rescan);
+
+    /* Rescan just rescan_dir */
+    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL);
     ASSERT_TRUE(count2 >= 0);
-    
+
+    /* Verify keep_dir still exists after partial rescan */
+    found_keep = false; found_rescan = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "keep_dir")) found_keep = true;
+        if (strstr(fp, "rescan_dir")) found_rescan = true;
+    }
+    ASSERT_TRUE(found_keep);
+    ASSERT_TRUE(found_rescan);
+
     db_free(db);
-    
-    /* Cleanup */
+    rm_rf(test_dir);
+    return 0;
+}
+
+TEST(scan_subdirectory_updates_existing_subtree) {
+    char cwd[MAX_PATH];
+    platform_get_current_dir(cwd, sizeof(cwd));
+
+    char test_dir[MAX_PATH];
+    path_join(test_dir, sizeof(test_dir), cwd, "test_scan_partial_update");
+
+    rm_rf(test_dir);
+
+    char keep_dir[MAX_PATH];
+    path_join(keep_dir, sizeof(keep_dir), test_dir, "keep_dir");
+    char nested_keep[MAX_PATH];
+    path_join(nested_keep, sizeof(nested_keep), keep_dir, "nested_keep");
+    char rescan_dir[MAX_PATH];
+    path_join(rescan_dir, sizeof(rescan_dir), test_dir, "rescan_dir");
+    char old_child[MAX_PATH];
+    path_join(old_child, sizeof(old_child), rescan_dir, "old_child");
+
+    if (!make_dir(test_dir) || !make_dir(keep_dir) || !make_dir(nested_keep) ||
+        !make_dir(rescan_dir) || !make_dir(old_child)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create test directory)\n");
+        return 0;
+    }
+
+    NcdDatabase *db = db_create();
+    int count1 = scan_mount(db, test_dir, true, true, NULL, NULL, NULL);
+    ASSERT_TRUE(count1 >= 4);
+    ASSERT_EQ_INT(1, db->drive_count);
+    char drive_letter = db->drives[0].letter;
+
+    /* Verify initial state */
+    bool found_old = false, found_keep = false, found_nested = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "old_child")) found_old = true;
+        if (strstr(fp, "keep_dir")) found_keep = true;
+        if (strstr(fp, "nested_keep")) found_nested = true;
+    }
+    ASSERT_TRUE(found_old);
+    ASSERT_TRUE(found_keep);
+    ASSERT_TRUE(found_nested);
+
+    /* Modify filesystem: replace old_child with new_child */
 #if NCD_PLATFORM_WINDOWS
-    _rmdir(test_dir);
+    _rmdir(old_child);
 #else
-    rmdir(test_dir);
+    rmdir(old_child);
 #endif
-    
+    char new_child[MAX_PATH];
+    path_join(new_child, sizeof(new_child), rescan_dir, "new_child");
+    make_dir(new_child);
+
+    /* Rescan just rescan_dir */
+    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL);
+    ASSERT_TRUE(count2 >= 0);
+
+    /* Verify post-rescan state */
+    found_old = false; found_keep = false; found_nested = false;
+    bool found_new = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "old_child")) found_old = true;
+        if (strstr(fp, "new_child")) found_new = true;
+        if (strstr(fp, "keep_dir")) found_keep = true;
+        if (strstr(fp, "nested_keep")) found_nested = true;
+    }
+    ASSERT_FALSE(found_old);   /* old_child should be gone */
+    ASSERT_TRUE(found_new);    /* new_child should be present */
+    ASSERT_TRUE(found_keep);   /* keep_dir should still be there */
+    ASSERT_TRUE(found_nested); /* nested_keep should still be there */
+
+    db_free(db);
+    rm_rf(test_dir);
+    return 0;
+}
+
+TEST(scan_subdirectory_adds_new_subtree) {
+    char cwd[MAX_PATH];
+    platform_get_current_dir(cwd, sizeof(cwd));
+
+    char test_dir[MAX_PATH];
+    path_join(test_dir, sizeof(test_dir), cwd, "test_scan_partial_add");
+
+    rm_rf(test_dir);
+
+    char keep_dir[MAX_PATH];
+    path_join(keep_dir, sizeof(keep_dir), test_dir, "keep_dir");
+
+    if (!make_dir(test_dir) || !make_dir(keep_dir)) {
+        rm_rf(test_dir);
+        printf("    SKIPPED (cannot create test directory)\n");
+        return 0;
+    }
+
+    NcdDatabase *db = db_create();
+    int count1 = scan_mount(db, test_dir, true, true, NULL, NULL, NULL);
+    ASSERT_TRUE(count1 >= 1);
+    ASSERT_EQ_INT(1, db->drive_count);
+    char drive_letter = db->drives[0].letter;
+
+    /* Verify keep_dir exists */
+    bool found_keep = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "keep_dir")) found_keep = true;
+    }
+    ASSERT_TRUE(found_keep);
+
+    /* Create new_dir on filesystem */
+    char new_dir[MAX_PATH];
+    path_join(new_dir, sizeof(new_dir), test_dir, "new_dir");
+    make_dir(new_dir);
+
+    /* Rescan the new directory */
+    int count2 = scan_subdirectory(db, drive_letter, new_dir, true, true, NULL);
+    ASSERT_TRUE(count2 >= 0);
+
+    /* Verify both keep_dir and new_dir exist */
+    bool found_new = false;
+    found_keep = false;
+    for (int i = 0; i < db->drives[0].dir_count; i++) {
+        char fp[NCD_MAX_PATH];
+        db_full_path(&db->drives[0], i, fp, sizeof(fp));
+        if (strstr(fp, "keep_dir")) found_keep = true;
+        if (strstr(fp, "new_dir")) found_new = true;
+    }
+    ASSERT_TRUE(found_keep);
+    ASSERT_TRUE(found_new);
+
+    db_free(db);
+    rm_rf(test_dir);
     return 0;
 }
 
@@ -411,7 +571,9 @@ void suite_scanner(void) {
     RUN_TEST(scan_mount_respects_hidden_flag);
     RUN_TEST(scan_mount_applies_exclusions);
     RUN_TEST(scan_mount_excludes_directories_from_database);
-    RUN_TEST(scan_subdirectory_merges_into_existing_db);
+    RUN_TEST(scan_subdirectory_preserves_sibling_directories);
+    RUN_TEST(scan_subdirectory_updates_existing_subtree);
+    RUN_TEST(scan_subdirectory_adds_new_subtree);
     RUN_TEST(find_is_directory_returns_true_for_dirs);
     RUN_TEST(find_is_hidden_detects_hidden_entries);
     RUN_TEST(find_is_reparse_detects_symlinks);

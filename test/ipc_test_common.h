@@ -30,8 +30,8 @@
 #include <windows.h>
 typedef LARGE_INTEGER ipc_time_t;
 #else
-#include <sys/time.h>
-typedef struct timeval ipc_time_t;
+#include <time.h>
+typedef struct timespec ipc_time_t;
 #endif
 
 /* Get current time */

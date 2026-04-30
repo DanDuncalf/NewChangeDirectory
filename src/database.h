@@ -452,6 +452,14 @@ void db_drive_backup_free(DriveData *backup);
  */
 void db_drive_restore_from_backup(DriveData *dst, const DriveData *backup);
 
+/*
+ * Remove a directory entry and all its descendants from a drive.
+ * Rebuilds both the dirs array and the name pool.
+ * Updates parent indices for all remaining entries.
+ * Returns true on success.
+ */
+bool db_drive_remove_subtree(NcdDatabase *db, DriveData *drv, int dir_idx);
+
 /* --------------------------------------------------------- directory history  */
 
 /*

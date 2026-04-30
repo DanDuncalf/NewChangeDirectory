@@ -239,7 +239,7 @@ While coverage has improved significantly, some areas intentionally have lower c
 This report was generated as part of the Post-Parallel Consolidation Phase (Phase 6).
 
 **Previous Reports:**
-- `PARALLEL_TEST_COVERAGE_PLAN.md` - Original expansion plan
-- `PARALLEL_INTEGRATION_REPORT.md` - Integration phase report
+- Original parallel coverage expansion plan (historical)
+- Integration phase report from the parallel expansion effort (historical)
 
 **Next Review:** 2026-07-12 (Quarterly)

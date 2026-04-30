@@ -202,15 +202,9 @@ static bool ensure_state_initialized(void)
     int result = state_backend_open_best_effort(&g_state_view, &g_state_info);
 
     if (result != 0 || !g_state_view) {
-        /* Check if service is busy (loading/scanning) */
-        const char *err = state_backend_error_string();
-        if (err && strstr(err, "not yet available")) {
-            /* Service exists but is busy - report error to user */
-            ncd_printf("NCD: %s\r\n", err);
-            g_state_view = NULL;
-            return false;
-        }
-        NCD_DEBUG_LOG("NCD DEBUG: State backend initialization failed, using local mode\n");
+        /* State backend initialization failed. Service was unavailable or busy
+         * (even after waiting), and local fallback also failed (no database). */
+        NCD_DEBUG_LOG("NCD DEBUG: State backend initialization failed\n");
         g_state_view = NULL;
         return false;
     }

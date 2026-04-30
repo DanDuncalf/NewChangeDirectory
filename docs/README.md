@@ -7,23 +7,30 @@ Documentation for NewChangeDirectory (NCD) - a cross-platform command-line direc
 - [Main README](../README.md) - User guide and quick start
 - [AGENTS.md](../AGENTS.md) - Comprehensive agent/AI documentation
 - [AGENT_RULES.md](../AGENT_RULES.md) - Agent workflow rules
+- [Agent Mode Reference](agent_mode.md) - Implemented `--agent:*` commands and flags
+- [Testing Best Practices](BEST_PRACTICES_TESTING.md) - Current test-harness guidance
+- [PowerShell Wrapper Notes](POWERHSHELL_TEST_RUNNER.md) - Wrapper-specific test runner notes
 
 ## Documentation Structure
 
-### `/architecture`
-Technical architecture and design documentation:
+### Root Docs
 
-- **[Code Quality Fixes](architecture/code_quality.md)** - Completed code quality improvements
-- **[Linux Port](architecture/linux_port.md)** - Historical Linux porting documentation
-- **[Test Strategy](architecture/test_strategy.md)** - Comprehensive test plan (218 test cases)
+- **[agent_mode.md](agent_mode.md)** - Implemented agent mode behavior and flags
+- **[BEST_PRACTICES_TESTING.md](BEST_PRACTICES_TESTING.md)** - Testing workflow and isolation rules
+- **[POWERHSHELL_TEST_RUNNER.md](POWERHSHELL_TEST_RUNNER.md)** - PowerShell compatibility wrappers
+- **[TESTING_CHANGES_SUMMARY.md](TESTING_CHANGES_SUMMARY.md)** - Historical test-infrastructure summary
+
+### `/architecture`
+Current architecture documentation:
+
+- **[OVERVIEW.md](architecture/OVERVIEW.md)** - System architecture overview
+- **[shared_memory_multiple_segments.md](architecture/shared_memory_multiple_segments.md)** - Shared-memory layout notes
+- **[shared_memory_pointers_explained.md](architecture/shared_memory_pointers_explained.md)** - Offset vs pointer model
 
 ### `/history`
-Project history and post-mortems:
+Historical notes and post-mortems:
 
-- **[Implementation Summary](history/implementation_summary.md)** - Major feature implementation recap
-- **[Final Summary](history/final_summary.md)** - Project completion summary
 - **[Lessons Learned](history/lessons_learned.md)** - Development insights
-- **[Performance Baseline](history/baseline.md)** - Performance benchmarks
 
 ## For Developers
 
@@ -41,7 +48,15 @@ build.bat
 
 ### Testing
 
-See [test/README.md](../test/README.md) for comprehensive testing instructions.
+Prefer the Python harness:
+
+```powershell
+python test\generate_report.py
+python test\runner.py unit
+python test\runner.py integration
+```
+
+See [test/README.md](../test/README.md) and [AGENT_TESTING_GUIDE.md](../AGENT_TESTING_GUIDE.md) for the full workflow.
 
 ### Key Source Files
 

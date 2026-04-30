@@ -169,6 +169,19 @@ echo ==========================================
 echo.
 echo Setting up test environment...
 
+:: --- Use pre-provisioned test drive from Python harness if available ---
+if defined NCD_TEST_DRIVE (
+    set "TESTDRIVE=%NCD_TEST_DRIVE%"
+    set "HAS_ISOLATED_DRIVE=1"
+    if defined NCD_TEST_ROOT (
+        set "TESTROOT=%NCD_TEST_ROOT%"
+    ) else (
+        set "TESTROOT=%TESTDRIVE%:"
+    )
+    echo   Using pre-provisioned test drive %TESTDRIVE%: -^> %TESTROOT%
+    goto :create_tree
+)
+
 :: --- Try to find an unused drive letter for VHD ---
 :: Build list of used drive letters from registry (avoids "format disk" prompts for raw drives)
 set "USED_LETTERS= "
@@ -800,15 +813,16 @@ call :test_exit_fail R3 "/g missing name"     /g
 
 echo --- Category S: Windows-Specific ---
 
-if "%USE_VHD%"=="1" (
+if "%HAS_ISOLATED_DRIVE%"=="1" (
     call :test_ncd_finds S1 "Drive letter search"        "Downloads"     %TESTDRIVE%:Downloads
     call :test_exit_ok   S2 "Rescan specific drive"                      /r%TESTDRIVE%
-    echo ^| "%NCD%" %TESTDRIVE%:\ >nul 2>&1
+    :: S3: Navigate drive root via navigator mode (use timeout to prevent TUI hang)
+    powershell -NoProfile -Command "$env:LOCALAPPDATA='%LOCALAPPDATA%'; $env:NCD_TEST_MODE='1'; $p = Start-Process -PassThru -NoNewWindow -WorkingDirectory '%TESTDRIVE%:\' -FilePath '%NCD%' -ArgumentList '%CONF_OVERRIDE% .'; if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 } else { exit $p.ExitCode }" >nul 2>&1
     if not errorlevel 2 (call :pass S3 "Navigate drive root") else (call :fail S3 "Navigate drive root")
 ) else (
-    call :skip S1 "Drive letter search"     "no VHD drive"
-    call :skip S2 "Rescan specific drive"   "no VHD drive"
-    call :skip S3 "Navigate drive root"     "no VHD drive"
+    call :skip S1 "Drive letter search"     "no isolated drive"
+    call :skip S2 "Rescan specific drive"   "no isolated drive"
+    call :skip S3 "Navigate drive root"     "no isolated drive"
 )
 
 :: S4: Forward slash search (always testable)

@@ -405,9 +405,37 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     }
     SVC_DBG("Connected to service\n");
     
-    /* Check if service is ready - do NOT wait */
+    /* Wait for service to become ready, with timeout.
+     * We wait for STARTING, LOADING, and NOT_READY states to avoid
+     * having both the service and the client scan simultaneously.
+     * We do NOT wait for SHUTTING_DOWN - we fallback immediately. */
     SVC_DBG("Checking if service is ready...\n");
+    int wait_ms = 0;
+    const int poll_interval_ms = 100;
+    const int max_wait_ms = NCD_IPC_TIMEOUT_MS;  /* 5000ms default */
+
     NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    while ((ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
+            ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
+            ping_result == NCD_IPC_ERROR_NOT_READY) &&
+           wait_ms < max_wait_ms) {
+        SVC_DBG("Service busy (%s), waiting... (%d/%d ms)\n",
+                ipc_error_string(ping_result), wait_ms, max_wait_ms);
+        platform_sleep_ms(poll_interval_ms);
+        wait_ms += poll_interval_ms;
+        ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    }
+
+    if (ping_result == NCD_IPC_ERROR_SHUTTING_DOWN) {
+        ipc_client_disconnect(SERVICE(view).ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        set_error("Service is shutting down");
+        SVC_DBG("Service shutting down, fallback to local\n");
+        return -1;
+    }
+
     if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
         ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
         ping_result == NCD_IPC_ERROR_NOT_READY) {
@@ -415,10 +443,11 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         free(view);
         shm_platform_cleanup();
         ipc_client_cleanup();
-        set_error("Service is not yet available (still loading/scanning)");
-        SVC_DBG("Service not ready: %s\n", ipc_error_string(ping_result));
+        set_error("Service is busy and did not become ready in time");
+        SVC_DBG("Service wait timeout after %d ms\n", wait_ms);
         return -1;
     }
+
     if (ping_result != NCD_IPC_OK) {
         ipc_client_disconnect(SERVICE(view).ipc_client);
         free(view);
@@ -428,7 +457,7 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         SVC_DBG("Service ping failed: %s\n", ipc_error_string(ping_result));
         return -1;
     }
-    SVC_DBG("Service is ready\n");
+    SVC_DBG("Service is ready (waited %d ms)\n", wait_ms);
     
     /* Get state info to find shared memory names */
     SVC_DBG("Getting state info...\n");
@@ -840,7 +869,7 @@ int state_backend_request_rescan_service(NcdStateView *view,
     if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
         ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
         ping_result == NCD_IPC_ERROR_NOT_READY) {
-        set_error("Service is not yet available (still loading/scanning)");
+        set_error(ipc_error_string(ping_result));
         return -1;
     }
     
@@ -871,7 +900,7 @@ int state_backend_request_flush_service(NcdStateView *view) {
     if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
         ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
         ping_result == NCD_IPC_ERROR_NOT_READY) {
-        set_error("Service is not yet available (still loading/scanning)");
+        set_error(ipc_error_string(ping_result));
         return -1;
     }
     

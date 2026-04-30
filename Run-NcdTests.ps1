@@ -229,6 +229,33 @@ function Remove-TestTempDirs {
     }
 }
 
+function Remove-TestVhds {
+    param([switch]$Silent)
+    
+    if (-not $Silent) {
+        Write-Status "Cleaning up test VHDs..." 'Info'
+    }
+    
+    $vhds = Get-Disk -ErrorAction SilentlyContinue | Where-Object { $_.Location -match 'ncd_.*\.vhdx' }
+    foreach ($vhd in $vhds) {
+        $path = $vhd.Location
+        try {
+            Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue
+            Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+            if (-not $Silent) {
+                Write-Verbose "Removed VHD: $path"
+            }
+        }
+        catch {
+            Write-Warning "Could not remove VHD: $path"
+        }
+    }
+    
+    if (-not $Silent -and $vhds.Count -gt 0) {
+        Write-Status "Removed $($vhds.Count) orphaned test VHD(s)" 'Warning'
+    }
+}
+
 function Test-Environment {
     $issues = @()
     
@@ -245,12 +272,19 @@ function Test-Environment {
     $orphaned = Get-ChildItem $env:TEMP -Directory -ErrorAction SilentlyContinue | 
         Where-Object { $_.Name -match '^ncd_test_|^ncd_.*_test_' }
     
+    # Check for orphaned VHDs
+    $orphanedVhds = Get-Disk -ErrorAction SilentlyContinue | Where-Object { $_.Location -match 'ncd_.*\.vhdx' }
+    if ($orphanedVhds.Count -gt 0) {
+        $issues += "Found $($orphanedVhds.Count) orphaned test VHD(s)"
+    }
+    
     return @{
         IsClean = $issues.Count -eq 0
         Issues = $issues
         HasDatabase = $hasDb
         DatabasePath = $ncdPath
         OrphanedCount = $orphaned.Count
+        OrphanedVhdCount = $orphanedVhds.Count
     }
 }
 
@@ -274,6 +308,9 @@ function Repair-Environment {
     
     # Clean up orphaned directories
     Remove-TestTempDirs
+    
+    # Clean up orphaned VHDs
+    Remove-TestVhds
     
     # Stop any lingering processes
     Stop-NcdProcesses
@@ -800,6 +837,9 @@ finally {
     
     # Stop any running services
     Stop-NcdProcesses
+    
+    # Clean up test VHDs (orphaned from interrupted test runs)
+    Remove-TestVhds -Silent
     
     # Clean up temp directories
     Remove-TestTempDirs -Silent

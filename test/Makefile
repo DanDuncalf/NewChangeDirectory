@@ -592,8 +592,12 @@ all-environments-standalone:
 # IPC diagnostic tools build target
 ipc-tests: ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
            ipc_heuristic_test ipc_rescan_test ipc_flush_test ipc_cli \
-           ipc_fuzzer ipc_stress_test
+           ipc_fuzzer ipc_stress_test service_race_tester
 	@echo "IPC test programs built successfully."
+
+# Standalone threaded service race tester (not part of harness yet)
+service_race_tester: service_race_tester.c ipc_test_common.c ../src/control_ipc_posix.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -rf $(OBJDIR) $(TESTS) *.tmp *.database

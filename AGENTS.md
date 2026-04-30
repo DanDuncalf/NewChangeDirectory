@@ -108,14 +108,12 @@ NewChangeDirectory/
 │   ├── fuzz_database.c       # Fuzz testing for database loading
 │   ├── bench_matcher.c       # Performance benchmarks
 │   ├── Makefile              # Test build system
-│   ├── TESTING.md            # Testing documentation
+│   ├── README.md             # Test suite documentation
 │   ├── Win/                  # Windows-specific tests
 │   ├── Wsl/                  # WSL/Linux-specific tests
 │   └── PowerShell/           # PowerShell-specific tests
-├── tasks/                    # Implementation tracking
-│   ├── todo.md               # Task checklist
-│   ├── lessons.md            # Lessons learned
-│   └── baseline.md           # Performance baseline
+├── tasks/                    # Active task notes
+│   └── heap_corruption_investigation.md  # Active investigation note
 ├── ncd.bat                   # Windows wrapper script (CMD)
 ├── ncd                       # Linux wrapper script (Bash)
 ├── ncd_service.bat           # Windows service launcher
@@ -402,6 +400,8 @@ powershell -Command "Import-Module .\test\PowerShell\NcdTestUtils.psm1; Stop-Ncd
 ### Agent Mode (LLM Integration)
 
 Agent mode is the primary interface for automated and LLM-driven interaction.
+
+For the implemented filesystem-mutation flags and JSON field details, see [`docs/agent_mode.md`](docs/agent_mode.md).
 
 ```bash
 ncd --agent:query <search> [--json] [--limit N] [--depth]
@@ -1131,7 +1131,7 @@ ncd some_search
 ## Known Limitations
 
 1. No symlink cycle detection on Linux
-2. Windows-only: No Unicode/wide-char support (ANSI only)
+2. Some CLI and filesystem paths still pass through ANSI-oriented code paths, but the database and shared-memory formats support UTF-8/UTF-16 text encoding
 3. Directory history limited to 9 entries (NCD_DIR_HISTORY_MAX); frequent search history limited to 100 entries (NCD_HEUR_MAX_ENTRIES)
 4. Database refresh triggered manually, by configurable interval, or disabled
 5. No network drive support on Linux (only local filesystems)
@@ -1173,14 +1173,14 @@ ncd some_search
 
 ## Version History
 
-- Current binary version: 2 (added CRC64 checksum)
+- Current binary version: 3 (added encoding field and UTF-16 support)
 - Current metadata format version: 1 (container format)
 - Current heuristics version: 1
-- Current config version: 3 (added rescan_interval_hours)
+- Current config version: 4 (added text_encoding field)
 - Current build version: 1.3
 
 Note: The metadata file (ncd.metadata) has its own format version (1), while the
-config section inside it uses config version 3. These are independent version
+config section inside it uses config version 4. These are independent version
 numbers for different layers of the data structure.
 
 When changing database format:
@@ -1192,6 +1192,8 @@ When changing database format:
 ### Config Format Changes
 
 **Version 3** - Added `rescan_interval_hours` field to support configurable auto-rescan intervals (1-168 hours, or -1 for never).
+
+**Version 4** - Added `text_encoding` to the config and database path/metadata pipeline.
 
 
 ---

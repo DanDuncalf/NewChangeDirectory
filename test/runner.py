@@ -37,6 +37,7 @@ import argparse
 import ctypes
 import os
 import platform
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,7 @@ from ncd_testlib.build import (
 )
 from ncd_testlib.discovery import discover_unit_tests
 from ncd_testlib.executor import run_test_binary, parse_unit_output
+from ncd_testlib.integration import run_all_integration_suites
 
 RESULTS_FILE = PROJECT_ROOT / "test.results"
 
@@ -97,7 +99,7 @@ def format_timestamp(dt):
     return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def write_results_file(build_info, windows_results, linux_results, integration_status=None):
+def write_results_file(build_info, windows_results, linux_results, integration_results=None):
     """Write the test.results file."""
     now = datetime.now(timezone.utc)
     total_failed = 0
@@ -116,17 +118,33 @@ def write_results_file(build_info, windows_results, linux_results, integration_s
                 elif status == 'SKIPPED':
                     total_skipped += 1
 
+    # Accumulate integration test counts by platform
+    win_int_pass = win_int_fail = win_int_skip = win_int_run = 0
+    lin_int_pass = lin_int_fail = lin_int_skip = lin_int_run = 0
+    if integration_results:
+        for r in integration_results:
+            if r['name'].startswith('WSL'):
+                lin_int_run += r['total']
+                lin_int_pass += r['passed']
+                lin_int_fail += r['failed']
+                lin_int_skip += r['skipped']
+            else:
+                win_int_run += r['total']
+                win_int_pass += r['passed']
+                win_int_fail += r['failed']
+                win_int_skip += r['skipped']
+
     overall_status = "PASS"
     reason = "All tests passed with zero failures"
     if build_info.get('preflight_error'):
         overall_status = "FAIL"
         reason = build_info['preflight_error']
-    elif total_failed > 0:
+    elif total_failed > 0 or win_int_fail > 0 or lin_int_fail > 0:
         overall_status = "FAIL"
-        reason = f"{total_failed} test(s) failed"
-    elif total_skipped > 0:
+        reason = f"{total_failed + win_int_fail + lin_int_fail} test(s) failed"
+    elif total_skipped > 0 or win_int_skip > 0 or lin_int_skip > 0:
         overall_status = "FAIL"
-        reason = f"{total_skipped} test(s) skipped"
+        reason = f"{total_skipped + win_int_skip + lin_int_skip} test(s) skipped"
     if build_info.get('build_failed'):
         overall_status = "FAIL"
         reason = "Build failure detected"
@@ -217,9 +235,20 @@ def write_results_file(build_info, windows_results, linux_results, integration_s
     lines.append("INTEGRATION TEST SUITES")
     lines.append("=" * 80)
     lines.append("")
-    if integration_status:
-        for name, status in integration_status:
-            lines.append(f"  {name:<50s} {status}")
+    if integration_results:
+        for r in integration_results:
+            lines.append(f"  {r['name']:<50s} {r['status_str']}")
+            summary = r.get("machine_summary")
+            if summary and "latency_by_category" in summary:
+                lines.append("  Latency (us):")
+                for cat, stats in summary["latency_by_category"].items():
+                    if stats.get("samples", 0) > 0:
+                        lines.append(
+                            f"    {cat:16s} n={stats['samples']:4d} "
+                            f"min={stats['min_us']:10.2f} max={stats['max_us']:10.2f} "
+                            f"avg={stats['avg_us']:10.2f} p50={stats['p50_us']:10.2f} "
+                            f"p95={stats['p95_us']:10.2f} p99={stats['p99_us']:10.2f}"
+                        )
     else:
         lines.append("  (Integration tests not run)")
     lines.append("")
@@ -237,8 +266,16 @@ def write_results_file(build_info, windows_results, linux_results, integration_s
     lin_fail = sum(1 for t in linux_results.values() for _, s in t if s == 'FAILED')
     lin_skip = sum(1 for t in linux_results.values() for _, s in t if s == 'SKIPPED')
     lines.append(f"Windows Unit: {win_run:4d} run, {win_pass:4d} passed, {win_fail:4d} failed, {win_skip:4d} skipped")
+    if win_int_run > 0:
+        lines.append(f"Windows Int:  {win_int_run:4d} run, {win_int_pass:4d} passed, {win_int_fail:4d} failed, {win_int_skip:4d} skipped")
     lines.append(f"Linux Unit:   {lin_run:4d} run, {lin_pass:4d} passed, {lin_fail:4d} failed, {lin_skip:4d} skipped")
-    lines.append(f"Overall:      {total_run:4d} run, {total_passed:4d} passed, {total_failed:4d} failed, {total_skipped:4d} skipped")
+    if lin_int_run > 0:
+        lines.append(f"Linux Int:    {lin_int_run:4d} run, {lin_int_pass:4d} passed, {lin_int_fail:4d} failed, {lin_int_skip:4d} skipped")
+    total_run_all = total_run + win_int_run + lin_int_run
+    total_pass_all = total_passed + win_int_pass + lin_int_pass
+    total_fail_all = total_failed + win_int_fail + lin_int_fail
+    total_skip_all = total_skipped + win_int_skip + lin_int_skip
+    lines.append(f"Overall:      {total_run_all:4d} run, {total_pass_all:4d} passed, {total_fail_all:4d} failed, {total_skip_all:4d} skipped")
     lines.append("")
     lines.append(f"OVERALL STATUS: {overall_status}")
     lines.append(f"REASON: {reason}")
@@ -259,6 +296,22 @@ def check_environment():
         issues.append(f"LOCALAPPDATA points to test temp: {os.environ.get('LOCALAPPDATA')}")
     if os.environ.get('NCD_TEST_MODE'):
         issues.append(f"NCD_TEST_MODE is set: {os.environ.get('NCD_TEST_MODE')}")
+
+    # Check for orphaned test VHDs (Windows only)
+    if platform.system() == "Windows":
+        try:
+            result = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    "(Get-Disk | Where-Object { $_.Location -match 'ncd_.*\\.vhdx' }).Count"
+                ],
+                capture_output=True, text=True
+            )
+            vhd_count = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
+            if vhd_count > 0:
+                issues.append(f"Found {vhd_count} orphaned test VHD(s)")
+        except Exception:
+            pass
 
     print("=" * 80)
     print("Environment Check")
@@ -288,6 +341,33 @@ def repair_environment():
     if os.environ.get('NCD_TEST_MODE'):
         print(f"Clearing NCD_TEST_MODE (was: {os.environ.get('NCD_TEST_MODE')})")
         os.environ.pop('NCD_TEST_MODE', None)
+
+    # Clean up orphaned test VHDs (Windows only)
+    if platform.system() == "Windows":
+        print("Checking for orphaned test VHDs...")
+        try:
+            subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    "Get-Disk | Where-Object { $_.Location -match 'ncd_.*\\.vhdx' } | "
+                    "ForEach-Object { Dismount-DiskImage -ImagePath $_.Location -ErrorAction SilentlyContinue; "
+                    "Remove-Item $_.Location -ErrorAction SilentlyContinue }"
+                ],
+                capture_output=True
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-Disk | Where-Object { $_.Location -match 'ncd_.*\\.vhdx' }).Count"],
+                capture_output=True, text=True
+            )
+            remaining = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
+            if remaining == 0:
+                print("  No orphaned test VHDs found.")
+            else:
+                print(f"  Warning: {remaining} orphaned VHD(s) could not be removed.")
+        except Exception as e:
+            print(f"  VHD cleanup failed: {e}")
+
     print("Environment repair complete.")
     return True
 
@@ -306,6 +386,12 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
             path = discovered['windows'][exe_name]
             print(f"### Running {exe_name} ...")
             output = run_test_binary(path, 'windows', timeout=60)
+            if output.strip():
+                try:
+                    print(output)
+                except UnicodeEncodeError:
+                    sys.stdout.buffer.write(output.encode('utf-8', errors='replace'))
+                    sys.stdout.buffer.write(b'\n')
             tests = parse_unit_output(output)
             if tests:
                 windows_results[exe_name] = tests
@@ -330,7 +416,15 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
                     continue
                 path = discovered['linux'][exe_name]
                 print(f"### Running {exe_name} ...")
-                output = run_test_binary(path, 'linux', timeout=60)
+                # Service lifecycle tests need more time in isolated environments
+                test_timeout = 120 if "service" in exe_name.lower() else 60
+                output = run_test_binary(path, 'linux', timeout=test_timeout)
+                if output.strip():
+                    try:
+                        print(output)
+                    except UnicodeEncodeError:
+                        sys.stdout.buffer.write(output.encode('utf-8', errors='replace'))
+                        sys.stdout.buffer.write(b'\n')
                 tests = parse_unit_output(output)
                 if tests:
                     linux_results[exe_name] = tests
@@ -346,14 +440,8 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
 
 
 def run_integration_tests(suite, no_service=False, quick=False):
-    """Run integration tests. Phase 1 stub — implemented in Phase 2/3."""
-    integration_status = []
-    # TODO: Phase 2 — port Windows integration tests
-    # TODO: Phase 3 — port WSL integration tests
-    print("\n[NOTE] Integration test suites are being migrated to Python.")
-    print("       Run individual batch/shell scripts directly during transition.")
-    integration_status.append(("All Integration Suites", "PENDING MIGRATION"))
-    return integration_status
+    """Run integration tests via the unified integration test runner."""
+    return run_all_integration_suites(suite_filter=suite, no_service=no_service, quick=quick)
 
 
 def main():
@@ -480,6 +568,17 @@ def main():
                         total_failed += 1
                     elif status == 'SKIPPED':
                         total_skipped += 1
+
+            # Include integration failures in summary counts
+            int_failed = 0
+            int_skipped = 0
+            if integration_status:
+                for r in integration_status:
+                    int_failed += r.get('failed', 0)
+                    int_skipped += r.get('skipped', 0)
+
+            total_failed += int_failed
+            total_skipped += int_skipped
 
             print()
             print("=" * 80)

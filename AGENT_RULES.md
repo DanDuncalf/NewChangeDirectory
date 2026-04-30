@@ -17,7 +17,7 @@ Workflow orchestration and coding standards for AI agents working on the NCD pro
 - One tack per subagent for focused execution
 
 ### 3. Self-Improvement Loop
-- After ANY correction from the user: update tasks/lessons.md with the pattern
+- After any correction from the user: update `docs/history/lessons_learned.md` with the pattern when it is durable
 - Write rules for yourself that prevent the same mistake
 - Ruthlessly iterate on these lessons until mistake rate drops
 - Review lessons at session start for relevant project
@@ -50,12 +50,12 @@ Workflow orchestration and coding standards for AI agents working on the NCD pro
 
 ## Task Management
 
-- **Plan First:** Write plan to tasks/todo.md with checkable items
+- **Plan First:** Write plan in the active task note under `tasks/` or in the current work item
 - **Verify Plan:** Check in before starting implementation
 - **Track Progress:** Mark items complete as you go
 - **Explain Changes:** High-level summary at each step
-- **Document Results:** Add review section to tasks/todo.md
-- **Capture Lessons:** Update tasks/lessons.md after corrections
+- **Document Results:** Add a short review/result section to the active task note when one exists
+- **Capture Lessons:** Update `docs/history/lessons_learned.md` after durable corrections
 
 ## Core Principles
 

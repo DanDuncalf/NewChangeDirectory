@@ -77,6 +77,18 @@ if errorlevel 1 goto :error
 cl %CFLAGS% /Fo%OBJDIR%\shm_platform_win.obj %SRCDIR%\shm_platform_win.c
 if errorlevel 1 goto :error
 
+cl %CFLAGS% /Fo%OBJDIR%\shared_state.obj %SRCDIR%\shared_state.c
+if errorlevel 1 goto :error
+
+cl %CFLAGS% /Fo%OBJDIR%\state_backend_local.obj %SRCDIR%\state_backend_local.c
+if errorlevel 1 goto :error
+
+cl %CFLAGS% /Fo%OBJDIR%\state_backend_service.obj %SRCDIR%\state_backend_service.c
+if errorlevel 1 goto :error
+
+cl %CFLAGS% /Fo%OBJDIR%\service_publish.obj %SRCDIR%\service_publish.c
+if errorlevel 1 goto :error
+
 echo Linking test executables...
 
 :: Enable Windows long path support in all test executables
@@ -202,6 +214,11 @@ echo Building ipc_stress_test.exe...
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:ipc_stress_test.exe ipc_stress_test.c %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
+:: Standalone threaded service race tester (not part of harness yet)
+echo Building service_race_tester.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:service_race_tester.exe service_race_tester.c %OBJDIR%\ipc_test_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
 :: ==========================================================================
 :: PARALLEL EXPANSION TESTS (430+ tests across 16 files)
 :: ==========================================================================
@@ -222,6 +239,10 @@ if errorlevel 1 goto :error
 :: Agent 2: Service Infrastructure Tests (100 tests)
 echo Building test_service_stress.exe...
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_stress.exe test_service_stress.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\service_state.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_service_race_conditions.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_race_conditions.exe test_service_race_conditions.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\service_state.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
 echo Building test_service_rescan.exe...
@@ -278,7 +299,133 @@ echo Building test_stress.exe...
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_stress.exe test_stress.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\cli.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
+:: ==========================================================================
+:: MISSING TESTS (aligning with Linux Makefile)
+:: ==========================================================================
+
+:: Tier 1: Config, History, IPC, Result output
+echo Building test_config.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_config.exe test_config.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_history.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_history.exe test_history.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_ipc.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_ipc.exe test_ipc.c %OBJDIR%\test_framework.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_result_output.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_result_output.exe test_result_output.c %OBJDIR%\test_framework.obj %OBJDIR%\result.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Extended tests
+echo Building test_cli_parse.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_cli_parse.exe test_cli_parse.c %OBJDIR%\test_framework.obj %OBJDIR%\cli.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_cli_parse_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_cli_parse_extended.exe test_cli_parse_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\cli.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: SKIPPED: test_platform_extended.c triggers MSVC internal compiler error (C1001)
+:: on both /O2 and /Od. This is a compiler bug, not a code bug.
+:: The test builds fine with GCC/Clang on Linux.
+:: echo Building test_platform_extended.exe...
+:: cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_platform_extended.exe test_platform_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+:: if errorlevel 1 goto :error
+
+echo Building test_strbuilder_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_strbuilder_extended.exe test_strbuilder_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_common_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_common_extended.exe test_common_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_integration_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_integration_extended.exe test_integration_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Agent tests
+echo Building test_agent_cli_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_cli_extended.exe test_agent_cli_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\cli.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_agent_integration.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_integration.exe test_agent_integration.c %OBJDIR%\test_framework.obj %OBJDIR%\cli.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_agent_query_tree.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_query_tree.exe test_agent_query_tree.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_agent_ls_check.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_ls_check.exe test_agent_ls_check.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_agent_complete_mkdir_quit.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_complete_mkdir_quit.exe test_agent_complete_mkdir_quit.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: UI tests
+echo Building test_ui_selector.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /DNCD_TEST_BUILD /Fe:test_ui_selector.exe test_ui_selector.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\ui.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_ui_history.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /DNCD_TEST_BUILD /Fe:test_ui_history.exe test_ui_history.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\ui.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_ui_config.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /DNCD_TEST_BUILD /Fe:test_ui_config.exe test_ui_config.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\ui.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_ui_navigator.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /DNCD_TEST_BUILD /Fe:test_ui_navigator.exe test_ui_navigator.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\ui.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Service tests (extended)
+echo Building test_service_database.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_database.exe test_service_database.c %OBJDIR%\test_framework.obj %OBJDIR%\service_publish.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\service_state.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_service_empty_db.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_empty_db.exe test_service_empty_db.c %OBJDIR%\test_framework.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\state_backend_local.obj %OBJDIR%\state_backend_service.obj %OBJDIR%\service_publish.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\service_state.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_service_ipc.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_ipc.exe test_service_ipc.c %OBJDIR%\test_framework.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\state_backend_local.obj %OBJDIR%\state_backend_service.obj %OBJDIR%\service_publish.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\service_state.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_service_logging.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_logging.exe test_service_logging.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_service_parity.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_service_parity.exe test_service_parity.c %OBJDIR%\test_framework.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\state_backend_local.obj %OBJDIR%\state_backend_service.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Shared state / SHM
+echo Building test_shared_state_extended.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_shared_state_extended.exe test_shared_state_extended.c %OBJDIR%\test_framework.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+echo Building test_shm_platform.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_shm_platform.exe test_shm_platform.c %OBJDIR%\test_framework.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Key injection / TUI
+echo Building test_key_injection.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /DNCD_TEST_BUILD /Fe:test_key_injection.exe test_key_injection.c %OBJDIR%\test_framework.obj %OBJDIR%\ui.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: test_tui_integration.c is POSIX-only (uses unistd.h) - skip on Windows
+
+:: ==========================================================================
 :: Agent command tests (moved from build_new_tests.bat for unified build)
+:: ==========================================================================
 echo Building test_agent_mkdir_extended.exe...
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_agent_mkdir_extended.exe test_agent_mkdir_extended.c %OBJDIR%\test_framework.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error

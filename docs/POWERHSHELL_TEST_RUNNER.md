@@ -2,6 +2,8 @@
 
 ## Overview
 
+The current test engine is `python test\runner.py`. This document covers the PowerShell and batch compatibility wrappers that still exist in the repo.
+
 The PowerShell-based test runner solves the fundamental problem with batch files: **they cannot trap Ctrl+C interrupts**. When you press Ctrl+C during a batch file:
 
 1. The batch file terminates immediately
@@ -22,26 +24,26 @@ The PowerShell-based test runner solves the fundamental problem with batch files
 
 ## Quick Start
 
-### Recommended: Use the Safe Batch Wrapper
+### Recommended: Use the Python Harness
 
 ```batch
-:: Run all tests (safest option)
-Run-Tests-Safe.bat
+:: Run all tests and write test.results
+python test\generate_report.py
 
 :: Run only unit tests
-Run-Tests-Safe.bat unit
+python test\runner.py unit
 
 :: Run only integration tests
-Run-Tests-Safe.bat integration
+python test\runner.py integration
 
 :: Check environment (no tests)
-Run-Tests-Safe.bat --check
+python test\runner.py --check
 
 :: Repair corrupted environment
-Run-Tests-Safe.bat --repair
+python test\runner.py --repair
 ```
 
-### PowerShell Native (More Control)
+### PowerShell Native (Compatibility Wrapper)
 
 ```powershell
 # Run all tests
@@ -274,7 +276,7 @@ PowerShell:
 | VHD management | ⚠️ Partial | ✅ Full |
 | Detailed diagnostics | ❌ Limited | ✅ Comprehensive |
 
-**Recommendation**: Use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1` for all test runs.
+**Recommendation**: Prefer `python test\generate_report.py` or `python test\runner.py ...`; use `Run-Tests-Safe.bat` or `Run-NcdTests.ps1` when you specifically want the PowerShell wrapper behavior.
 
 ### Detailed Per-Test Reporting
 

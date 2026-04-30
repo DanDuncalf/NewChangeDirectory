@@ -18,7 +18,7 @@ void ipc_get_time(ipc_time_t *t) {
 #if NCD_PLATFORM_WINDOWS
     QueryPerformanceCounter(t);
 #else
-    gettimeofday(t, NULL);
+    clock_gettime(CLOCK_MONOTONIC, t);
 #endif
 }
 
@@ -29,7 +29,7 @@ double ipc_elapsed_ms(ipc_time_t *start, ipc_time_t *end) {
     return ((double)(end->QuadPart - start->QuadPart) * 1000.0) / (double)freq.QuadPart;
 #else
     return ((double)(end->tv_sec - start->tv_sec) * 1000.0) +
-           ((double)(end->tv_usec - start->tv_usec) / 1000.0);
+           ((double)(end->tv_nsec - start->tv_nsec) / 1000000.0);
 #endif
 }
 
@@ -40,7 +40,7 @@ double ipc_elapsed_us(ipc_time_t *start, ipc_time_t *end) {
     return ((double)(end->QuadPart - start->QuadPart) * 1000000.0) / (double)freq.QuadPart;
 #else
     return ((double)(end->tv_sec - start->tv_sec) * 1000000.0) +
-           ((double)(end->tv_usec - start->tv_usec));
+           ((double)(end->tv_nsec - start->tv_nsec) / 1000.0);
 #endif
 }
 

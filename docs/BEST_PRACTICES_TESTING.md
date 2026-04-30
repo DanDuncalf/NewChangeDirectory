@@ -5,15 +5,15 @@
 
 ---
 
-## The Golden Rule: Always Use the Safe Test Runner
+## The Golden Rule: Always Use the Test Harness
 
-**NEVER** run test executables, batch files, or shell scripts directly. Always use the PowerShell-based test infrastructure which guarantees environment cleanup even if tests are interrupted with `Ctrl+C`.
+**NEVER** run test executables, batch files, or shell scripts directly. Always use the Python test harness; the PowerShell and batch wrappers are compatibility entry points on top of the same workflow.
 
 | Do This ✅ | Never Do This ❌ |
 |-----------|------------------|
-| `Run-Tests-Safe.bat wsl` | `cd test && ./test_database` |
-| `Run-Tests-Safe.bat integration` | `test\Test-Service-Windows.bat` |
-| `Run-NcdTests.ps1 -TestSuite Wsl` | `wsl bash test/Wsl/test_features.sh` |
+| `python test\runner.py wsl` | `cd test && ./test_database` |
+| `python test\runner.py integration` | `test\Test-Service-Windows.bat` |
+| `python test\generate_report.py` | `wsl bash test/Wsl/test_features.sh` |
 
 **Why:** Batch files and direct shell execution cannot trap `Ctrl+C`. If interrupted, `LOCALAPPDATA`/`XDG_DATA_HOME` remain pointed at deleted temp directories and NCD appears "broken."
 
@@ -23,22 +23,22 @@
 
 ### Windows (All Tests)
 ```batch
-:: Full suite (safest)
-Run-Tests-Safe.bat
+:: Full suite (recommended)
+python test\generate_report.py
 
 :: Just Windows tests
-Run-Tests-Safe.bat --windows-only
+python test\runner.py windows
 
 :: Specific suites
-Run-Tests-Safe.bat unit
-Run-Tests-Safe.bat integration
-Run-Tests-Safe.bat service
+python test\runner.py unit
+python test\runner.py integration
+python test\runner.py service
 ```
 
 ### WSL / Linux
 ```batch
 :: From Windows host (recommended)
-Run-Tests-Safe.bat wsl
+python test\runner.py wsl
 
 :: Direct WSL unit tests (if you must)
 wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make test"
@@ -218,7 +218,7 @@ test_database.exe
 
 ## Key Takeaways
 
-1. **Use `Run-Tests-Safe.bat`** for every test run. It is the only way to guarantee environment restoration.
+1. **Use the Python harness** for every test run: `python test\generate_report.py` or `python test\runner.py ...`.
 2. **WSL builds are healthy** but some tests have platform-specific differences (struct sizes, UI dimensions, path separators).
 3. **`make all` in `test/` will fail on WSL** due to Windows-only extended test files.
 4. **Service tests are sensitive to state** — always clean up lingering `ncd_service` processes.

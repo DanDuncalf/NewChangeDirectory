@@ -33,6 +33,29 @@ set "NCD_PATH="
 set "NCD_MESSAGE=NewChangeDirectory.exe did not produce a result."
 
 :: ------------------------------------------------------------------
+:: 1a. Detect informational commands that don't produce a directory result
+:: ------------------------------------------------------------------
+set "NCD_INFO_CMD="
+if /i "%~1"=="-r" set "NCD_INFO_CMD=1"
+if /i "%~1"=="/r" set "NCD_INFO_CMD=1"
+if /i "%~1"=="-c" set "NCD_INFO_CMD=1"
+if /i "%~1"=="/c" set "NCD_INFO_CMD=1"
+if /i "%~1"=="-v" set "NCD_INFO_CMD=1"
+if /i "%~1"=="/v" set "NCD_INFO_CMD=1"
+if /i "%~1"=="--help" set "NCD_INFO_CMD=1"
+if /i "%~1"=="-?"   set "NCD_INFO_CMD=1"
+if /i "%~1"=="/?"   set "NCD_INFO_CMD=1"
+echo %1 | findstr /I /B "--agent:" >nul 2>&1 && set "NCD_INFO_CMD=1"
+if /i "%~1"=="-l"           set "NCD_INFO_CMD=1"
+if /i "%~1"=="--list"        set "NCD_INFO_CMD=1"
+if /i "%~1"=="--history-list"  set "NCD_INFO_CMD=1"
+if /i "%~1"=="--history-clear" set "NCD_INFO_CMD=1"
+if /i "%~1"=="--history-browse" set "NCD_INFO_CMD=1"
+if /i "%~1"=="-g" if "%~2"=="" set "NCD_INFO_CMD=1"
+
+if defined NCD_INFO_CMD set "NCD_MESSAGE="
+
+:: ------------------------------------------------------------------
 :: 2.  Run the executable -- all arguments passed straight through
 :: ------------------------------------------------------------------
 NewChangeDirectory.exe %*
@@ -83,3 +106,4 @@ set "NCD_DRIVE="
 set "NCD_PATH="
 set "NCD_MESSAGE="
 set "NCD_EXIT_CODE="
+set "NCD_INFO_CMD="

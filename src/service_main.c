@@ -1086,7 +1086,7 @@ static bool check_service_ready(NcdIpcConnection *conn,
                                  ServiceState *state) {
     /* Check for shutdown first - reject all operations during shutdown */
     if (service_state_is_shutdown_requested(state)) {
-        ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_NOT_READY,
+        ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_SHUTTING_DOWN,
                               "NCD Not Available - service is shutting down");
         return false;
     }

@@ -4,6 +4,8 @@
 
 This document summarizes the changes made to improve NCD's test infrastructure, specifically addressing the issue of cleanup when tests are interrupted.
 
+The current repository now uses `python test\runner.py` as the main test engine; the PowerShell and batch files described here remain as compatibility wrappers and historical context.
+
 ## The Problem
 
 **Batch files cannot trap Ctrl+C interrupts.** When a user pressed Ctrl+C during test execution:
@@ -91,7 +93,6 @@ Run-Tests-Safe.bat --repair
 **Files:**
 - `docs/POWERHSHELL_TEST_RUNNER.md` - Full PowerShell runner documentation
 - `test/PowerShell/README.md` - Module documentation
-- `test_cleanup_solution.md` - Solution technical details
 - `docs/TESTING_CHANGES_SUMMARY.md` - This file
 
 ---

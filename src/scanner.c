@@ -511,6 +511,13 @@ int scan_mounts(NcdDatabase *db,
     /* Empty mount list - nothing to scan */
     if (count == 0) return 0;
 
+    /* Compute max mount name length for aligned bracket display */
+    size_t max_mount_len = 0;
+    for (int i = 0; i < count && i < 26; i++) {
+        size_t len = strlen(mounts[i]);
+        if (len > max_mount_len) max_mount_len = len;
+    }
+
     /* Pre-allocate DriveData slots so worker threads can safely reference
      * db->drives[] without races. */
     int slots[26];
@@ -563,8 +570,9 @@ int scan_mounts(NcdDatabase *db,
 
         for (int i = 0; i < count && i < 26; i++) {
             char content[256];
-            /* Use shorter mount name field (12 chars instead of 30) */
-            snprintf(content, sizeof(content), "  [%-12.12s] (starting...)", mounts[i]);
+            /* Align right bracket to longest mount name */
+            snprintf(content, sizeof(content), "  [%-*s] (starting...)",
+                     (int)max_mount_len, mounts[i]);
             char line[512];
             /* Truncate to console width */
             int len = (int)strlen(content);
@@ -632,8 +640,9 @@ int scan_mounts(NcdDatabase *db,
                 DriveStatus *s = &statuses[i];
                 char content[512];
                 /* Calculate available space for path */
-                char mount_label[16];
-                snprintf(mount_label, sizeof(mount_label), "%-12.12s", mounts[i]);
+                char mount_label[MAX_PATH];
+                snprintf(mount_label, sizeof(mount_label), "%-*s",
+                         (int)max_mount_len, mounts[i]);
                 
                 /* Use atomic read for is_done */
                 if (platform_atomic_read(&s->is_done)) {
@@ -723,8 +732,9 @@ typedef struct ScanFrame {
 /* ================================================================ subdirectory scan */
 
 /*
- * Scan a subdirectory and add it to the database.
- * Simple implementation: just scan and add entries without removing old ones.
+ * Scan a subdirectory and merge it into an existing drive.
+ * Removes existing entries under subdir_path and replaces them with
+ * newly scanned ones.  Preserves all other directories on the drive.
  * Returns number of directories added, or -1 on error.
  */
 int scan_subdirectory(NcdDatabase   *db,
@@ -742,27 +752,63 @@ int scan_subdirectory(NcdDatabase   *db,
         db_make_mutable(db);
     }
 
-    /* Remove stale data for this drive if re-scanning. */
-    for (int i = 0; i < db->drive_count; i++) {
-        if (db->drives[i].letter == drive_letter) {
-            if (!db->is_blob) {
-                free(db->drives[i].dirs);
-                free(db->drives[i].name_pool);
-            }
-            memmove(&db->drives[i], &db->drives[i + 1],
-                    (size_t)(db->drive_count - i - 1) * sizeof(DriveData));
-            db->drive_count--;
-            break;
-        }
-    }
+    /* Normalize path */
+    char norm_path[MAX_PATH];
+    platform_strncpy_s(norm_path, sizeof(norm_path), subdir_path);
+    path_normalize_separators(norm_path);
 
-    /* Always create a fresh drive */
-    DriveData *drv = db_add_drive(db, drive_letter);
+    /* Get the directory name */
+    const char *subdir_name = path_leaf(norm_path);
+    bool is_drive_root = (subdir_name[0] == '\\' || subdir_name[0] == '/') && subdir_name[1] == '\0';
+
+    DriveData *drv = db_find_drive(db, drive_letter);
+    int parent_id = -1;
+
+    if (drv) {
+        if (is_drive_root) {
+            /* Rescanning a drive root -- clear all entries on the drive */
+            free(drv->dirs);
+            free(drv->name_pool);
+            drv->dirs = NULL;
+            drv->dir_count = 0;
+            drv->dir_capacity = 0;
+            drv->name_pool = NULL;
+            drv->name_pool_len = 0;
+            drv->name_pool_cap = 0;
+        } else {
+            /* Try to find the existing entry for this path in the database */
+            char full_path[NCD_MAX_PATH];
+            int existing_idx = -1;
+            for (int i = 0; i < drv->dir_count; i++) {
+                if (!db_full_path(drv, i, full_path, sizeof(full_path))) continue;
+                if (_stricmp(full_path, norm_path) == 0) {
+                    existing_idx = i;
+                    break;
+                }
+            }
+
+            if (existing_idx >= 0) {
+                /* Remove the existing subtree before rescanning */
+                db_drive_remove_subtree(db, drv, existing_idx);
+            }
+
+            /* Find the parent directory to attach to */
+            char parent_path[MAX_PATH];
+            if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
+                for (int i = 0; i < drv->dir_count; i++) {
+                    if (!db_full_path(drv, i, full_path, sizeof(full_path))) continue;
+                    if (_stricmp(full_path, parent_path) == 0) {
+                        parent_id = i;
+                        break;
+                    }
+                }
+            }
+        }
+    } else {
+        /* No drive yet -- create one */
+        drv = db_add_drive(db, drive_letter);
 #if NCD_PLATFORM_WINDOWS
         drv->type = DRIVE_FIXED;
-        /* Use the PARENT of subdirectory path as the mount point.
-         * The subdirectory name itself becomes the root entry. This prevents path
-         * duplication when reconstructing full paths. */
         char parent_path[MAX_PATH];
         if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
             platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
@@ -773,15 +819,11 @@ int scan_subdirectory(NcdDatabase   *db,
         }
 #else
         drv->type = 0;
-        /* For drive 0 (native Linux), use the PARENT of subdirectory path as the mount point.
-         * The subdirectory name itself becomes the root entry. This prevents path duplication
-         * when reconstructing full paths (e.g., /tmp/parent/child vs /tmp/parent/child/child). */
         if (drive_letter == 0) {
             char parent_path[MAX_PATH];
             if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
                 platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
             } else {
-                /* Fallback to root if no parent */
                 platform_strncpy_s(drv->label, sizeof(drv->label), "/");
             }
         } else {
@@ -790,23 +832,16 @@ int scan_subdirectory(NcdDatabase   *db,
             platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
         }
 #endif
-    
-    /* Normalize path */
-    char norm_path[MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), subdir_path);
-    path_normalize_separators(norm_path);
-    
-    /* Get the directory name */
-    const char *subdir_name = path_leaf(norm_path);
-    
+    }
+
     /* For drive roots (e.g., C:\) or filesystem roots (/), don't add a
      * synthetic backslash entry. Scan contents directly as root-level
      * entries to avoid path duplication in build_path_map/agent tree. */
     int subdir_id = -1;
-    if (!((subdir_name[0] == '\\' || subdir_name[0] == '/') && subdir_name[1] == '\0')) {
-        subdir_id = db_add_dir(drv, subdir_name, -1, false, false);
+    if (!is_drive_root) {
+        subdir_id = db_add_dir(drv, subdir_name, parent_id, false, false);
     }
-    
+
     /* Create scan context with a local DriveStatus for progress tracking.
      * scan_mounts() provides DriveStatus arrays for each mount, but
      * scan_subdirectory() is standalone and needs its own status struct. */
@@ -1067,9 +1102,11 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         bool is_hidden = (ent->d_name[0] == '.');
         bool is_system = false;
         
-        if (is_hidden && !ctx->include_hidden) {
-            continue;
-        }
+        /* On Linux, dot-prefixed directories are conventionally hidden.
+         * We always include them in the scan so that search-time flags
+         * (/i, /a) work consistently with Windows behavior.  The matcher
+         * filters them out by default; /i shows hidden, /a shows all. */
+        (void)ctx->include_hidden;
         
         /* Check exclusion list */
         bool is_excl = scan_ctx_is_excluded(ctx, ctx->drv->letter, child);

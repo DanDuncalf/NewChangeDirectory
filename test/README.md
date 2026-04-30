@@ -8,24 +8,24 @@ This directory contains the comprehensive test suite for NewChangeDirectory (NCD
 
 **Essential Commands (Via Harness):**
 ```batch
-:: Run ALL tests (Windows + WSL) - Environment guaranteed restored
-Run-Tests-Safe.bat
+:: Run ALL tests (Windows + WSL) and write test.results
+python test\generate_report.py
 
 :: Run Windows tests only
-Run-Tests-Safe.bat --windows-only
+python test\runner.py windows
 
 :: Run WSL tests
-Run-Tests-Safe.bat wsl
+python test\runner.py wsl
 
 :: Check/Repair environment
-Run-Tests-Safe.bat --check
-Run-Tests-Safe.bat --repair
+python test\runner.py --check
+python test\runner.py --repair
 ```
 
 **NEVER run test executables directly** (e.g., `test_database.exe`, `Test-*.bat`) as environment won't be restored on interruption.
 
 **Build System Notes:**
-- `test/build-tests.bat` compiles Windows unit-test executables. It is invoked by `Run-NcdTests.ps1`.
+- `test/build-tests.bat` compiles Windows unit-test executables. The Python harness calls it through `test/ncd_testlib/build.py`.
 - If you add a new `test_*.c` file, you **must** add its compile/link rule to `test/build-tests.bat` or the test runner will silently skip it.
 - The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) were added to `build-tests.bat` on 2026-04-18. Before that, they existed as source but were never compiled on Windows.
 
@@ -47,41 +47,40 @@ Run-Tests-Safe.bat --repair
 
 ## Quick Start - How to Run Tests
 
-### Recommended: Safe PowerShell Test Runner (Ctrl+C Safe!)
+### Recommended: Python Test Harness
 
-The PowerShell-based test runner guarantees cleanup even if you press Ctrl+C during tests.
+`python test/runner.py` is the current orchestration layer. `python test/generate_report.py` is a compatibility wrapper that calls into the same runner and writes the detailed `test.results` report.
 
 ```batch
-:: From project root - Run ALL tests (safest option)
-Run-Tests-Safe.bat
+:: From project root - Run ALL tests
+python test\generate_report.py
 
 :: Run specific test suites
-Run-Tests-Safe.bat unit
-Run-Tests-Safe.bat integration
-Run-Tests-Safe.bat service
-Run-Tests-Safe.bat windows
-Run-Tests-Safe.bat wsl
+python test\runner.py unit
+python test\runner.py integration
+python test\runner.py service
+python test\runner.py windows
+python test\runner.py wsl
 
 :: Check if environment is clean
-Run-Tests-Safe.bat --check
+python test\runner.py --check
 
 :: Repair corrupted environment
-Run-Tests-Safe.bat --repair
+python test\runner.py --repair
 ```
 
-### PowerShell Native (More Control)
+### Compatibility Wrappers
 
 ```powershell
-:: From project root
+:: PowerShell wrapper
 .\Run-NcdTests.ps1
 
-:: Run with options
-.\Run-NcdTests.ps1 -TestSuite Unit -Quick
-.\Run-NcdTests.ps1 -TestSuite Integration -WindowsOnly
+:: Batch wrapper
+Run-Tests-Safe.bat
 
-:: Environment management
-.\Run-NcdTests.ps1 -CheckEnvironment
-.\Run-NcdTests.ps1 -RepairEnvironment
+:: Wrapper examples
+.\Run-NcdTests.ps1 -TestSuite Unit -Quick
+Run-Tests-Safe.bat windows
 ```
 
 ### Legacy Batch Runners (Not Ctrl+C Safe)
@@ -181,8 +180,8 @@ finally {
 
 | Category | Location | Description |
 |----------|----------|-------------|
-| **Unit Tests** | `test/test_*.c` | Module-level tests (325+ tests) |
-| **Parallel Expansion** | `test/test_*_extended.c` | New 430+ tests from 4-agent parallel effort |
+| **Unit Tests** | `test/test_*.c` | Module-level tests across core, service, and agent behavior |
+| **Parallel Expansion** | `test/test_*_extended.c` | Expanded edge-case, stress, and infrastructure coverage |
 | **Integration Tests** | `test/Win/`, `test/Wsl/` | End-to-end platform tests |
 | **Service Tests** | `test/test_service_*.c` | Resident service tests |
 | **Fuzz Tests** | `test/fuzz_*.c` | Robustness testing |
@@ -202,7 +201,7 @@ finally {
 
 ### Parallel Expansion Test Tracks (430+ New Tests)
 
-Following the `PARALLEL_TEST_COVERAGE_PLAN.md`, 4 agents worked in parallel to add 430+ new tests:
+Following the parallel coverage expansion effort, 4 agents worked in parallel to add 430+ new tests:
 
 | Agent | Track | Tests | Files | Focus Areas |
 |-------|-------|-------|-------|-------------|
@@ -215,21 +214,15 @@ Following the `PARALLEL_TEST_COVERAGE_PLAN.md`, 4 agents worked in parallel to a
 **Running Parallel Expansion Tests:**
 
 ```powershell
-:: Run all parallel expansion tests (included in full suite)
-.\Run-NcdTests.ps1 -TestSuite Unit
-
-:: Run specific agent track
-.\Run-NcdTests.ps1 -TestSuite ParallelAgent1  # Data Core
-.\Run-NcdTests.ps1 -TestSuite ParallelAgent2  # Service IPC
-.\Run-NcdTests.ps1 -TestSuite ParallelAgent3  # UI & Main
-.\Run-NcdTests.ps1 -TestSuite ParallelAgent4  # Input Processing
+:: Run all parallel expansion tests (included in the full unit suite)
+python test\runner.py unit
 ```
 
 ### Directory Structure
 
 ```
 test/
-├── test_*.c                   :: Unit test source files (755+ tests total)
+├── test_*.c                   :: Unit and integration-oriented C test sources
 │   ├── test_database.c        :: Core database tests
 │   ├── test_matcher.c         :: Matcher tests
 │   ├── ...
@@ -267,8 +260,8 @@ test/
 ├── Run-All-Unit-Tests.bat     :: Unit test runner (includes parallel tests)
 ├── Check-Environment.bat      :: Environment checker
 ├── Makefile                   :: Linux build system
-├── PARALLEL_TEST_COVERAGE_PLAN.md      :: Parallel expansion plan
-└── PARALLEL_INTEGRATION_REPORT.md      :: Integration report
+├── COVERAGE_REPORT.md                  :: Coverage summary for the expanded suite
+└── README.md                           :: This guide
 ```
 
 ---
@@ -278,8 +271,8 @@ test/
 ### Full Test Suite (Recommended)
 
 ```batch
-:: Run all 6 test suites safely
-Run-Tests-Safe.bat
+:: Run all 6 test suites and write test.results
+python test\generate_report.py
 
 :: Output shows:
 :: ========================================
@@ -307,26 +300,26 @@ This produces a detailed breakdown of every unit test (pass/fail) and integratio
 
 ```batch
 :: Service tests only
-Run-Tests-Safe.bat service
+python test\runner.py service
 
 :: NCD standalone tests only
-Run-Tests-Safe.bat ncd
+python test\runner.py ncd
 
 :: NCD with service tests
-Run-Tests-Safe.bat ncd-service
+python test\runner.py ncd-service
 
 :: All Windows tests
-Run-Tests-Safe.bat windows
+python test\runner.py windows
 
 :: All WSL tests
-Run-Tests-Safe.bat wsl
+python test\runner.py wsl
 ```
 
 ### Unit Tests Only
 
 ```batch
 :: Windows
-Run-Tests-Safe.bat unit
+python test\runner.py unit
 
 :: Or directly:
 cd test
@@ -343,26 +336,26 @@ After running unit tests, use `python test\generate_report.py` for a detailed pe
 
 ```batch
 :: Skip build phase (assume binaries exist)
-Run-Tests-Safe.bat --skip-build
+python test\runner.py --skip-build
 
 :: Skip tests requiring service
-Run-Tests-Safe.bat --no-service
+python test\runner.py --no-service
 
 :: Quick mode (skip fuzz/benchmarks)
-Run-Tests-Safe.bat --quick
+python test\runner.py --quick
 
 :: Windows only (skip WSL)
-Run-Tests-Safe.bat --windows-only
+python test\runner.py --windows-only
 ```
 
 ### Environment Check/Repair
 
 ```batch
 :: Check if environment is clean
-Run-Tests-Safe.bat --check
+python test\runner.py --check
 
 :: Repair corrupted environment
-Run-Tests-Safe.bat --repair
+python test\runner.py --repair
 
 :: Or use PowerShell directly for verbose output
 .\Check-Environment.ps1 -Verbose
@@ -710,22 +703,9 @@ The `legacy_shutdown_force_kill_as_last_resort` test may fail intermittently in 
 
 ## Test Coverage Summary
 
-| Module | Test Count | Coverage |
-|--------|------------|----------|
-| Database | 34+ | 90% |
-| Matcher | 23+ | 85% |
-| Scanner | 9+ | 80% |
-| Metadata | 11+ | 85% |
-| Platform | 12+ | 70% |
-| String Builder | 15+ | 80% |
-| Common | 7+ | 75% |
-| History | 14+ | 80% |
-| CLI Parse | 31+ | 90% |
-| Service | 25+ | 80% |
-| **Total** | **325+** | **~85%** |
+The hardcoded per-module counts in older drafts became stale after the test-suite expansion. See [`COVERAGE_REPORT.md`](COVERAGE_REPORT.md) for the maintained summary of the expanded suite.
 
 ## Additional Documentation
 
 - `docs/POWERHSHELL_TEST_RUNNER.md` - Full PowerShell runner documentation
 - `test/PowerShell/README.md` - PowerShell module documentation
-- `test_cleanup_solution.md` - Cleanup solution technical details

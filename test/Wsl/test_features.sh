@@ -559,17 +559,15 @@ category "G: Hidden/System Filters"
 # Note: on Linux, "hidden" means dot-prefixed dirs. "system" is less relevant
 # but NCD still supports the flag. The .hidden_config dir was created under scott.
 
-# G1: NCD never indexes dot-prefixed directories during scan, so they
-# should never appear in search results regardless of flags.
+# G1: Dot-prefixed directories are treated as hidden; default search excludes them.
 test_ncd_no_match "G1" "Default hides hidden dirs"                    .hidden_config
-# G2: Since dot-prefixed dirs are excluded at scan time (not search time),
-# /i cannot make them appear. Skip this test.
-skip              "G2" "/i shows hidden dirs" "NCD excludes dot-dirs at scan time"
+# G2: /i flag should show hidden (dot-prefixed) directories.
+test_ncd_finds    "G2" "/i shows hidden dirs"     ".hidden_config"     -i .hidden_config
 # G3-G5: System filter (Windows\System32 was created as a regular dir on Linux,
 # so it won't have the system flag. Test that /s doesn't crash.)
 test_exit_ok      "G3" "/s flag accepted"                          -s System32
-# G4: Same as G2 -- dot-dirs excluded at scan time, /a can't find them.
-skip              "G4" "/a shows all dirs" "NCD excludes dot-dirs at scan time"
+# G4: /a flag should show all directories (including hidden dot-dirs).
+test_ncd_finds    "G4" "/a shows all dirs"      ".hidden_config"     -a .hidden_config
 test_exit_ok      "G5" "/a flag accepted"                          -a System32
 # G6: Default should hide hidden dirs (same as G1, different wording)
 test_ncd_no_match "G6" "Default excludes .hidden_config"              .hidden_config
@@ -879,8 +877,22 @@ if [[ -f "$NCD_WRAPPER" ]]; then
         skip "O2" "Execute wrapper shows error" "wrapper may not detect non-sourced execution"
     fi
 
-    # O3: Result file exists after wrapper run
-    skip "O3" "Wrapper result file" "requires sourced interactive shell"
+    # O3: Wrapper sources and cleans up the result file.
+    test_custom "O3" "Wrapper result file"
+    rm -f "$RESULT_FILE" 2>/dev/null
+    # Run binary directly to create a result file
+    (cd /tmp && "$NCD" Downloads >/dev/null 2>&1) || true
+    if [[ -f "$RESULT_FILE" ]]; then
+        # Source the wrapper; it should source the result file and then delete it
+        (cd /tmp && source "$NCD_WRAPPER" Downloads >/dev/null 2>&1) || true
+        if [[ ! -f "$RESULT_FILE" ]]; then
+            pass "O3" "Wrapper result file"
+        else
+            fail "O3" "Wrapper result file" "wrapper did not clean up result file"
+        fi
+    else
+        fail "O3" "Wrapper result file" "result file not created by binary"
+    fi
 else
     skip "O1" "Source wrapper" "ncd wrapper script not found"
     skip "O2" "Execute wrapper error" "ncd wrapper script not found"
