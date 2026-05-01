@@ -34,6 +34,9 @@
 static bool service_executable_exists(void) {
 #if NCD_PLATFORM_WINDOWS
     DWORD attribs = GetFileAttributesA("NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return true;
+    attribs = GetFileAttributesA("..\\NCDService.exe");
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
     return (access("../ncd_service", X_OK) == 0);
@@ -64,7 +67,23 @@ static void ensure_service_stopped(void) {
 }
 
 static bool ensure_service_running(void) {
-    if (ipc_service_exists()) return true;
+    if (ipc_service_exists()) {
+        /* Verify it's actually responsive, not a zombie pipe */
+        ipc_client_init();
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            NcdIpcResult result = ipc_client_ping(client);
+            ipc_client_disconnect(client);
+            ipc_client_cleanup();
+            if (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) {
+                return true;
+            }
+        } else {
+            ipc_client_cleanup();
+        }
+        /* Not responsive - restart */
+        ensure_service_stopped();
+    }
     if (!service_executable_exists()) return false;
 
 #if NCD_PLATFORM_WINDOWS
@@ -83,7 +102,19 @@ static bool ensure_service_running(void) {
 
         for (int i = 0; i < 50; i++) {
             if (ipc_service_exists()) {
-                return true;
+                /* Verify responsiveness before returning true */
+                ipc_client_init();
+                NcdIpcClient *c = ipc_client_connect();
+                if (c) {
+                    NcdIpcResult r = ipc_client_ping(c);
+                    ipc_client_disconnect(c);
+                    ipc_client_cleanup();
+                    if (r == NCD_IPC_OK || r == NCD_IPC_ERROR_BUSY_LOADING || r == NCD_IPC_ERROR_BUSY_SCANNING) {
+                        return true;
+                    }
+                } else {
+                    ipc_client_cleanup();
+                }
             }
             platform_sleep_ms(100);
         }

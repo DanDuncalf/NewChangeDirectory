@@ -385,6 +385,7 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
                 continue
             path = discovered['windows'][exe_name]
             print(f"### Running {exe_name} ...")
+            TestIsolation._stop_ncd_processes()
             output = run_test_binary(path, 'windows', timeout=60)
             if output.strip():
                 try:
@@ -416,6 +417,7 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
                     continue
                 path = discovered['linux'][exe_name]
                 print(f"### Running {exe_name} ...")
+                TestIsolation._stop_ncd_processes()
                 # Service lifecycle tests need more time in isolated environments
                 test_timeout = 120 if "service" in exe_name.lower() else 60
                 output = run_test_binary(path, 'linux', timeout=test_timeout)

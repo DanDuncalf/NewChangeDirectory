@@ -19,6 +19,7 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <tlhelp32.h>
 #define popen _popen
 #define pclose _pclose
 #else
@@ -34,14 +35,76 @@
 static bool service_executable_exists(void) {
 #if NCD_PLATFORM_WINDOWS
     DWORD attribs = GetFileAttributesA("NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return true;
+    attribs = GetFileAttributesA("..\\NCDService.exe");
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
     return (access("../ncd_service", X_OK) == 0);
 #endif
 }
 
+static void force_terminate_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = {sizeof(pe)};
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
+#endif
+    for (int i = 0; i < 30; i++) {
+        if (!ipc_service_exists()) break;
+        platform_sleep_ms(100);
+    }
+}
+
+static void wait_for_service_fully_exited(int timeout_seconds) {
+#if NCD_PLATFORM_WINDOWS
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+        if (!hMutex) return;
+        CloseHandle(hMutex);
+        platform_sleep_ms(100);
+    }
+#else
+    (void)timeout_seconds;
+#endif
+}
+
+static bool service_process_still_running(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+    if (!hMutex) return false;
+    CloseHandle(hMutex);
+    return true;
+#else
+    return false;
+#endif
+}
+
 static void ensure_service_stopped(void) {
-    if (!ipc_service_exists()) return;
+    if (!ipc_service_exists()) {
+        wait_for_service_fully_exited(3);
+        if (service_process_still_running()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+        }
+        return;
+    }
     
     NcdIpcClient *client = ipc_client_connect();
     if (client) {
@@ -52,6 +115,11 @@ static void ensure_service_stopped(void) {
     for (int i = 0; i < 50; i++) {
         if (!ipc_service_exists()) break;
         platform_sleep_ms(100);
+    }
+    
+    if (ipc_service_exists() || service_process_still_running()) {
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
     }
 }
 
@@ -103,13 +171,23 @@ TEST(ipc_pipe_create_already_exists) {
 
 TEST(ipc_pipe_connect_timeout) {
     ensure_service_stopped();
+    platform_sleep_ms(300);
     
     /* Connection to non-existent service should fail */
     ASSERT_FALSE(ipc_service_exists());
     
     /* Attempt to connect should fail quickly */
     ipc_client_init();
-    NcdIpcClient *client = ipc_client_connect();
+    NcdIpcClient *client = NULL;
+    int retries = 20;
+    while (retries-- > 0) {
+        client = ipc_client_connect();
+        if (client == NULL) break;
+        /* Got a handle (zombie pipe), close and retry */
+        ipc_client_disconnect(client);
+        client = NULL;
+        platform_sleep_ms(50);
+    }
     ASSERT_NULL(client);
     ipc_client_cleanup();
     

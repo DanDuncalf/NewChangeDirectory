@@ -117,12 +117,62 @@ static void force_terminate_service(void) {
 #else
     system("pkill -9 -x NCDService 2>/dev/null || killall -9 NCDService 2>/dev/null");
 #endif
-    platform_sleep_ms(500);
+    for (int i = 0; i < 30; i++) {
+        if (!ipc_service_exists()) break;
+        platform_sleep_ms(100);
+    }
+}
+
+/* Wait for the service process to fully exit (mutex released) */
+static void wait_for_service_fully_exited(int timeout_seconds) {
+#if NCD_PLATFORM_WINDOWS
+    for (int i = 0; i < timeout_seconds * 10; i++) {
+        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+        if (!hMutex) return;
+        CloseHandle(hMutex);
+        platform_sleep_ms(100);
+    }
+#else
+    (void)timeout_seconds;
+#endif
+}
+
+static bool service_process_still_running(void) {
+#if NCD_PLATFORM_WINDOWS
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+    if (!hMutex) return false;
+    CloseHandle(hMutex);
+    return true;
+#else
+    const char *pid_file = NULL;
+    const char *xdg_runtime = getenv("XDG_RUNTIME_DIR");
+    char pid_path_buf[256];
+    if (xdg_runtime && *xdg_runtime) {
+        snprintf(pid_path_buf, sizeof(pid_path_buf), "%s/ncd_service.pid", xdg_runtime);
+        pid_file = pid_path_buf;
+    } else {
+        pid_file = "/tmp/ncd_service.pid";
+    }
+    FILE *f = fopen(pid_file, "r");
+    if (!f) return false;
+    pid_t pid = 0;
+    bool running = false;
+    if (fscanf(f, "%d", &pid) == 1 && pid > 0) {
+        running = (kill(pid, 0) == 0);
+    }
+    fclose(f);
+    return running;
+#endif
 }
 
 /* Ensure service is stopped - tries graceful first, then force kill */
 static void ensure_service_stopped(void) {
     if (!ipc_service_exists()) {
+        wait_for_service_fully_exited(3);
+        if (service_process_still_running()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+        }
         return;
     }
     
@@ -132,26 +182,69 @@ static void ensure_service_stopped(void) {
     /* Wait for graceful shutdown */
     bool stopped = wait_for_service_state(false, GRACEFUL_TIMEOUT);
     if (stopped) {
+        wait_for_service_fully_exited(3);
+        if (service_process_still_running()) {
+            force_terminate_service();
+            wait_for_service_fully_exited(3);
+        }
         return;
     }
     
     /* Graceful shutdown timed out - force kill */
     force_terminate_service();
-    wait_for_service_state(false, 2);
+    wait_for_service_fully_exited(3);
 }
 
 /* Ensure service is running */
 static bool ensure_service_running(void) {
     if (ipc_service_exists()) {
-        return true;
+        /* Verify it's actually responsive, not a zombie pipe */
+        ipc_client_init();
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            NcdIpcResult result = ipc_client_ping(client);
+            ipc_client_disconnect(client);
+            ipc_client_cleanup();
+            if (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) {
+                return true;
+            }
+        } else {
+            ipc_client_cleanup();
+        }
+        /* Zombie pipe - force terminate and restart */
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
     }
     
     if (!service_executable_exists()) {
         return false;
     }
     
+    /* Make sure any previous instance is fully gone before starting */
+    wait_for_service_fully_exited(3);
+    if (service_process_still_running()) {
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
+    }
+    
     run_service_command("start");
-    return wait_for_service_state(true, SERVICE_TIMEOUT);
+    bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
+    if (!started) return false;
+    
+    /* Verify it's actually responsive */
+    ipc_client_init();
+    for (int i = 0; i < 30; i++) {
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            NcdIpcResult result = ipc_client_ping(client);
+            ipc_client_disconnect(client);
+            ipc_client_cleanup();
+            return (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING);
+        }
+        platform_sleep_ms(100);
+    }
+    ipc_client_cleanup();
+    return false;
 }
 
 /* --------------------------------------------------------- legacy shutdown tests */

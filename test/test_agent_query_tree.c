@@ -169,7 +169,15 @@ static const char* find_exe(void) {
     return NULL;
 }
 
-static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size) {
+static void build_db_path(char *buf, size_t size, const char *ncd_dir, char drive_letter) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\ncd_%c.database", ncd_dir, toupper((unsigned char)drive_letter));
+#else
+    snprintf(buf, size, "%s/ncd_%02x.database", ncd_dir, (unsigned char)drive_letter);
+#endif
+}
+
+static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size, const char *db_path) {
     const char *exe = find_exe();
     if (!exe) {
         strncpy(out, "EXE_NOT_FOUND", out_size);
@@ -177,13 +185,25 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     }
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(cmd, sizeof(cmd),
-        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s -d \"%s\"",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
+            ncd_dir, exe, agent_args);
+    }
 #else
-    snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s -d '%s'",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
+            ncd_dir, exe, agent_args);
+    }
 #endif
     FILE *fp = POPEN(cmd, "r");
     if (!fp) return -1;
@@ -204,11 +224,12 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
 /* ================================================================ Query Tests */
 
 TEST(agent_query_basic_plain) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "qb");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
-    int status = run_agent(base, "query Downloads", out, sizeof(out));
+    int status = run_agent(base, "query Downloads", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "Downloads");
 
@@ -217,11 +238,12 @@ TEST(agent_query_basic_plain) {
 }
 
 TEST(agent_query_basic_json) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "qj");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
-    int status = run_agent(base, "query Downloads --json", out, sizeof(out));
+    int status = run_agent(base, "query Downloads --json", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"query\"");
@@ -233,11 +255,12 @@ TEST(agent_query_basic_json) {
 }
 
 TEST(agent_query_no_match_json) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "qn");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
-    int status = run_agent(base, "query nonexistent_xyz_123 --json", out, sizeof(out));
+    int status = run_agent(base, "query nonexistent_xyz_123 --json", out, sizeof(out), db_path);
     ASSERT_TRUE(status != 0 || strstr(out, "\"results\":[]") != NULL);
     ASSERT_STR_CONTAINS(out, "\"results\":[]");
 
@@ -246,11 +269,12 @@ TEST(agent_query_no_match_json) {
 }
 
 TEST(agent_query_limit) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "ql");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
-    int status = run_agent(base, "query s --json --limit=2", out, sizeof(out));
+    int status = run_agent(base, "query s --json --limit=2", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     /* Should limit to 2 results */
     ASSERT_STR_CONTAINS(out, "\"v\":1");
@@ -260,13 +284,14 @@ TEST(agent_query_limit) {
 }
 
 TEST(agent_query_chain_search) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     char args[128];
     SETUP_DB(base, ncd_dir, "qc");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "query \"%s\" --json", test_chain_query());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "Documents");
     ASSERT_STR_CONTAINS(out, "scott");
@@ -283,7 +308,7 @@ TEST(agent_query_missing_db) {
     /* No database created */
 
     char out[4096] = {0};
-    int status = run_agent(base, "query foo --json", out, sizeof(out));
+    int status = run_agent(base, "query foo --json", out, sizeof(out), NULL);
     /* Should return error or empty */
     ASSERT_TRUE(status == 0 || strstr(out, "error") != NULL || strstr(out, "no database") != NULL);
 
@@ -292,13 +317,14 @@ TEST(agent_query_missing_db) {
 }
 
 TEST(agent_query_case_insensitive) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "qci");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out1[4096] = {0};
     char out2[4096] = {0};
-    run_agent(base, "query downloads --json", out1, sizeof(out1));
-    run_agent(base, "query DOWNLOADS --json", out2, sizeof(out2));
+    run_agent(base, "query downloads --json", out1, sizeof(out1), db_path);
+    run_agent(base, "query DOWNLOADS --json", out2, sizeof(out2), db_path);
     ASSERT_STR_CONTAINS(out1, "\"v\":1");
     ASSERT_STR_CONTAINS(out2, "\"v\":1");
 
@@ -309,13 +335,16 @@ TEST(agent_query_case_insensitive) {
 /* ================================================================ Tree Tests */
 
 TEST(agent_tree_basic_plain) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     char args[128];
     SETUP_DB(base, ncd_dir, "tp");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\"", test_users_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
+    fprintf(stderr, "DEBUG tree_plain: status=%d db=%s exists=%d out=[%s]\n",
+            status, db_path, (int)(GetFileAttributesA(db_path) != INVALID_FILE_ATTRIBUTES), out);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "scott");
     ASSERT_STR_CONTAINS(out, "admin");
@@ -331,7 +360,7 @@ TEST(agent_tree_basic_json) {
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\" --json", test_users_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"tree\"");
@@ -349,7 +378,7 @@ TEST(agent_tree_flat) {
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\" --flat", test_users_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     /* Flat format should show relative paths */
     ASSERT_TRUE(strstr(out, "scott") != NULL);
@@ -365,7 +394,7 @@ TEST(agent_tree_flat_json) {
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\" --json --flat", test_users_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"tree\"");
@@ -381,7 +410,7 @@ TEST(agent_tree_depth_limit) {
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\" --depth 1", test_users_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "scott");
     ASSERT_STR_CONTAINS(out, "admin");
@@ -399,7 +428,7 @@ TEST(agent_tree_not_found) {
 
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\" --json", test_missing_tree_path());
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "not found") != NULL || strstr(out, "error") != NULL);
 
     rm_rf(base);
@@ -413,7 +442,7 @@ TEST(agent_tree_missing_db) {
     mkdir(base, 0755);
 
     char out[4096] = {0};
-    int status = run_agent(base, "tree C:\\Users --json", out, sizeof(out));
+    int status = run_agent(base, "tree C:\\Users --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "error") != NULL || strstr(out, "no database") != NULL);
 
     rm_rf(base);
@@ -444,7 +473,16 @@ void suite_agent_tree(void) {
     RUN_TEST(agent_tree_missing_db);
 }
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_query);
     RUN_SUITE(agent_tree);
 )

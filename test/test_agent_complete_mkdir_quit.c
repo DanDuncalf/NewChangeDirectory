@@ -135,7 +135,15 @@ static const char* find_exe(void) {
     return NULL;
 }
 
-static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size) {
+static void build_db_path(char *buf, size_t size, const char *ncd_dir, char drive_letter) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\ncd_%c.database", ncd_dir, toupper((unsigned char)drive_letter));
+#else
+    snprintf(buf, size, "%s/ncd_%02x.database", ncd_dir, (unsigned char)drive_letter);
+#endif
+}
+
+static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size, const char *db_path) {
     const char *exe = find_exe();
     if (!exe) {
         strncpy(out, "EXE_NOT_FOUND", out_size);
@@ -143,13 +151,25 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     }
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(cmd, sizeof(cmd),
-        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s -d \"%s\"",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
+            ncd_dir, exe, agent_args);
+    }
 #else
-    snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s -d '%s'",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
+            ncd_dir, exe, agent_args);
+    }
 #endif
     FILE *fp = POPEN(cmd, "r");
     if (!fp) return -1;
@@ -168,10 +188,11 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
 } while (0)
 
 TEST(agent_complete_basic) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "cb");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "complete Do", out, sizeof(out));
+    int status = run_agent(base, "complete Do", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_TRUE(strstr(out, "Downloads") != NULL || strstr(out, "Documents") != NULL);
     rm_rf(base);
@@ -179,10 +200,11 @@ TEST(agent_complete_basic) {
 }
 
 TEST(agent_complete_json) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "cj");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "complete Sys --json", out, sizeof(out));
+    int status = run_agent(base, "complete Sys --json", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     rm_rf(base);
@@ -190,10 +212,11 @@ TEST(agent_complete_json) {
 }
 
 TEST(agent_complete_limit) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "cl");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "complete s --json --limit 2", out, sizeof(out));
+    int status = run_agent(base, "complete s --json --limit 2", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     rm_rf(base);
@@ -201,10 +224,11 @@ TEST(agent_complete_limit) {
 }
 
 TEST(agent_complete_no_match) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "cn");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "complete xyz123nonexistent", out, sizeof(out));
+    int status = run_agent(base, "complete xyz123nonexistent", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     rm_rf(base);
     return 0;
@@ -224,7 +248,7 @@ TEST(agent_mkdir_creates_directory) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "mkdir \"%s\"", test_dir);
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_TRUE(dir_exists(test_dir));
     rm_rf(base);
@@ -246,7 +270,7 @@ TEST(agent_mkdir_existing_directory) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "mkdir \"%s\" --json", test_dir);
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     rm_rf(base);
@@ -267,7 +291,7 @@ TEST(agent_mkdir_nested_path) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "mkdir \"%s\"", test_dir);
-    int status = run_agent(base, args, out, sizeof(out));
+    int status = run_agent(base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_TRUE(dir_exists(test_dir));
     rm_rf(base);
@@ -280,7 +304,7 @@ TEST(agent_mkdir_invalid_path) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "mkdir \"\" --json", out, sizeof(out));
+    int status = run_agent(base, "mkdir \"\" --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "error") != NULL);
     rm_rf(base);
     return 0;
@@ -292,7 +316,7 @@ TEST(agent_quit_plain) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "quit", out, sizeof(out));
+    int status = run_agent(base, "quit", out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     rm_rf(base);
     return 0;
@@ -304,7 +328,7 @@ TEST(agent_quit_json) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "quit --json", out, sizeof(out));
+    int status = run_agent(base, "quit --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     rm_rf(base);
@@ -317,7 +341,7 @@ TEST(agent_unknown_subcommand) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "foobar", out, sizeof(out));
+    int status = run_agent(base, "foobar", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "unknown") != NULL || strstr(out, "error") != NULL);
     rm_rf(base);
     return 0;
@@ -329,7 +353,7 @@ TEST(agent_no_subcommand) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "", out, sizeof(out));
+    int status = run_agent(base, "", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "requires") != NULL || strstr(out, "error") != NULL);
     rm_rf(base);
     return 0;
@@ -363,7 +387,16 @@ void suite_agent_edge_cases(void) {
     RUN_TEST(agent_no_subcommand);
 }
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_complete);
     RUN_SUITE(agent_mkdir);
     RUN_SUITE(agent_quit);

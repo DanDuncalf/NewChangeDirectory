@@ -334,6 +334,25 @@ TEST(ipc_rejects_oversized_state_info_name_lengths) {
 void suite_ipc(void) {
     printf("\n=== IPC Tests ===\n\n");
     
+    /* Ensure no service is running from previous tests */
+    if (ipc_service_exists()) {
+        ipc_client_init();
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            ipc_client_request_shutdown(client);
+            ipc_client_disconnect(client);
+        }
+        for (int i = 0; i < 30; i++) {
+            if (!ipc_service_exists()) break;
+            platform_sleep_ms(100);
+        }
+        ipc_client_cleanup();
+#if NCD_PLATFORM_WINDOWS
+        system("taskkill /F /IM NCDService.exe >nul 2>nul");
+        platform_sleep_ms(300);
+#endif
+    }
+    
     RUN_TEST(ipc_client_init_succeeds);
     RUN_TEST(ipc_client_connect_fails_when_no_service);
     RUN_TEST(ipc_make_address_returns_valid_path);

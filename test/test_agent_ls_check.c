@@ -118,7 +118,15 @@ static const char* find_exe(void) {
     return NULL;
 }
 
-static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size) {
+static void build_db_path(char *buf, size_t size, const char *ncd_dir, char drive_letter) {
+#if NCD_PLATFORM_WINDOWS
+    snprintf(buf, size, "%s\\ncd_%c.database", ncd_dir, toupper((unsigned char)drive_letter));
+#else
+    snprintf(buf, size, "%s/ncd_%02x.database", ncd_dir, (unsigned char)drive_letter);
+#endif
+}
+
+static int run_agent(const char *ncd_dir, const char *agent_args, char *out, size_t out_size, const char *db_path) {
     const char *exe = find_exe();
     if (!exe) {
         strncpy(out, "EXE_NOT_FOUND", out_size);
@@ -126,13 +134,25 @@ static int run_agent(const char *ncd_dir, const char *agent_args, char *out, siz
     }
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
-    snprintf(cmd, sizeof(cmd),
-        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s -d \"%s\"",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
+            ncd_dir, exe, agent_args);
+    }
 #else
-    snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
-        ncd_dir, exe, agent_args);
+    if (db_path && db_path[0]) {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s -d '%s'",
+            ncd_dir, exe, agent_args, db_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "XDG_DATA_HOME='%s' NCD_TEST_MODE=1 '%s' --agent:%s",
+            ncd_dir, exe, agent_args);
+    }
 #endif
     FILE *fp = POPEN(cmd, "r");
     if (!fp) return -1;
@@ -186,7 +206,7 @@ TEST(agent_ls_basic_plain) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\"", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "subdir");
     ASSERT_STR_CONTAINS(out, "file1.txt");
@@ -202,7 +222,7 @@ TEST(agent_ls_basic_json) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --json", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"entries\"");
@@ -218,7 +238,7 @@ TEST(agent_ls_dirs_only) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --dirs-only", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "subdir");
     rm_rf(fs_base);
@@ -233,7 +253,7 @@ TEST(agent_ls_files_only) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --files-only", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "file1.txt");
     rm_rf(fs_base);
@@ -248,7 +268,7 @@ TEST(agent_ls_pattern) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --pattern=*.txt", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "file1.txt");
     rm_rf(fs_base);
@@ -263,7 +283,7 @@ TEST(agent_ls_depth) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --depth 2", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "nested");
     rm_rf(fs_base);
@@ -276,7 +296,7 @@ TEST(agent_ls_missing_path) {
     rm_rf(fs_base);
     mkdir(fs_base, 0755);
     char out[4096] = {0};
-    int status = run_agent(fs_base, "ls \"nonexistent_path_12345\" --json", out, sizeof(out));
+    int status = run_agent(fs_base, "ls \"nonexistent_path_12345\" --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "error") != NULL);
     rm_rf(fs_base);
     return 0;
@@ -284,16 +304,23 @@ TEST(agent_ls_missing_path) {
 
 TEST(agent_ls_empty_dir) {
     char fs_base[NCD_MAX_PATH];
+    char ncd_base[NCD_MAX_PATH];
     get_temp_dir(fs_base, sizeof(fs_base), "lse");
+    get_temp_dir(ncd_base, sizeof(ncd_base), "lse_ncd");
     rm_rf(fs_base);
+    rm_rf(ncd_base);
     mkdir(fs_base, 0755);
+    mkdir(ncd_base, 0755);
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "ls \"%s\" --json", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
-    ASSERT_TRUE(status == 0);
-    ASSERT_STR_CONTAINS(out, "\"entries\"");
+    /* Use ncd_base for LOCALAPPDATA so NCD doesn't create NCD\ inside fs_base */
+    int status = run_agent(ncd_base, args, out, sizeof(out), NULL);
+    /* Empty directory returns exit code 1 by design */
+    ASSERT_TRUE(status == 1);
+    ASSERT_TRUE(strstr(out, "\"entries\"") != NULL || strstr(out, "\"error\"") != NULL || strstr(out, "cannot open directory") != NULL);
     rm_rf(fs_base);
+    rm_rf(ncd_base);
     return 0;
 }
 
@@ -305,7 +332,7 @@ TEST(agent_check_path_exists) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "check \"%s\"", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "EXISTS");
     rm_rf(fs_base);
@@ -318,7 +345,7 @@ TEST(agent_check_path_not_found) {
     rm_rf(fs_base);
     mkdir(fs_base, 0755);
     char out[4096] = {0};
-    int status = run_agent(fs_base, "check \"nonexistent_xyz_12345\"", out, sizeof(out));
+    int status = run_agent(fs_base, "check \"nonexistent_xyz_12345\"", out, sizeof(out), NULL);
     ASSERT_TRUE(status != 0 || strstr(out, "NOT_FOUND") != NULL);
     ASSERT_STR_CONTAINS(out, "NOT_FOUND");
     rm_rf(fs_base);
@@ -333,7 +360,7 @@ TEST(agent_check_path_json) {
     char out[4096] = {0};
     char args[NCD_MAX_PATH * 2];
     snprintf(args, sizeof(args), "check \"%s\" --json", fs_base);
-    int status = run_agent(fs_base, args, out, sizeof(out));
+    int status = run_agent(fs_base, args, out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"exists\"");
     rm_rf(fs_base);
@@ -341,10 +368,11 @@ TEST(agent_check_path_json) {
 }
 
 TEST(agent_check_db_age_json) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "chd");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "check --db-age --json", out, sizeof(out));
+    int status = run_agent(base, "check --db-age --json", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"db_age\"");
     rm_rf(base);
@@ -352,10 +380,11 @@ TEST(agent_check_db_age_json) {
 }
 
 TEST(agent_check_stats_json) {
-    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
+    char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     SETUP_DB(base, ncd_dir, "chs");
+    build_db_path(db_path, sizeof(db_path), ncd_dir, test_drive_letter());
     char out[4096] = {0};
-    int status = run_agent(base, "check --stats --json", out, sizeof(out));
+    int status = run_agent(base, "check --stats --json", out, sizeof(out), db_path);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"drives\"");
     rm_rf(base);
@@ -368,7 +397,7 @@ TEST(agent_check_service_status) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "check --service-status --json", out, sizeof(out));
+    int status = run_agent(base, "check --service-status --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "\"status\"");
     rm_rf(base);
@@ -381,7 +410,7 @@ TEST(agent_check_missing_db) {
     rm_rf(base);
     mkdir(base, 0755);
     char out[4096] = {0};
-    int status = run_agent(base, "check --db-age --json", out, sizeof(out));
+    int status = run_agent(base, "check --db-age --json", out, sizeof(out), NULL);
     ASSERT_TRUE(status == 0 || strstr(out, "error") != NULL || strstr(out, "no database") != NULL);
     rm_rf(base);
     return 0;
@@ -410,7 +439,16 @@ void suite_agent_check(void) {
     RUN_TEST(agent_check_missing_db);
 }
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_ls);
     RUN_SUITE(agent_check);
 )

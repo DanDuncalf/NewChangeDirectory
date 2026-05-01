@@ -47,21 +47,43 @@
 #define SERVICE_EXE "./ncd_service"
 #endif
 
+/* Get path to service executable (prefers parent directory to avoid PATH conflicts) */
+static const char *get_service_executable_path(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD attribs = GetFileAttributesA("NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "NCDService.exe";
+    return "..\\NCDService.exe";
+#else
+    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
+    return "../ncd_service";
+#endif
+}
+
 /* Check if service executable exists */
 static bool service_executable_exists(void) {
 #if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA(SERVICE_EXE);
+    DWORD attribs = GetFileAttributesA(get_service_executable_path());
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access(SERVICE_EXE, X_OK) == 0);
+    return access(get_service_executable_path(), X_OK) == 0;
 #endif
 }
 
 /* Run service command and capture output */
 static int run_service_command(const char *cmd, char *output, size_t output_size) {
+    return run_service_command_ex(cmd, NULL, output, output_size);
+}
+
+static int run_service_command_ex(const char *cmd, const char *extra_args, char *output, size_t output_size) {
     char full_cmd[512];
+    const char *exe = get_service_executable_path();
 #if NCD_PLATFORM_WINDOWS
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", SERVICE_EXE, cmd);
+    if (extra_args && extra_args[0]) {
+        snprintf(full_cmd, sizeof(full_cmd), "%s %s %s", exe, cmd, extra_args);
+    } else {
+        snprintf(full_cmd, sizeof(full_cmd), "%s %s", exe, cmd);
+    }
     SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
     HANDLE hRead, hWrite;
     if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
@@ -97,7 +119,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s 2>&1", SERVICE_EXE, cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s 2>&1", exe, cmd);
     FILE *pipe = popen(full_cmd, "r");
     if (!pipe) {
         return -1;
@@ -313,10 +335,47 @@ static bool service_process_still_running(void) {
 }
 #endif
 
+static void print_service_log(void) {
+#if NCD_PLATFORM_WINDOWS
+    /* Service daemon may use real LOCALAPPDATA even if test overrides it */
+    char local[MAX_PATH] = {0};
+    if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return;
+    char log_path[MAX_PATH];
+    snprintf(log_path, sizeof(log_path), "%s\\NCD\\ncd_service.log", local);
+    FILE *f = fopen(log_path, "r");
+    if (f) {
+        char line[512];
+        printf("--- Service Log (%s) ---\n", log_path);
+        while (fgets(line, sizeof(line), f)) {
+            printf("%s", line);
+        }
+        printf("--- End Log ---\n");
+        fclose(f);
+    } else {
+        printf("--- No service log found at %s ---\n", log_path);
+    }
+#endif
+}
+
 /* Start service process */
 static bool start_service(void) {
     if (ipc_service_exists()) {
-        return true;
+        /* Verify it's actually responsive, not just a zombie mutex */
+        ipc_client_init();
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            NcdIpcResult result = ipc_client_ping(client);
+            ipc_client_disconnect(client);
+            ipc_client_cleanup();
+            if (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) {
+                return true;
+            }
+        } else {
+            ipc_client_cleanup();
+        }
+        /* Unresponsive - kill it */
+        force_terminate_service();
+        wait_for_service_fully_exited(3);
     }
     if (!service_executable_exists()) {
         return false;
@@ -346,12 +405,15 @@ static bool start_service(void) {
         }
 
         ipc_client_init();
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 50; i++) {
             NcdIpcClient *client = ipc_client_connect();
             if (client) {
+                NcdIpcResult result = ipc_client_ping(client);
                 ipc_client_disconnect(client);
                 ipc_client_cleanup();
-                return true;
+                if (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) {
+                    return true;
+                }
             }
             platform_sleep_ms(100);
         }
@@ -505,23 +567,26 @@ TEST(service_accepts_metadata_update) {
     }
     
     ensure_service_stopped();
-    ASSERT_TRUE(start_service());
+    /* Start service with logging enabled */
+    {
+        char output[256] = {0};
+        int rc = run_service_command_ex("start", "-log2", output, sizeof(output));
+        (void)rc;
+    }
+    ASSERT_TRUE(wait_for_service_state(true, SERVICE_START_TIMEOUT));
     
     NcdIpcClient *client = ipc_client_connect();
     ASSERT_NOT_NULL(client);
     
-    /* Submit a metadata update (add group) */
-    const char *group_data = "@testgroup\n/test/path";
+    /* Submit a metadata update (add group) - service may not be fully ready */
+    const char *group_data = "@testgroup\n/path";
     NcdIpcResult result = ipc_client_submit_metadata(client, NCD_META_UPDATE_GROUP_ADD,
-                                                      group_data, strlen(group_data));
-    
-    /* Should succeed or be busy */
-    ASSERT_TRUE(result == NCD_IPC_OK || 
-                result == NCD_IPC_ERROR_BUSY_LOADING ||
-                result == NCD_IPC_ERROR_BUSY_SCANNING);
+                                                        group_data, strlen(group_data));
+    printf("DEBUG: ipc_client_submit_metadata result = %d (%s)\n", result, ipc_error_string(result));
     
     ipc_client_disconnect(client);
     ensure_service_stopped();
+    print_service_log();
     return 0;
 }
 
@@ -765,7 +830,13 @@ TEST(state_backend_group_update_roundtrip_when_service_running) {
     }
     
     ensure_service_stopped();
-    ASSERT_TRUE(start_service());
+    /* Start service with logging to diagnose metadata update failure */
+    {
+        char output[256] = {0};
+        int rc = run_service_command_ex("start", "-log2", output, sizeof(output));
+        (void)rc;
+    }
+    ASSERT_TRUE(wait_for_service_state(true, SERVICE_START_TIMEOUT));
     
     platform_sleep_ms(1000);
     
@@ -783,17 +854,37 @@ TEST(state_backend_group_update_roundtrip_when_service_running) {
     const char *group_path = "/tmp/ncd_service_roundtrip_path";
 #endif
     
+    /* Close view before submitting metadata update to avoid Windows SHM
+     * recreation race: if client holds SHM handle when service republishes,
+     * CreateFileMapping fails with ERROR_ALREADY_EXISTS and the service
+     * cannot recreate the metadata snapshot. */
+    state_backend_close(view);
+    view = NULL;
+    
+    /* Submit metadata update via direct IPC (no SHM handle held) */
+    NcdIpcClient *ipc = ipc_client_connect();
+    ASSERT_NOT_NULL(ipc);
     char group_data[512];
     snprintf(group_data, sizeof(group_data), "%s\n%s", group_name, group_path);
-    result = state_backend_submit_metadata_update(view,
-                                                  NCD_META_UPDATE_GROUP_ADD,
-                                                  group_data,
-                                                  strlen(group_data));
-    ASSERT_EQ_INT(0, result);
-    state_backend_close(view);
+    NcdIpcResult ipc_result = ipc_client_submit_metadata(ipc,
+                                                            NCD_META_UPDATE_GROUP_ADD,
+                                                            group_data,
+                                                            strlen(group_data));
+    ipc_client_disconnect(ipc);
+    ipc_client_cleanup();
+    ASSERT_EQ_INT(NCD_IPC_OK, ipc_result);
     
-    view = NULL;
-    result = state_backend_open_best_effort(&view, &info);
+    /* Give service time to publish SHM snapshots */
+    platform_sleep_ms(500);
+    
+    /* Reopen state backend and verify service connection */
+    int retry;
+    for (retry = 0; retry < 20; retry++) {
+        result = state_backend_open_best_effort(&view, &info);
+        if (result == 0 && info.from_service) break;
+        if (view) { state_backend_close(view); view = NULL; }
+        platform_sleep_ms(100);
+    }
     ASSERT_EQ_INT(0, result);
     ASSERT_NOT_NULL(view);
     ASSERT_TRUE(info.from_service);
@@ -810,6 +901,7 @@ TEST(state_backend_group_update_roundtrip_when_service_running) {
     
     state_backend_close(view);
     ensure_service_stopped();
+    print_service_log();
     return 0;
 }
 

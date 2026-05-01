@@ -154,7 +154,7 @@ static void force_terminate_service(void) {
     system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
 #endif
     /* Wait for process to actually exit */
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         if (!ipc_service_exists()) break;
         platform_sleep_ms(100);
     }
@@ -176,6 +176,29 @@ static void wait_for_service_fully_exited(int timeout_seconds) {
 #else
     (void)timeout_seconds;
     /* On Linux the pipe check is sufficient */
+#endif
+}
+
+static void ensure_ncd_test_dir_exists(void) {
+#if NCD_PLATFORM_WINDOWS
+    const char *localAppData = getenv("LOCALAPPDATA");
+    if (localAppData) {
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "%s\\NCD", localAppData);
+        CreateDirectoryA(path, NULL);
+    }
+#else
+    const char *xdg = getenv("XDG_DATA_HOME");
+    const char *home = getenv("HOME");
+    char path[256];
+    if (xdg && *xdg) {
+        snprintf(path, sizeof(path), "%s/ncd", xdg);
+    } else if (home && *home) {
+        snprintf(path, sizeof(path), "%s/.local/share/ncd", home);
+    } else {
+        return;
+    }
+    mkdir(path, 0755);
 #endif
 }
 
@@ -278,6 +301,7 @@ TEST(help_shows_service_running_when_service_active) {
     }
     
     /* Start service */
+    ensure_ncd_test_dir_exists();
     run_service_command("start");
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
@@ -407,6 +431,7 @@ TEST(agent_service_status_running) {
     }
 
     /* Start service */
+    ensure_ncd_test_dir_exists();
     run_service_command("start");
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
@@ -453,6 +478,7 @@ TEST(agent_service_status_json_running) {
     }
     
     /* Start service */
+    ensure_ncd_test_dir_exists();
     run_service_command("start");
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
@@ -493,6 +519,7 @@ TEST(agent_service_status_after_stop) {
     }
     
     /* Start service */
+    ensure_ncd_test_dir_exists();
     run_service_command("start");
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
@@ -549,6 +576,7 @@ TEST(ncd_search_works_with_service) {
     }
     
     /* Start service */
+    ensure_ncd_test_dir_exists();
     run_service_command("start");
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
@@ -676,18 +704,9 @@ void suite_service_integration(void) {
     /* /agdb is an internal debug path and can be changed ad hoc during investigations. */
     /* RUN_TEST(agentic_debug_mode_with_service_exits_cleanly); */
     
-    /* Final cleanup and ensure service is left running */
-    printf("\n--- Final cleanup: Leaving service running ---\n");
+    /* Final cleanup - ensure service is fully stopped */
+    printf("\n--- Final cleanup ---\n");
     ensure_service_stopped();
-    if (executables_exist()) {
-        run_service_command("start");
-        bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
-        if (started) {
-            printf("Service left running for subsequent tests.\n");
-        } else {
-            printf("WARNING: Could not leave service running.\n");
-        }
-    }
 }
 
 TEST_MAIN(
