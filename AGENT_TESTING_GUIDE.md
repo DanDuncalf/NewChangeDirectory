@@ -524,6 +524,30 @@ Service tests may show colored output:
 
 ---
 
+## Agent Discipline: Background Task Notifications
+
+When a background task completes (success or failure), the agent **must** immediately inspect the task output using `TaskOutput` or by reading the output file. **Do not wait for the user to prompt you** — act on the notification immediately.
+
+This is critical because:
+- Test failures in background tasks need immediate attention
+- Build errors may require cleanup before subsequent steps
+- Service crashes or timeouts may leave the environment in a bad state
+
+### Correct Behavior
+1. Receive background task completion notification
+2. Call `TaskOutput` with `block=true` (or read the output file) to get full results
+3. Analyze the results and determine next steps
+4. Report findings to the user or take corrective action
+
+### Incorrect Behavior
+- Acknowledging the notification but doing nothing until the user asks
+- Assuming the task succeeded without checking the output
+- Starting a new background task without verifying the previous one completed cleanly
+
+> **Rule:** Background task notifications are not hints — they are actionable events. Treat them with the same urgency as a direct user request.
+
+---
+
 ## Troubleshooting
 
 ### "WSL not available" Warning

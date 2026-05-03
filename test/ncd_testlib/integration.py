@@ -54,6 +54,12 @@ def _extract_machine_summary(output: str):
         return None
 
 
+def _last_search(pattern, text):
+    """Return the last match of pattern in text, or None."""
+    matches = list(re.finditer(pattern, text))
+    return matches[-1] if matches else None
+
+
 def parse_integration_output(output: str):
     """Extract pass/fail/skip/total counts from script output."""
     # Strip ANSI escape sequences so colour codes don't break regexes
@@ -64,10 +70,12 @@ def parse_integration_output(output: str):
     skipped = 0
     total = 0
 
-    total_m = re.search(r"(?mi)^\s*Total:\s*(\d+)", cleaned)
-    passed_m = re.search(r"(?mi)^\s*Passed:\s*(\d+)", cleaned)
-    failed_m = re.search(r"(?mi)^\s*Failed:\s*(\d+)", cleaned)
-    skipped_m = re.search(r"(?mi)^\s*Skipped:\s*(\d+)", cleaned)
+    # Use last match because wrapper scripts emit their summary at the end
+    # of the output, after any nested tool output (e.g. service_race_tester).
+    total_m = _last_search(r"(?mi)^\s*Total:\s*(\d+)", cleaned)
+    passed_m = _last_search(r"(?mi)^\s*Passed:\s*(\d+)", cleaned)
+    failed_m = _last_search(r"(?mi)^\s*Failed:\s*(\d+)", cleaned)
+    skipped_m = _last_search(r"(?mi)^\s*Skipped:\s*(\d+)", cleaned)
 
     if total_m:
         total = int(total_m.group(1))

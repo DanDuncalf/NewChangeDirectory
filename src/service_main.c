@@ -437,6 +437,9 @@ static void setup_signal_handlers(void) {
     signal(SIGTERM, signal_handler);
     /* Ignore SIGHUP so daemon doesn't die when parent exits */
     signal(SIGHUP, SIG_IGN);
+    /* Ignore SIGPIPE so service doesn't die when client disconnects
+     * during send() on Linux Unix domain sockets */
+    signal(SIGPIPE, SIG_IGN);
 #endif
 }
 

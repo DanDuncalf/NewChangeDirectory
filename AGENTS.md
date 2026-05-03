@@ -216,6 +216,7 @@ python test\runner.py --repair       # Fix corrupted test environment
 - Set `NCD_TEST_MODE=1` to disable background rescans during tests
 - **Always show the test runner output** — do not suppress, truncate, or summarize away the actual pass/fail results and suite breakdowns
 - **When `generate_report.py` is used, display the full `test.results` file content** in the response. Do not skip showing the report file.
+- **Act on background task notifications immediately** — when a background task completes (success or failure), inspect its output with `TaskOutput` right away. Do not wait for user prompting.
 
 ### Keystroke Injection for TUI Testing
 
