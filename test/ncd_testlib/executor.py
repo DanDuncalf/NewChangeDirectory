@@ -3,26 +3,9 @@
 import os
 import platform
 import re
-import subprocess
 from pathlib import Path
 
-
-def run_cmd(cmd, cwd=None, timeout=300, shell=False):
-    """Run a command and return (returncode, stdout, stderr)."""
-    try:
-        result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=False,
-            timeout=timeout, shell=shell
-        )
-        out = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
-        err = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
-        return result.returncode, out, err
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
-        err = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
-        return -1, out, err + f"\nCommand timed out after {timeout}s"
-    except FileNotFoundError as e:
-        return -1, "", str(e)
+from .build import run_cmd
 
 
 def _cleanup_linux_service_state(path):

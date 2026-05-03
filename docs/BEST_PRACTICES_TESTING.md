@@ -1,6 +1,6 @@
 # NCD Testing Best Practices
 
-> Last updated: 2026-04-14  
+> Last updated: 2026-04-29  
 > Based on hands-on testing of the NewChangeDirectory (NCD) project across Windows and WSL.
 
 ---
@@ -21,12 +21,14 @@
 
 ## Quick Reference: Running Tests
 
+> **⚠️ Timeout Warning:** The full cross-platform suite takes approximately **35 minutes** after the parallel test expansion (~880 tests). A 600-second timeout is **insufficient** and will falsely report a timeout. Use at least **2400s (40 minutes)**; **3600s (1 hour)** is recommended for safety.
+
 ### Windows (All Tests)
 ```batch
-:: Full suite (recommended)
+:: Full suite (recommended) — allow ~35 minutes
 python test\generate_report.py
 
-:: Just Windows tests
+:: Just Windows tests — still allow 15-20 minutes
 python test\runner.py windows
 
 :: Specific suites

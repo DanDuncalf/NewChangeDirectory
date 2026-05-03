@@ -2,6 +2,7 @@
 #include "test_framework.h"
 #include "../src/control_ipc.h"
 #include "../src/ncd.h"
+#include "../src/platform.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>

@@ -4,7 +4,7 @@
 
 | User says | Exact command |
 |-----------|---------------|
-| `run all tests` | `python test\generate_report.py` (bg, 600s) |
+| `run all tests` | `python test\generate_report.py` (bg, 3600s) |
 | `run unit tests` | `python test\runner.py unit` |
 | `run integration tests` | `python test\runner.py integration` |
 | `repair test env` | `python test\runner.py --repair` |
@@ -212,7 +212,7 @@ python test\runner.py --repair       # Fix corrupted test environment
 ### Rules
 - **Never run `test\*.exe` directly** — always use the harness (`generate_report.py` or `runner.py`)
 - **Invoke `.bat` files via `cmd /c`** because the Shell tool runs PowerShell by default
-- Use `run_in_background=true` with timeout `600` for full-suite runs (~3–4 minutes)
+- Use `run_in_background=true` with timeout `3600` for full-suite runs (~35 minutes). The 600s guidance is outdated; the parallel-expanded suite requires significantly more time.
 - Set `NCD_TEST_MODE=1` to disable background rescans during tests
 - **Always show the test runner output** — do not suppress, truncate, or summarize away the actual pass/fail results and suite breakdowns
 - **When `generate_report.py` is used, display the full `test.results` file content** in the response. Do not skip showing the report file.

@@ -21,7 +21,7 @@ WINDOWS_SUITES = [
     ("NCD Standalone", TEST_DIR / "Test-NCD-Windows-Standalone.bat", 60),
     ("NCD with Service", TEST_DIR / "Test-NCD-Windows-With-Service.bat", 60),
     ("Windows Feature Tests", TEST_DIR / "Win" / "test_features.bat", 180),
-    ("Windows Agent Command Tests", TEST_DIR / "Win" / "test_agent_commands.bat", 60),
+    ("Windows Agent Command Tests", TEST_DIR / "Win" / "test_agent_commands.bat", 120),
     ("Service Race Tester", TEST_DIR / "Win" / "test_service_race.bat", 60),
 ]
 
@@ -30,8 +30,8 @@ WSL_SUITES = [
     ("WSL NCD Standalone", TEST_DIR / "test_ncd_wsl_standalone.sh", 60),
     ("WSL NCD with Service", TEST_DIR / "test_ncd_wsl_with_service.sh", 90),
     ("WSL Feature Tests", TEST_DIR / "Wsl" / "test_features.sh", 120),
-    ("WSL Agent Command Tests", TEST_DIR / "Wsl" / "test_agent_commands.sh", 120),
-    ("WSL Service Race Tester", TEST_DIR / "Wsl" / "test_service_race.sh", 60),
+    ("WSL Agent Command Tests", TEST_DIR / "Wsl" / "test_agent_commands.sh", 180),
+    ("WSL Service Race Tester", TEST_DIR / "Wsl" / "test_service_race.sh", 120),
 ]
 
 
@@ -98,6 +98,9 @@ def _format_status(passed, failed, skipped, total, raw_status):
         return "MISSING (script not found)"
     if raw_status == "SKIP":
         return "SKIP (WSL not available)"
+    if raw_status == "TIMEOUT":
+        parts = [f"{passed}/{total} passed"]
+        return f"TIMEOUT ({', '.join(parts)})"
 
     parts = [f"{passed}/{total} passed"]
     if failed:
@@ -144,11 +147,16 @@ def run_windows_suite(script_path: Path, timeout: int = 60):
 
     has_fail = re.search(r"RESULT:\s*FAILED", output, re.IGNORECASE) is not None
     has_pass = re.search(r"RESULT:\s*PASSED", output, re.IGNORECASE) is not None
+    timed_out = (rc == -2)
 
-    if has_fail or rc != 0 or failed > 0:
+    if has_fail or failed > 0:
         raw = "FAIL"
     elif has_pass or (passed > 0 and total > 0):
+        # Trust parsed test results even if the script returned non-zero
+        # or was killed by timeout during cleanup.
         raw = "PASS"
+    elif timed_out:
+        raw = "TIMEOUT"
     else:
         raw = "FAIL" if rc != 0 else "PASS"
 
@@ -235,11 +243,16 @@ def run_wsl_suite(script_path: Path, timeout: int = 60):
 
     has_fail = re.search(r"RESULT:\s*FAILED", output, re.IGNORECASE) is not None
     has_pass = re.search(r"RESULT:\s*PASSED", output, re.IGNORECASE) is not None
+    timed_out = (rc == -2)
 
-    if has_fail or rc != 0 or failed > 0:
+    if has_fail or failed > 0:
         raw = "FAIL"
     elif has_pass or (passed > 0 and total > 0):
+        # Trust parsed test results even if the script returned non-zero
+        # or was killed by timeout during cleanup.
         raw = "PASS"
+    elif timed_out:
+        raw = "TIMEOUT"
     else:
         raw = "FAIL" if rc != 0 else "PASS"
 

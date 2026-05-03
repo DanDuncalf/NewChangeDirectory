@@ -141,15 +141,6 @@ static volatile int g_crash_flag     = 0;
 static volatile int g_gen_violations = 0;
 static char g_crash_context[256] = {0};
 
-#if NCD_PLATFORM_WINDOWS
-static CRITICAL_SECTION g_stat_lock;
-#define LOCK_STATS()   EnterCriticalSection(&g_stat_lock)
-#define UNLOCK_STATS() LeaveCriticalSection(&g_stat_lock)
-#else
-static pthread_mutex_t g_stat_lock = PTHREAD_MUTEX_INITIALIZER;
-#define LOCK_STATS()   pthread_mutex_lock(&g_stat_lock)
-#define UNLOCK_STATS() pthread_mutex_unlock(&g_stat_lock)
-#endif
 
 /* Operation categories for latency tracking */
 typedef enum {
@@ -1132,11 +1123,6 @@ int main(int argc, char **argv) {
     printf("  Service mgmt:  %s\n", opts.no_service_mgmt ? "external" : "managed");
     printf("\n");
 
-    /* Init stats lock */
-#if NCD_PLATFORM_WINDOWS
-    InitializeCriticalSection(&g_stat_lock);
-#endif
-
     /* Init temp dirs for agent commands */
     if (!init_temp_dirs()) {
         fprintf(stderr, "ERROR: Failed to create temp directories\n");
@@ -1412,10 +1398,6 @@ int main(int argc, char **argv) {
     }
     free(results);
     free(threads);
-
-#if NCD_PLATFORM_WINDOWS
-    DeleteCriticalSection(&g_stat_lock);
-#endif
 
     /* Determine exit code */
     if (g_crash_flag) {

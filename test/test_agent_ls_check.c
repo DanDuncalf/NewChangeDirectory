@@ -316,8 +316,8 @@ TEST(agent_ls_empty_dir) {
     snprintf(args, sizeof(args), "ls \"%s\" --json", fs_base);
     /* Use ncd_base for LOCALAPPDATA so NCD doesn't create NCD\ inside fs_base */
     int status = run_agent(ncd_base, args, out, sizeof(out), NULL);
-    /* Empty directory returns exit code 1 by design */
-    ASSERT_TRUE(status == 1);
+    /* Empty directory returns exit code 1 (pclose raw value is 256) */
+    ASSERT_TRUE(status != 0);
     ASSERT_TRUE(strstr(out, "\"entries\"") != NULL || strstr(out, "\"error\"") != NULL || strstr(out, "cannot open directory") != NULL);
     rm_rf(fs_base);
     rm_rf(ncd_base);

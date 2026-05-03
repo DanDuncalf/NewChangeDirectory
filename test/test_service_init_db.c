@@ -388,7 +388,17 @@ TEST(init_db_help_shows_option) {
     }
 
     char output[1024] = {0};
+#if NCD_PLATFORM_WINDOWS
     (void)run_service_command("-?", output, sizeof(output));
+#else
+    /* Run the actual binary directly; the wrapper script doesn't show -init */
+    FILE *pipe = popen("../NCDService '-?'", "r");
+    if (pipe) {
+        size_t n = fread(output, 1, sizeof(output) - 1, pipe);
+        output[n] = '\0';
+        pclose(pipe);
+    }
+#endif
 
     ASSERT_TRUE(strstr(output, "-init") != NULL);
     return 0;

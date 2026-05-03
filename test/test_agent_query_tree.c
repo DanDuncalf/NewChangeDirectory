@@ -343,8 +343,6 @@ TEST(agent_tree_basic_plain) {
     char out[4096] = {0};
     snprintf(args, sizeof(args), "tree \"%s\"", test_users_path());
     int status = run_agent(base, args, out, sizeof(out), NULL);
-    fprintf(stderr, "DEBUG tree_plain: status=%d db=%s exists=%d out=[%s]\n",
-            status, db_path, (int)(GetFileAttributesA(db_path) != INVALID_FILE_ATTRIBUTES), out);
     ASSERT_TRUE(status == 0);
     ASSERT_STR_CONTAINS(out, "scott");
     ASSERT_STR_CONTAINS(out, "admin");

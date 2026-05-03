@@ -27,7 +27,7 @@ python test/runner.py unit
 - The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `test/ncd_testlib/build.py` as of 2026-04-22.
 - **Windows batch quoting trap:** `"T:\"` escapes the closing quote. Use `"T:\."` for drive roots; `main.c` normalizes the trailing dot back to `T:\`.
 - **PowerShell `Start-Process -ArgumentList` strips args starting with `-`** (like `-conf`). For tests that pass `-conf`, use direct batch invocation instead of `Start-Process`.
-- Full suite timeout is ~3–4 minutes. Use `run_in_background=true` with timeout `600` for the full suite.
+- Full suite timeout is ~35 minutes (post-parallel expansion). Use `run_in_background=true` with timeout `3600` for the full suite. Do not use 600s — it will timeout before completion.
 
 ---
 
@@ -76,7 +76,7 @@ When running tests, the agent **must** display the full output from the test run
 
 ### ⚠️ AI Agent Notes
 
-**Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 3-4 minutes. Use `run_in_background=true` with a longer timeout (e.g., 600s) when invoking the full suite.
+**Timeout Limits:** Foreground shell commands have a 300-second timeout limit. The full test suite takes approximately 35 minutes after the parallel expansion. Use `run_in_background=true` with a longer timeout (e.g., 3600s) when invoking the full suite. A 600s timeout is insufficient and will cause a false timeout failure.
 
 **Prefer --skip-build when binaries exist:** If `test\*.exe` files are already present, use `python test/runner.py --skip-build` to avoid unnecessary rebuild time. Only build if binaries are missing or the user explicitly requests a rebuild.
 

@@ -27,17 +27,15 @@
  * Helpers
  * ------------------------------------------------------------------ */
 
+#if NCD_PLATFORM_WINDOWS
 static void get_temp_dir(char *buf, size_t size, const char *suffix)
 {
     const char *tmp = getenv("TEMP");
     if (!tmp) tmp = getenv("TMP");
     if (!tmp) tmp = "/tmp";
-#if NCD_PLATFORM_WINDOWS
     snprintf(buf, size, "%s\\ncd_a1_%s", tmp, suffix);
-#else
-    snprintf(buf, size, "%s/ncd_a1_%s", tmp, suffix);
-#endif
 }
+#endif
 
 static void rm_rf(const char *path)
 {
@@ -268,7 +266,8 @@ TEST(mkdir_mode_0700)
 #if NCD_PLATFORM_WINDOWS
     snprintf(dir, sizeof(dir), "%s", "ncd_a1_mkdir_mode");
 #else
-    get_temp_dir(dir, sizeof(dir), "mkdir_mode");
+    /* Use /tmp so chmod works (Windows mounts don't support Unix permissions) */
+    snprintf(dir, sizeof(dir), "/tmp/ncd_a1_mkdir_mode");
 #endif
     rm_rf(dir);
 
@@ -523,6 +522,14 @@ TEST(mkdirs_json_contains_rollback_array)
     return 0;
 }
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 /* ------------------------------------------------------------------
  * Suite & main
  * ------------------------------------------------------------------ */
@@ -545,5 +552,6 @@ void suite_agent_mkdir_extended(void)
 }
 
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_mkdir_extended);
 )

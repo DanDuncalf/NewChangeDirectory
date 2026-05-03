@@ -290,7 +290,12 @@ TEST(verify_tree_structure_matches) {
 #if !NCD_PLATFORM_WINDOWS
 TEST(chmod_changes_mode) {
     char test_dir[NCD_MAX_PATH];
+#if NCD_PLATFORM_WINDOWS
     get_temp_dir(test_dir, sizeof(test_dir), "chmod");
+#else
+    /* Use /tmp so chmod works (Windows mounts don't support Unix permissions) */
+    snprintf(test_dir, sizeof(test_dir), "/tmp/ncd_verify_test_chmod");
+#endif
     rm_rf(test_dir);
     mkdir(test_dir, 0755);
 
@@ -331,7 +336,12 @@ TEST(chmod_changes_mode) {
 #if !NCD_PLATFORM_WINDOWS
 TEST(chmod_recursive_changes_all) {
     char test_dir[NCD_MAX_PATH];
+#if NCD_PLATFORM_WINDOWS
     get_temp_dir(test_dir, sizeof(test_dir), "chmod_rec");
+#else
+    /* Use /tmp so chmod works (Windows mounts don't support Unix permissions) */
+    snprintf(test_dir, sizeof(test_dir), "/tmp/ncd_verify_test_chmod_rec");
+#endif
     rm_rf(test_dir);
     mkdir(test_dir, 0755);
 
@@ -417,6 +427,14 @@ TEST(chmod_returns_unsupported_on_windows) {
 }
 #endif
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 void suite_agent_verify(void) {
     RUN_TEST(verify_existing_directory_passes);
     RUN_TEST(verify_missing_directory_fails);
@@ -435,5 +453,6 @@ void suite_agent_verify(void) {
 }
 
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_verify);
 )

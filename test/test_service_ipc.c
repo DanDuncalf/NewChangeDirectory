@@ -70,6 +70,9 @@ static bool service_executable_exists(void) {
 #endif
 }
 
+/* Forward declaration */
+static int run_service_command_ex(const char *cmd, const char *extra_args, char *output, size_t output_size);
+
 /* Run service command and capture output */
 static int run_service_command(const char *cmd, char *output, size_t output_size) {
     return run_service_command_ex(cmd, NULL, output, output_size);
@@ -119,6 +122,7 @@ static int run_service_command_ex(const char *cmd, const char *extra_args, char 
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
+    (void)extra_args;
     snprintf(full_cmd, sizeof(full_cmd), "%s %s 2>&1", exe, cmd);
     FILE *pipe = popen(full_cmd, "r");
     if (!pipe) {

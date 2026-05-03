@@ -760,7 +760,7 @@ del "%TEMP%\agent_mkdirs3.txt" 2>nul
 
 :: Test 4: Missing input
 
-"%NCD%" /agent mkdirs --json >nul 2>&1
+"%NCD%" /agent mkdirs --json <nul >nul 2>&1
 
 if errorlevel 1 (
 

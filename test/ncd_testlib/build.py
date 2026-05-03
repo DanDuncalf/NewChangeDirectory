@@ -3,6 +3,7 @@
 import os
 import platform
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,21 +22,49 @@ LINUX_MAIN_BINARIES = ["NewChangeDirectory", "NCDService"]
 
 
 def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None):
-    """Run a command and return (returncode, stdout, stderr)."""
+    """Run a command and return (returncode, stdout, stderr).
+
+    Return codes:
+        >=0  - Normal process exit code.
+        -1   - Launch error (e.g. FileNotFoundError).
+        -2   - Timed out (process was still running when the timeout expired).
+    """
     try:
-        result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=False,
-            timeout=timeout, shell=shell, stdin=stdin
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            shell=shell, stdin=stdin
         )
-        out = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
-        err = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
-        return result.returncode, out, err
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
-        err = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
-        return -1, out, err + f"\nCommand timed out after {timeout}s"
     except FileNotFoundError as e:
         return -1, "", str(e)
+
+    stdout = [b""]
+    stderr = [b""]
+    exc = [None]
+
+    def _communicate():
+        try:
+            stdout[0], stderr[0] = proc.communicate()
+        except Exception as e:
+            exc[0] = e
+
+    comm_thread = threading.Thread(target=_communicate)
+    comm_thread.start()
+    comm_thread.join(timeout)
+
+    if comm_thread.is_alive():
+        # The process is still running after the timeout.
+        proc.kill()
+        comm_thread.join(timeout=10)
+        out = stdout[0].decode("utf-8", errors="replace") if stdout[0] else ""
+        err = stderr[0].decode("utf-8", errors="replace") if stderr[0] else ""
+        return -2, out, err + f"\nCommand timed out after {timeout}s"
+
+    if exc[0] is not None:
+        raise exc[0]
+
+    out = stdout[0].decode("utf-8", errors="replace") if stdout[0] else ""
+    err = stderr[0].decode("utf-8", errors="replace") if stderr[0] else ""
+    return proc.returncode, out, err
 
 
 def get_mtime(path):

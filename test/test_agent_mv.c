@@ -162,8 +162,8 @@ TEST(mv_renames_directory) {
 
 TEST(mv_updates_database) {
     char base[NCD_MAX_PATH], ncd_dir[NCD_MAX_PATH];
-    get_temp_dir(base, sizeof(base), "mvdb");
 #if NCD_PLATFORM_WINDOWS
+    get_temp_dir(base, sizeof(base), "mvdb");
     snprintf(ncd_dir, sizeof(ncd_dir), "%s\\NCD", base);
     char src[NCD_MAX_PATH], dst[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     snprintf(src, sizeof(src), "%s\\TestSrc", base);
@@ -171,6 +171,8 @@ TEST(mv_updates_database) {
     snprintf(db_path, sizeof(db_path), "%s\\ncd_%c.database", ncd_dir, 'C');
     const char test_drive = 'C';
 #else
+    /* Use /tmp to keep drive label short (label buffer is only 64 bytes) */
+    snprintf(base, sizeof(base), "/tmp/ncd_mv_mvdb");
     snprintf(ncd_dir, sizeof(ncd_dir), "%s/ncd", base);
     char src[NCD_MAX_PATH], dst[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     snprintf(src, sizeof(src), "%s/TestSrc", base);
@@ -322,6 +324,14 @@ TEST(ln_creates_symlink) {
     return 0;
 }
 
+static void kill_any_service(void) {
+#if NCD_PLATFORM_WINDOWS
+    system("taskkill /F /IM NCDService.exe >nul 2>nul");
+#else
+    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+#endif
+}
+
 void suite_agent_mv(void) {
     printf("\n=== Agent MV/LN Integration ===\n");
     RUN_TEST(mv_renames_directory);
@@ -331,5 +341,6 @@ void suite_agent_mv(void) {
 }
 
 TEST_MAIN(
+    kill_any_service();
     RUN_SUITE(agent_mv);
 )
