@@ -527,12 +527,14 @@ ncd --agent:help
 ### Service Management & Logging
 
 ```bash
-ncd_service start                 # Start resident service
+ncd_service start                 # Start per-user resident service
+ncd_service start --system-mode   # Start system-scoped service (all users)
 ncd_service start -init           # Start and initialize database (scan all drives)
 ncd_service start -init C,D,E     # Start and initialize database (scan specific drives)
 ncd_service stop                  # Stop (default 5s timeout)
 ncd_service stop block N          # Stop with custom timeout
 ncd --agent:check --service-status # Check status
+ncd --system-mode <search>        # Client connecting to system service
 ```
 
 Log levels (`-log0` through `-log5`): See Service Logging section below.
@@ -577,7 +579,15 @@ ncd_service start -init -log2 -conf C:\NCD\custom.metadata
 
 ### Locations
 
-See [`README.md`](README.md) § *Database Storage* for path locations.
+**Per-user (default):** See [`README.md`](README.md) § *Database Storage* for path locations.
+
+**System mode (`--system-mode`):**
+- Windows: `C:\ProgramData\NCD\`
+- Linux:   `/var/lib/ncd/`
+
+System mode uses shared, fixed paths so all users access the same database.
+Also uses fixed IPC pipe/socket names and `Global\` shared memory namespace
+on Windows (or non-UID-scoped names on Linux) with relaxed permissions.
 
 ### Binary Format
 
@@ -747,8 +757,10 @@ ncd --force <search_term>
 The NCD Service includes a comprehensive logging system for debugging crashes and monitoring service behavior. The logging system is **thread-safe** and writes to a log file with proper locking.
 
 **Log File Location:**
-- **Windows:** `%LOCALAPPDATA%\NCD\ncd_service.log` (e.g., `C:\Users\<username>\AppData\Local\NCD\ncd_service.log`)
-- **Linux:** `~/.local/share/ncd/ncd_service.log` (or `$XDG_DATA_HOME/ncd/ncd_service.log`)
+- **Windows (per-user):** `%LOCALAPPDATA%\NCD\ncd_service.log` (e.g., `C:\Users\<username>\AppData\Local\NCD\ncd_service.log`)
+- **Linux (per-user):** `~/.local/share/ncd/ncd_service.log` (or `$XDG_DATA_HOME/ncd/ncd_service.log`)
+- **System mode (Windows):** `C:\ProgramData\NCD\ncd_service.log`
+- **System mode (Linux):** `/var/lib/ncd/ncd_service.log`
 
 The log file is created in the same directory as the database files and is opened in append mode.
 

@@ -331,13 +331,37 @@ The `-init` option blocks startup until the scan is complete, preventing clients
 
 ## Database Storage
 
+### Per-User Mode (default)
+
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
 - Metadata: `%LOCALAPPDATA%\NCD\ncd.metadata`
+- Service log: `%LOCALAPPDATA%\NCD\ncd_service.log`
 
 **Linux:**
 - Per-mount databases: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_XX.database`
 - Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
+- Service log: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_service.log`
+
+### System Mode (`--system-mode`)
+
+When started with `--system-mode`, the service stores data in shared locations
+accessible to all users on the machine:
+
+**Windows:**
+- Per-drive databases: `C:\ProgramData\NCD\ncd_X.database`
+- Metadata: `C:\ProgramData\NCD\ncd.metadata`
+- Service log: `C:\ProgramData\NCD\ncd_service.log`
+
+**Linux:**
+- Per-mount databases: `/var/lib/ncd/ncd_XX.database`
+- Metadata: `/var/lib/ncd/ncd.metadata`
+- Service log: `/var/lib/ncd/ncd_service.log`
+
+System mode uses fixed IPC and shared memory names (without user SID/UID) with
+relaxed permissions so all local users can connect to a single service instance.
+The service must run with administrator/root privileges to write to these
+directories. Clients connect with `ncd --system-mode <search>`.
 
 ## License
 
