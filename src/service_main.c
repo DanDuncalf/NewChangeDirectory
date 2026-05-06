@@ -1692,15 +1692,23 @@ static void print_stale_process_error(pid_t pid) {
 /* Check if service is already running */
 static bool is_service_running(void) {
 #if NCD_PLATFORM_WINDOWS
-    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, SERVICE_MUTEX_NAME);
-    if (hMutex) {
-        DWORD waitResult = WaitForSingleObject(hMutex, 0);
-        CloseHandle(hMutex);
-        if (waitResult == WAIT_TIMEOUT) {
-            /* Mutex is owned by a live service process */
-            return true;
+    /* Check per-user mutex first, then system-mode Global mutex */
+    const char *mutex_names[] = {
+        SERVICE_MUTEX_NAME,
+        "Global\\NCDService_Instance_7D3F9A2E",
+        NULL
+    };
+    for (int i = 0; mutex_names[i]; i++) {
+        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, mutex_names[i]);
+        if (hMutex) {
+            DWORD waitResult = WaitForSingleObject(hMutex, 0);
+            CloseHandle(hMutex);
+            if (waitResult == WAIT_TIMEOUT) {
+                /* Mutex is owned by a live service process */
+                return true;
+            }
+            /* WAIT_ABANDONED_0 (service crashed) or WAIT_OBJECT_0 (unowned) */
         }
-        /* WAIT_ABANDONED_0 (service crashed) or WAIT_OBJECT_0 (unowned) */
     }
     return false;
 #else
@@ -1880,15 +1888,25 @@ static int run_service(void) {
     LOG_DETAIL("Entering run_service");
 
 #if NCD_PLATFORM_WINDOWS
-    /* Create mutex to indicate we're running */
-    g_service_mutex = CreateMutexA(NULL, TRUE, SERVICE_MUTEX_NAME);
+    /* Create mutex to indicate we're running.
+     * System mode: use Global\ namespace for cross-session visibility. */
+    {
+        char mutex_name[256];
+        if (ncd_is_system_mode()) {
+            snprintf(mutex_name, sizeof(mutex_name), "Global\\%s", SERVICE_MUTEX_NAME);
+        } else {
+            snprintf(mutex_name, sizeof(mutex_name), "%s", SERVICE_MUTEX_NAME);
+        }
+        g_service_mutex = CreateMutexA(NULL, TRUE, mutex_name);
+    }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         fprintf(stderr, "NCD Service: Already running\n");
         LOG_EVENT("Service start failed - already running");
         CLOSE_SERVICE_MUTEX();
         return 1;
     }
-    LOG_DETAIL("Service mutex created successfully");
+    LOG_DETAIL("Service mutex created successfully (%s mode)", 
+               ncd_is_system_mode() ? "system" : "per-user");
 #endif
 
     int ret = 1;
@@ -1989,7 +2007,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     /* Parse command line arguments */
-    /* First pass: look for logging and init options before other processing */
+    /* First pass: look for logging, init, and system-mode options before other processing */
     for (int i = 1; i < argc; i++) {
         int log_level = parse_log_option(argv[i]);
         if (log_level >= 0) {
@@ -2005,6 +2023,9 @@ int main(int argc, char *argv[]) {
                 g_init_drive_count = parse_init_drive_list(argv[i + 1], g_init_drives, 26);
                 i++;
             }
+        }
+        if (strcmp(argv[i], "--system-mode") == 0) {
+            ncd_set_system_mode(true);
         }
     }
 
@@ -2102,8 +2123,8 @@ int main(int argc, char *argv[]) {
                 printf("NCD Service: Previous instance exited, proceeding with start\n");
             }
 #endif
-            /* First-run interactive configuration */
-            if (!db_metadata_exists()) {
+            /* First-run interactive configuration (skip in system mode) */
+            if (!ncd_is_system_mode() && !db_metadata_exists()) {
                 const char *test_mode = getenv("NCD_TEST_MODE");
                 if (!test_mode || !test_mode[0]) {
                     bool stdin_tty = false;

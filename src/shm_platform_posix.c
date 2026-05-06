@@ -9,6 +9,7 @@
  */
 
 #include "shm_platform.h"
+#include "ncd.h"
 
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -117,7 +118,8 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
     
     /* Create shared memory object */
     /* O_EXCL ensures we fail if it already exists */
-    handle->fd = shm_open(handle->name, O_CREAT | O_EXCL | O_RDWR, 0660);
+    mode_t shm_mode = ncd_is_system_mode() ? 0666 : 0660;
+    handle->fd = shm_open(handle->name, O_CREAT | O_EXCL | O_RDWR, shm_mode);
     if (handle->fd == -1) {
         set_last_errno(errno);
         free(handle);
@@ -318,6 +320,12 @@ size_t shm_round_up_size(size_t size) {
 bool shm_make_name(const char *base, char *out_buf, size_t buf_size) {
     if (!base || !out_buf || buf_size == 0) {
         return false;
+    }
+    
+    /* System mode: use fixed name (no UID) */
+    if (ncd_is_system_mode()) {
+        int written = snprintf(out_buf, buf_size, "/ncd_system_%s", base);
+        return (written > 0 && (size_t)written < buf_size);
     }
     
     /* Get user ID */

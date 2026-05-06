@@ -4704,6 +4704,11 @@ int main(int argc, char *argv[])
     if (opts.conf_override[0]) {
         db_metadata_set_override(opts.conf_override);
     }
+    
+    /* Apply system mode if specified */
+    if (opts.system_mode) {
+        ncd_set_system_mode(true);
+    }
 
 #if DEBUG
     /* Set debug test flags in database module */

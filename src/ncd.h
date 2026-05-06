@@ -99,6 +99,24 @@ typedef long          LONG;
 #define NCD_META_VERSION    1
 #define NCD_META_FILENAME   "ncd.metadata"
 
+/* --------------------------------------------------------- system mode      */
+
+/* System-scoped storage directories for multi-user service mode */
+#if NCD_PLATFORM_WINDOWS
+#define NCD_SYSTEM_DIR  "C:\\ProgramData\\NCD"
+#else
+#define NCD_SYSTEM_DIR  "/var/lib/ncd"
+#endif
+
+/* System mode IPC/SHM naming suffixes */
+#define NCD_SYSTEM_IPC_SUFFIX  "SYSTEM"
+#define NCD_SYSTEM_SHM_SUFFIX  "system"
+
+/* System mode global flag and accessors */
+extern bool g_ncd_system_mode;
+void ncd_set_system_mode(bool enabled);
+bool ncd_is_system_mode(void);
+
 /*
  * MetaFileHdr  --  fixed-size header at offset 0 of a metadata file
  *
@@ -582,6 +600,9 @@ typedef struct {
     
     /* Agentic debug mode */
     bool agentic_debug;           /* /agdb -- agentic debugging mode         */
+    
+    /* System mode */
+    bool system_mode;             /* --system-mode -- multi-user system service */
     
     /* Text encoding mode (Windows only) */
     bool     encoding_switch;     /* /u8 or /u16 was specified               */

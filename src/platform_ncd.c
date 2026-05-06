@@ -42,9 +42,30 @@ bool platform_is_pseudo_fs(const char *fstype)
 
 /* ================================================================ NCD-specific database paths */
 
+/* System mode global flag */
+bool g_ncd_system_mode = false;
+
+void ncd_set_system_mode(bool enabled)
+{
+    g_ncd_system_mode = enabled;
+}
+
+bool ncd_is_system_mode(void)
+{
+    return g_ncd_system_mode;
+}
+
 bool ncd_platform_db_default_path(char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0) return false;
+    
+    /* System mode: use shared system directory */
+    if (ncd_is_system_mode()) {
+        platform_create_dir(NCD_SYSTEM_DIR);
+        int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
+        return written > 0 && (size_t)written < buf_size;
+    }
+    
 #if NCD_PLATFORM_WINDOWS
     char local_app[MAX_PATH];
     if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;
@@ -74,6 +95,18 @@ bool ncd_platform_db_default_path(char *buf, size_t buf_size)
 bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0) return false;
+    
+    /* System mode: use shared system directory */
+    if (ncd_is_system_mode()) {
+        platform_create_dir(NCD_SYSTEM_DIR);
+#if NCD_PLATFORM_WINDOWS
+        int w = snprintf(buf, buf_size, "%s%sncd_%c.database", NCD_SYSTEM_DIR, NCD_PATH_SEP, toupper((unsigned char)letter));
+#else
+        int w = snprintf(buf, buf_size, "%s/ncd_%02x.database", NCD_SYSTEM_DIR, (unsigned char)letter);
+#endif
+        return w > 0 && (size_t)w < buf_size;
+    }
+    
 #if NCD_PLATFORM_WINDOWS
     char local_app[MAX_PATH];
     if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;

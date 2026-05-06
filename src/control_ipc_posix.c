@@ -8,6 +8,7 @@
  */
 
 #include "control_ipc.h"
+#include "ncd.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -92,6 +93,14 @@ static NcdIpcResult errno_to_ipc(int err) {
 bool ipc_make_address(char *out_buf, size_t buf_size) {
     if (!out_buf || buf_size == 0) {
         return false;
+    }
+    
+    /* System mode: use fixed socket path (no UID) */
+    if (ncd_is_system_mode()) {
+        size_t len = strlen(NCD_SYSTEM_SOCKET_PATH);
+        if (len >= buf_size) return false;
+        memcpy(out_buf, NCD_SYSTEM_SOCKET_PATH, len + 1);
+        return true;
     }
     
     /* Use XDG_RUNTIME_DIR if available, else /tmp */
@@ -657,6 +666,12 @@ NcdIpcServer *ipc_server_init(void) {
     strncpy(server->sock_path, g_sock_path, sizeof(server->sock_path) - 1);
     server->sock_path[sizeof(server->sock_path) - 1] = '\0';
     
+    /* System mode: ensure socket directory exists with world-readable perms */
+    if (ncd_is_system_mode()) {
+        mkdir(NCD_SYSTEM_SOCKET_DIR, 0755);
+        /* Ignore EEXIST - directory may already exist */
+    }
+    
     /* Remove old socket if exists */
     unlink(server->sock_path);
     
@@ -687,8 +702,8 @@ NcdIpcServer *ipc_server_init(void) {
         return NULL;
     }
     
-    /* Set permissions (user only) */
-    chmod(server->sock_path, 0600);
+    /* Set permissions: user-only in normal mode, world-accessible in system mode */
+    chmod(server->sock_path, ncd_is_system_mode() ? 0666 : 0600);
     
     return server;
 }

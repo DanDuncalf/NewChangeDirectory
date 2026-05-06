@@ -2111,6 +2111,13 @@ char *db_metadata_path(char *buf, size_t buf_size)
         return buf;
     }
     
+    /* System mode: use shared system directory */
+    if (ncd_is_system_mode()) {
+        platform_create_dir(NCD_SYSTEM_DIR);
+        snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_META_FILENAME);
+        return buf;
+    }
+    
 #if NCD_PLATFORM_WINDOWS
     char local[MAX_PATH] = {0};
     if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
@@ -2143,9 +2150,9 @@ char *db_logs_path(char *buf, size_t buf_size)
     if (!buf || buf_size == 0) return NULL;
     buf[0] = '\0';
     
-#if NCD_PLATFORM_WINDOWS
     /* Check for override first - use the directory containing the override file */
     if (g_metadata_override[0]) {
+#if NCD_PLATFORM_WINDOWS
         char override_copy[MAX_PATH];
         platform_strncpy_s(override_copy, sizeof(override_copy), g_metadata_override);
         char *last_sep = strrchr(override_copy, '\\');
@@ -2155,8 +2162,26 @@ char *db_logs_path(char *buf, size_t buf_size)
             platform_strncpy_s(buf, buf_size, override_copy);
             return buf;
         }
+#else
+        char override_copy[MAX_PATH];
+        platform_strncpy_s(override_copy, sizeof(override_copy), g_metadata_override);
+        char *last_sep = strrchr(override_copy, '/');
+        if (last_sep) {
+            *last_sep = '\0';
+            platform_strncpy_s(buf, buf_size, override_copy);
+            return buf;
+        }
+#endif
     }
     
+    /* System mode: use shared system directory */
+    if (ncd_is_system_mode()) {
+        platform_create_dir(NCD_SYSTEM_DIR);
+        platform_strncpy_s(buf, buf_size, NCD_SYSTEM_DIR);
+        return buf;
+    }
+    
+#if NCD_PLATFORM_WINDOWS
     /* Default location: %LOCALAPPDATA%\NCD */
     char local[MAX_PATH];
     if (!platform_get_env("LOCALAPPDATA", local, sizeof(local))) return NULL;
@@ -2168,18 +2193,6 @@ char *db_logs_path(char *buf, size_t buf_size)
     platform_create_dir(buf);
     
 #else /* Linux */
-    /* Check for override first - use the directory containing the override file */
-    if (g_metadata_override[0]) {
-        char override_copy[MAX_PATH];
-        platform_strncpy_s(override_copy, sizeof(override_copy), g_metadata_override);
-        char *last_sep = strrchr(override_copy, '/');
-        if (last_sep) {
-            *last_sep = '\0';
-            platform_strncpy_s(buf, buf_size, override_copy);
-            return buf;
-        }
-    }
-    
     /* Default location: $XDG_DATA_HOME/ncd or ~/.local/share/ncd */
     char base[MAX_PATH];
     if (!platform_get_env("XDG_DATA_HOME", base, sizeof(base)) || !base[0]) {

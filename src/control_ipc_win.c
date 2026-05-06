@@ -8,6 +8,7 @@
  */
 
 #include "control_ipc.h"
+#include "ncd.h"
 #include <windows.h>
 #include <sddl.h>
 #include <stdio.h>
@@ -86,6 +87,14 @@ static NcdIpcResult win_error_to_ipc(DWORD err) {
 bool ipc_make_address(char *out_buf, size_t buf_size) {
     if (!out_buf || buf_size == 0) {
         return false;
+    }
+    
+    /* System mode: use fixed pipe name (no SID) */
+    if (ncd_is_system_mode()) {
+        size_t len = strlen(NCD_SYSTEM_PIPE_NAME);
+        if (len >= buf_size) return false;
+        memcpy(out_buf, NCD_SYSTEM_PIPE_NAME, len + 1);
+        return true;
     }
     
     /* Use session ID for scoping */
@@ -798,6 +807,21 @@ NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
         return NULL;
     }
     
+    /* Build security attributes for pipe creation */
+    SECURITY_ATTRIBUTES sa;
+    SECURITY_DESCRIPTOR sd;
+    LPSECURITY_ATTRIBUTES psa = NULL;
+    
+    if (ncd_is_system_mode()) {
+        /* System mode: NULL DACL allows all users to connect */
+        InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+        SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.lpSecurityDescriptor = &sd;
+        sa.bInheritHandle = FALSE;
+        psa = &sa;
+    }
+    
     /* Create named pipe */
     HANDLE hPipe = CreateNamedPipe(
         server->pipe_name,          /* Pipe name */
@@ -809,7 +833,7 @@ NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
         NCD_PIPE_BUFFER_SIZE,       /* Output buffer size */
         NCD_PIPE_BUFFER_SIZE,       /* Input buffer size */
         (timeout_ms > 0) ? timeout_ms : NCD_PIPE_TIMEOUT_MS, /* Timeout */
-        NULL                        /* Default security attributes */
+        psa                         /* Security attributes */
     );
     
     if (hPipe == INVALID_HANDLE_VALUE) {
@@ -1077,7 +1101,10 @@ bool ipc_service_exists(void) {
      * unavailable while the service is between connections, but the
      * mutex remains owned until the process exits. An abandoned mutex
      * means the service crashed and should not be treated as running. */
-    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
+    const char *mutex_name = ncd_is_system_mode() 
+        ? "Global\\NCDService_Instance_7D3F9A2E"
+        : "NCDService_Instance_7D3F9A2E";
+    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, mutex_name);
     if (hMutex) {
         DWORD waitResult = WaitForSingleObject(hMutex, 0);
         CloseHandle(hMutex);

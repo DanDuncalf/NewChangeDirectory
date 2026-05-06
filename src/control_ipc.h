@@ -41,6 +41,11 @@ extern "C" {
 /* Default timeout for operations (milliseconds) */
 #define NCD_IPC_TIMEOUT_MS  5000
 
+/* System mode IPC names (fixed, no SID/UID) */
+#define NCD_SYSTEM_PIPE_NAME    "\\\\.\\pipe\\NCD_SYSTEM_CONTROL"
+#define NCD_SYSTEM_SOCKET_DIR   "/run/ncd"
+#define NCD_SYSTEM_SOCKET_PATH  "/run/ncd/ncd_control.sock"
+
 /* --------------------------------------------------------- message types      */
 
 typedef enum {

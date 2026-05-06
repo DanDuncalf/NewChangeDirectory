@@ -1231,6 +1231,7 @@ bool parse_args(int argc, char *argv[], NcdOptions *opts)
                 else if (_stricmp(name, "config") == 0) { opts->config_edit = true; bool_handled = true; }
                 else if (_stricmp(name, "frequent") == 0) { opts->show_history = true; bool_handled = true; }
                 else if (_stricmp(name, "agdb") == 0) { opts->agentic_debug = true; bool_handled = true; }
+                else if (_stricmp(name, "system-mode") == 0) { opts->system_mode = true; bool_handled = true; }
 
                 if (bool_handled) break;
 

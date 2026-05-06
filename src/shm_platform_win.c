@@ -7,6 +7,7 @@
  */
 
 #include "shm_platform.h"
+#include "ncd.h"
 #include <windows.h>
 #include <sddl.h>
 #include <stdio.h>
@@ -170,10 +171,24 @@ ShmResult shm_create(const char *name, size_t size, ShmHandle **out_handle) {
     handle->size = size;
     handle->is_creator = true;
     
+    /* Build security attributes for system mode (NULL DACL = all users) */
+    SECURITY_ATTRIBUTES sa;
+    SECURITY_DESCRIPTOR sd;
+    LPSECURITY_ATTRIBUTES psa = NULL;
+    
+    if (ncd_is_system_mode()) {
+        InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+        SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.lpSecurityDescriptor = &sd;
+        sa.bInheritHandle = FALSE;
+        psa = &sa;
+    }
+    
     /* Create file mapping */
     handle->hMapFile = CreateFileMapping(
         INVALID_HANDLE_VALUE,    /* Use paging file */
-        NULL,                    /* Default security */
+        psa,                     /* Security attributes */
         PAGE_READWRITE,          /* Read/write access */
         0,                       /* Maximum object size (high-order DWORD) */
         (DWORD)size,             /* Maximum object size (low-order DWORD) */
@@ -441,6 +456,12 @@ bool shm_make_name(const char *base, char *out_buf, size_t buf_size) {
 static bool shm_make_stable_name(const char *base, char *out_buf, size_t buf_size) {
     if (!base || !out_buf || buf_size == 0) {
         return false;
+    }
+    
+    /* System mode: use Global\ namespace with fixed name (no SID) */
+    if (ncd_is_system_mode()) {
+        int written = snprintf(out_buf, buf_size, "Global\\NCD_SYSTEM_%s", base);
+        return (written > 0 && (size_t)written < buf_size);
     }
     
     /* Get user SID for stable per-user naming */
