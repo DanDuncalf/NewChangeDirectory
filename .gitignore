@@ -382,13 +382,21 @@ test_error.txt
 ncd_service.log
 logs/
 
+# NCD debug dump files (can be very large)
+*_debug.txt
+
+# Test results output
+test.results
+
 # NCD extensionless Linux binaries built by GCC in WSL
 # Root executables
 /NewChangeDirectory
 /NCDService
+/ncd_service
 # Test executables (ignore binary, keep source)
 /test/ncd
 /test/ncd_service
+/test/service_race_tester
 /test/test_*
 !/test/test_*.c
 !/test/test_*.h
