@@ -42,16 +42,29 @@ bool platform_is_pseudo_fs(const char *fstype)
 
 /* ================================================================ NCD-specific database paths */
 
-/* System mode global flag */
-bool g_ncd_system_mode = false;
+/* System mode global flag — system-wide is the default */
+/* Use --user-mode to switch to per-user local storage */
+bool g_ncd_system_mode = true;
+
+/* Test-mode auto-detection flag (checked once on first ncd_is_system_mode() call) */
+static bool g_ncd_test_mode_checked = false;
 
 void ncd_set_system_mode(bool enabled)
 {
     g_ncd_system_mode = enabled;
+    g_ncd_test_mode_checked = true;  /* User explicitly set it, skip auto-detection */
 }
 
 bool ncd_is_system_mode(void)
 {
+    if (!g_ncd_test_mode_checked && g_ncd_system_mode) {
+        g_ncd_test_mode_checked = true;
+        /* NCD_TEST_MODE implies user-mode for isolated test environments */
+        const char *tm = getenv("NCD_TEST_MODE");
+        if (tm && tm[0] && strcmp(tm, "0") != 0) {
+            g_ncd_system_mode = false;
+        }
+    }
     return g_ncd_system_mode;
 }
 

@@ -4705,9 +4705,13 @@ int main(int argc, char *argv[])
         db_metadata_set_override(opts.conf_override);
     }
     
-    /* Apply system mode if specified */
-    if (opts.system_mode) {
-        ncd_set_system_mode(true);
+    /* System-wide mode is the default. --user-mode switches to per-user storage. */
+    if (opts.user_mode) {
+        ncd_set_system_mode(false);
+    }
+    /* Test mode uses user-mode (per-user) paths for isolated test environments */
+    if (ncd_test_mode_active() && ncd_is_system_mode()) {
+        ncd_set_system_mode(false);
     }
 
 #if DEBUG

@@ -1692,7 +1692,7 @@ static void print_stale_process_error(pid_t pid) {
 /* Check if service is already running */
 static bool is_service_running(void) {
 #if NCD_PLATFORM_WINDOWS
-    /* Check per-user mutex first, then system-mode Global mutex */
+    /* System-wide mode uses Global\ namespace; user-mode uses session-local mutex */
     const char *mutex_names[] = {
         SERVICE_MUTEX_NAME,
         "Global\\NCDService_Instance_7D3F9A2E",
@@ -2007,7 +2007,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     /* Parse command line arguments */
-    /* First pass: look for logging, init, and system-mode options before other processing */
+    /* First pass: look for logging, init, and user-mode options before other processing */
     for (int i = 1; i < argc; i++) {
         int log_level = parse_log_option(argv[i]);
         if (log_level >= 0) {
@@ -2024,8 +2024,16 @@ int main(int argc, char *argv[]) {
                 i++;
             }
         }
-        if (strcmp(argv[i], "--system-mode") == 0) {
-            ncd_set_system_mode(true);
+        if (strcmp(argv[i], "--user-mode") == 0) {
+            ncd_set_system_mode(false);
+        }
+    }
+
+    /* Test mode uses user-mode (per-user) paths for isolated test environments */
+    {
+        const char *tm = getenv("NCD_TEST_MODE");
+        if (tm && tm[0] && strcmp(tm, "0") != 0 && ncd_is_system_mode()) {
+            ncd_set_system_mode(false);
         }
     }
 

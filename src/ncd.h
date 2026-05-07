@@ -601,8 +601,8 @@ typedef struct {
     /* Agentic debug mode */
     bool agentic_debug;           /* /agdb -- agentic debugging mode         */
     
-    /* System mode */
-    bool system_mode;             /* --system-mode -- multi-user system service */
+    /* User mode (opt-out from system-wide default) */
+    bool user_mode;               /* --user-mode -- per-user local storage */
     
     /* Text encoding mode (Windows only) */
     bool     encoding_switch;     /* /u8 or /u16 was specified               */

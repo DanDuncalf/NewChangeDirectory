@@ -528,13 +528,15 @@ ncd --agent:help
 
 ```bash
 ncd_service start                 # Start per-user resident service
-ncd_service start --system-mode   # Start system-scoped service (all users)
+ncd_service start                 # System-wide service is now the default (all users)
+ncd_service start --user-mode     # Per-user service (current user only)
 ncd_service start -init           # Start and initialize database (scan all drives)
 ncd_service start -init C,D,E     # Start and initialize database (scan specific drives)
 ncd_service stop                  # Stop (default 5s timeout)
 ncd_service stop block N          # Stop with custom timeout
 ncd --agent:check --service-status # Check status
-ncd --system-mode <search>        # Client connecting to system service
+ncd <search>                      # System-wide mode is the default
+ncd --user-mode <search>          # Client connecting to per-user service
 ```
 
 Log levels (`-log0` through `-log5`): See Service Logging section below.
@@ -579,11 +581,11 @@ ncd_service start -init -log2 -conf C:\NCD\custom.metadata
 
 ### Locations
 
-**Per-user (default):** See [`README.md`](README.md) § *Database Storage* for path locations.
-
-**System mode (`--system-mode`):**
+**System-wide (default):** Shared paths accessible by all users:
 - Windows: `C:\ProgramData\NCD\`
 - Linux:   `/var/lib/ncd/`
+
+**User mode (`--user-mode`):** See [`README.md`](README.md) § *Database Storage* for per-user path locations.
 
 System mode uses shared, fixed paths so all users access the same database.
 Also uses fixed IPC pipe/socket names and `Global\` shared memory namespace
