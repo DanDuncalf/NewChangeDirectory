@@ -40,13 +40,13 @@ ifeq ($(PLATFORM),Windows)
     SERVICE     := NCDService.exe
     CFLAGS_PLAT := -D_WIN32_WINNT=0x0601 -DWINVER=0x0601
     LDFLAGS     := -mconsole -mthreads -lkernel32 -luser32 -ladvapi32 -lshlwapi
-    PLATFORM_SRC:= src/shm_platform_win.c src/control_ipc_win.c
+    PLATFORM_SRC:= src/shm_platform_win.c src/control_ipc_win.c src/control_ipc_common.c
 else
     TARGET      := NewChangeDirectory
     SERVICE     := ncd_service
     CFLAGS_PLAT := -DPLATFORM_LINUX=1 -D_GNU_SOURCE
     LDFLAGS     := -lpthread
-    PLATFORM_SRC:= src/shm_platform_posix.c src/control_ipc_posix.c
+    PLATFORM_SRC:= src/shm_platform_posix.c src/control_ipc_posix.c src/control_ipc_common.c
 endif
 
 # --------------------------------------------------------------------------

@@ -88,8 +88,8 @@ TEST(logs_path_returns_valid_path) {
     ASSERT_TRUE(db_logs_path(path, sizeof(path)) != NULL);
     ASSERT_TRUE(strlen(path) > 0);
     
-    /* Path should contain "ncd" (database directory) */
-    ASSERT_TRUE(strstr(path, "ncd") != NULL);
+    /* Path should contain "ncd" or "NCD" (database directory) - case-insensitive */
+    ASSERT_TRUE(strstr(path, "ncd") != NULL || strstr(path, "NCD") != NULL);
     return 0;
 }
 

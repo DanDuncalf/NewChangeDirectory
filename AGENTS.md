@@ -193,14 +193,9 @@ When the user asks to "run all tests", execute **exactly** this command and noth
 python test/generate_report.py
 ```
 
-This is the **unified cross-platform runner** — it auto-builds, runs Windows + WSL tests, and writes the detailed `test.results` report. It is the **only** command that produces the mandatory per-suite check counts and ratios required for reporting results. See `AGENT_TESTING_GUIDE.md` § *Expected Output Format — MANDATORY*.
+This is the **unified cross-platform runner** — it auto-builds, runs Windows + WSL tests, and writes the detailed `test.results` report. See `AGENT_TESTING_GUIDE.md` § *Expected Output Format — MANDATORY*.
 
-> **Pre-test clean (strongly recommended):** If any `src\*.c` or `..\shared\*.c` file has changed since the last build, run `cmd /c clean.bat` first. Stale `.obj` files in `obj\`, `test\obj\`, or the project root can cause test executables to link against old code while the main binary uses new code, producing failures that look like bugs but are actually build artifacts.
-
-If `generate_report.py` is unavailable, fall back to:
-```powershell
-python test\runner.py
-```
+> **Pre-test clean:** If any `src\*.c` or `..\shared\*.c` file has changed since the last build, run `cmd /c clean.bat` first. Stale `.obj` files can cause test executables to link against old code.
 
 ### Quick Reference
 ```powershell
@@ -209,18 +204,14 @@ python test\runner.py integration    # Integration tests only
 python test\runner.py --repair       # Fix corrupted test environment
 ```
 
-### Rules
-- **Never run `test\*.exe` directly** — always use the harness (`generate_report.py` or `runner.py`)
-- **Invoke `.bat` files via `cmd /c`** because the Shell tool runs PowerShell by default
-- Use `run_in_background=true` with timeout `3600` for full-suite runs (~35 minutes). The 600s guidance is outdated; the parallel-expanded suite requires significantly more time.
+### Key Rules
+- **Never run `test\*.exe` directly** — always use the harness
+- Use `run_in_background=true` with timeout `3600` for full-suite runs (~35 minutes)
 - Set `NCD_TEST_MODE=1` to disable background rescans during tests
-- **Always show the test runner output** — do not suppress, truncate, or summarize away the actual pass/fail results and suite breakdowns
-- **When `generate_report.py` is used, display the full `test.results` file content** in the response. Do not skip showing the report file.
-- **Act on background task notifications immediately** — when a background task completes (success or failure), inspect its output with `TaskOutput` right away. Do not wait for user prompting.
+- **Always show the test runner output** — do not suppress or truncate
+- **Act on background task notifications immediately**
 
 ### Keystroke Injection for TUI Testing
-
-NCD supports automated keystroke injection for testing and scripting the interactive TUI.
 
 | Variable | Purpose |
 |----------|---------|
@@ -229,170 +220,16 @@ NCD supports automated keystroke injection for testing and scripting the interac
 
 Key tokens: `UP`, `DOWN`, `LEFT`, `RIGHT`, `PGUP`, `PGDN`, `HOME`, `END`, `ENTER`, `ESC`, `TAB`, `BACKSPACE`, `DELETE`, `SPACE`, `TEXT:<string>`.
 
-Example:
-```batch
-set "NCD_UI_KEYS=DOWN,DOWN,DOWN,DOWN,DOWN,ENTER,TEXT:-1,ENTER,ENTER"
-ncd -c
-set "NCD_UI_KEYS="
-```
-
-In headless mode (`NCD_TEST_MODE=80,25` in debug builds), TUI output goes to stdout and keystrokes are consumed from `NCD_UI_KEYS`.
-
-## Code Style Guidelines
-
-### Naming Conventions
-
-- **Functions:** `module_verb_noun()` (e.g., `db_load_binary()`, `platform_get_env()`)
-- **Types:** PascalCase with suffix (e.g., `NcdDatabase`, `DriveData`, `DirEntry`)
-- **Constants:** `NCD_UPPER_CASE` (e.g., `NCD_MAX_PATH`, `NCD_BIN_MAGIC`)
-- **Macros:** `NCD_PREFIX` for public, `static` for file-local
-
-### Platform Abstraction
-
-Platform-specific code is handled through the shared library at `../shared/`. NCD-specific platform code lives in `platform.c` with these patterns:
-
-```c
-#if NCD_PLATFORM_WINDOWS
-    // Win32 API code
-#elif NCD_PLATFORM_LINUX
-    // POSIX/Linux code
-#else
-#error "Unsupported platform"
-#endif
-```
-
-Platform macros defined in `ncd.h` via `../shared/platform_detect.h`:
-- `NCD_PLATFORM_WINDOWS` / `NCD_PLATFORM_LINUX`
-- `NCD_ARCH_X64`
-
-### Memory Management
-
-- Use `ncd_malloc()` / `ncd_realloc()` wrappers that exit on OOM
-- Use `ncd_malloc_array()` for array allocations with overflow checking
-- Use `ncd_calloc()` for zero-initialized allocations
-- Database uses string pools to reduce memory fragmentation
-- Binary loads use single blob allocation with pointer referencing
-
-### String Safety
-
-- All string operations should use bounded copies
-- Path manipulation uses `path_join()`, `path_parent()`, `path_leaf()` utilities
-- Output escaping is handled in `write_result()` for batch/shell safety
-
-## Key Data Structures
-
-### DirEntry (12 bytes)
-Compact directory node with string pool indexing:
-```c
-typedef struct {
-    int32_t  parent;       // Parent index (-1 for root)
-    uint32_t name_off;     // Offset into name_pool
-    uint8_t  is_hidden;
-    uint8_t  is_system;
-    uint8_t  pad[2];       // Explicit padding for 4-byte alignment
-} DirEntry;
-```
-
-### NcdDatabase
-In-memory database with blob support for fast binary loads:
-```c
-typedef struct {
-    int        version;
-    bool       default_show_hidden;
-    bool       default_show_system;
-    time_t     last_scan;
-    DriveData *drives;
-    int        drive_count;
-    void      *blob_buf;       // NULL unless is_blob
-    bool       is_blob;        // true => dirs/pools point into blob
-    void      *name_index;     // Cached name index for fast searches
-} NcdDatabase;
-```
-
-### NcdMetadata (Consolidated)
-Single file containing config, groups, heuristics, exclusions, and directory history:
-```c
-typedef struct {
-    NcdConfig cfg;
-    NcdGroupDb groups;
-    NcdHeuristicsV2 heuristics;
-    NcdExclusionList exclusions;
-    NcdDirHistory dir_history;
-    char file_path[NCD_MAX_PATH];
-    bool config_dirty;
-    bool groups_dirty;
-    bool heuristics_dirty;
-    bool exclusions_dirty;
-    bool dir_history_dirty;
-} NcdMetadata;
-```
-
 ### Troubleshooting Test Issues
 
-#### "LOCALAPPDATA points to test temp directory"
+| Symptom | Fix |
+|---------|-----|
+| "LOCALAPPDATA points to test temp" | `python test\runner.py --repair` |
+| Service tests hang | `taskkill /F /IM NCDService.exe` then re-run |
+| PowerShell execution policy | Use Python runner instead (no policy issues) |
 
-**Symptoms:**
-- NCD reports "No database found"
-- `ncd --agent:check --db-age` shows wrong location
-- Environment check reports corruption
+See `AGENT_TESTING_GUIDE.md` for detailed procedures.
 
-**Cause:** Previous test was interrupted with Ctrl+C
-
-**Fix:**
-```powershell
-# Quick repair
-python test\runner.py --repair
-
-# Or manually
-$env:LOCALAPPDATA="$env:USERPROFILE\AppData\Local"
-$env:NCD_TEST_MODE=""
-```
-
-#### "Tests interrupted and environment not cleaned up"
-
-**Cause:** Python signal handlers guarantee cleanup on Ctrl+C
-
-**Prevention:**
-```powershell
-# Use Python runner (Ctrl+C safe!)
-python test\runner.py
-```
-
-**Repair:**
-```powershell
-# Comprehensive repair
-.\Check-Environment.ps1 -Repair
-
-# Or use the Python runner
-python test\runner.py --repair
-```
-
-#### "Cannot run PowerShell scripts"
-
-**Error:** "Execution of scripts is disabled on this system"
-
-**Fix:**
-```powershell
-# Run as Administrator
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# Or use the Python runner (no policy issues)
-python test\runner.py
-```
-
-#### "Service tests timeout or hang"
-
-**Cause:** Previous service instance still running
-
-**Fix:**
-```batch
-:: Kill all NCD processes
-taskkill /F /IM NCDService.exe
-taskkill /F /IM NewChangeDirectory.exe
-
-:: Or use PowerShell module
-powershell -Command "Import-Module .\test\PowerShell\NcdTestUtils.psm1; Stop-NcdService"
-```
 
 ## Usage
 

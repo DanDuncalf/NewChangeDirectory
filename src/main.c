@@ -1663,6 +1663,31 @@ static int path_map_get(PathMap *map, const char *path)
     return -1;
 }
 
+/* Forward declaration for build_path_map (defined later in this file) */
+static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter);
+
+/*
+ * Ensure the cached PathMap is built on db (P1.16).
+ * Returns pointer to PathMap (never NULL if db is non-NULL).
+ */
+static PathMap *db_ensure_path_map(NcdDatabase *db)
+{
+    if (db->path_map)
+        return (PathMap *)db->path_map;
+    
+    PathMap *map = ncd_malloc(sizeof(PathMap));
+    int total_dirs = 0;
+    for (int d = 0; d < db->drive_count; d++)
+        total_dirs += db->drives[d].dir_count;
+    path_map_init(map, total_dirs);
+    
+    for (int d = 0; d < db->drive_count; d++)
+        build_path_map(map, &db->drives[d], db->drives[d].letter);
+    
+    db->path_map = map;
+    return map;
+}
+
 /* Children index: for each dir, store list of child indices */
 typedef struct {
     int *children;      /* Array of child dir indices */
@@ -1861,16 +1886,8 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     }
 #endif
     
-    /* Build path-to-index map for O(1) lookup - much faster than scanning */
-    PathMap path_map;
-    int total_dirs = 0;
-    for (int d = 0; d < db->drive_count; d++)
-        total_dirs += db->drives[d].dir_count;
-    path_map_init(&path_map, total_dirs);
-    
-    for (int d = 0; d < db->drive_count; d++) {
-        build_path_map(&path_map, &db->drives[d], db->drives[d].letter);
-    }
+    /* Use cached path map for O(1) lookup (P1.16) */
+    PathMap *path_map = db_ensure_path_map(db);
     
     /* O(1) lookup instead of O(n) scan */
     int found_drive_idx = -1;
@@ -1891,7 +1908,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         
         if (_strnicmp(search_path, drive_root, strlen(drive_root)) == 0) {
             found_drive_idx = d;
-            found_dir_idx = path_map_get(&path_map, search_path);
+            found_dir_idx = path_map_get(path_map, search_path);
             /* If search path is exactly the drive root, use sentinel */
             if (found_dir_idx < 0 && _stricmp(search_path, drive_root) == 0) {
                 found_dir_idx = -2;
@@ -1900,8 +1917,6 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
                 break;
         }
     }
-    
-    path_map_free(&path_map);
     
     if (found_dir_idx < 0 && found_dir_idx != -2) {
         if (opts->agent_json) {
@@ -2134,19 +2149,9 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             }
 #endif
             
-            /* Build path map once for O(1) lookup instead of O(n²) scan */
-            PathMap path_map;
-            int total_dirs = 0;
-            for (int d = 0; d < db->drive_count; d++)
-                total_dirs += db->drives[d].dir_count;
-            path_map_init(&path_map, total_dirs);
-            
-            for (int d = 0; d < db->drive_count; d++) {
-                build_path_map(&path_map, &db->drives[d], db->drives[d].letter);
-            }
-            
-            in_db = path_map_get(&path_map, search_path) >= 0;
-            path_map_free(&path_map);
+            /* Use cached path map for O(1) lookup (P1.16) */
+            PathMap *path_map = db_ensure_path_map(db);
+            in_db = path_map_get(path_map, search_path) >= 0;
         }
         
         if (opts->agent_json) {
@@ -2399,21 +2404,17 @@ static bool add_path_to_database(const char *path)
     const char *leaf_name = path_leaf(norm_path);
     int32_t parent_idx = -1;
     
-    /* Build path map for O(1) lookups */
+    /* Use cached path map for O(1) lookups (P1.16) */
     bool in_db = false;
     if (drv->dir_count > 0) {
-        PathMap path_map;
-        path_map_init(&path_map, drv->dir_count);
-        build_path_map(&path_map, drv, drv->letter);
+        PathMap *path_map = db_ensure_path_map(db);
         
         if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-            parent_idx = path_map_get(&path_map, parent_path);
+            parent_idx = path_map_get(path_map, parent_path);
         }
         
         /* Check if directory already exists in database - O(1) lookup */
-        in_db = path_map_get(&path_map, norm_path) >= 0;
-        
-        path_map_free(&path_map);
+        in_db = path_map_get(path_map, norm_path) >= 0;
     } else {
         parent_idx = -1;
         in_db = false;

@@ -353,6 +353,10 @@ typedef struct {
     void *name_index;                 /* NULL until built (actually NameIndex*) */
     int   name_index_generation;      /* Incremented on modification */
     
+    /* Cached path map for O(1) path->dir_index lookups (P1.16).
+     * Built on first agent mode query, invalidated on database mutation. */
+    void *path_map;                   /* NULL until built */
+    
     /* Reference counting for safe in-memory swapping during rescans */
     int   ref_count;                  /* Incremented by db_retain(), db_free() decrements */
 } NcdDatabase;

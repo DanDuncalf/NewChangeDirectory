@@ -8,6 +8,9 @@
 #include "../src/ui.h"
 #include <string.h>
 #include <stdlib.h>
+#if !defined(NCD_PLATFORM_WINDOWS) || !NCD_PLATFORM_WINDOWS
+#include <unistd.h>
+#endif
 
 /* Test: Parse simple key names */
 TEST(inject_simple_keys) {

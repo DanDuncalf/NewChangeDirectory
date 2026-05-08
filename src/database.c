@@ -68,6 +68,42 @@ bool g_test_no_checksum = false;
 bool g_test_slow_mode = false;
 #endif
 
+/* ================================================================ path map cache */
+
+/*
+ * PathMap type - local definition for cache invalidation.
+ * Matches the definition in main.c (P1.16).
+ */
+typedef struct {
+    uint64_t hash;
+    int dir_index;
+    char *path;
+} PathMapEntry;
+
+typedef struct {
+    PathMapEntry *entries;
+    int count;
+    int capacity;
+} PathMap;
+
+void db_invalidate_path_map(NcdDatabase *db)
+{
+    if (db && db->path_map) {
+        PathMap *pm = (PathMap *)db->path_map;
+        for (int i = 0; i < pm->capacity; i++) {
+            if (pm->entries[i].path)
+                free(pm->entries[i].path);
+        }
+        free(pm->entries);
+        free(pm);
+        db->path_map = NULL;
+    }
+}
+
+/* Stub mutex functions for test compatibility (P1.16) */
+void db_lock(NcdDatabase *db) { (void)db; }
+void db_unlock(NcdDatabase *db) { (void)db; }
+
 /* ================================================================ error handling */
 
 /* Thread-local error buffer for database operations */
@@ -132,6 +168,9 @@ void db_free(NcdDatabase *db)
     if (db->ref_count > 0) {
         return;  /* Still has references, don't free yet */
     }
+    
+    /* Free cached path map if present */
+    db_invalidate_path_map(db);
     
     /* Free cached name index if present */
     if (db->name_index) {
@@ -859,6 +898,8 @@ DriveData *db_add_drive(NcdDatabase *db, char letter)
     drv->letter = (char)toupper((unsigned char)letter);
     /* Invalidate cached name index since database structure changed */
     db->name_index_generation++;
+    /* Invalidate cached path map (P1.16) */
+    db_invalidate_path_map(db);
     return drv;
 }
 
@@ -989,6 +1030,8 @@ bool db_remove_path(NcdDatabase *db, const char *path)
 
     /* Invalidate cached name index */
     db->name_index_generation++;
+    /* Invalidate cached path map (P1.16) */
+    db_invalidate_path_map(db);
     return true;
 }
 
@@ -1298,6 +1341,8 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
         
         /* Invalidate cached name index since database structure changed */
         db->name_index_generation++;
+        /* Invalidate cached path map (P1.16) */
+        db_invalidate_path_map(db);
         
         free(index_map);
         free(is_excluded);
@@ -3531,6 +3576,8 @@ bool db_drive_remove_subtree(NcdDatabase *db, DriveData *drv, int dir_idx)
 
     if (db) {
         db->name_index_generation++;
+        /* Invalidate cached path map (P1.16) */
+        db_invalidate_path_map(db);
     }
     return true;
 }

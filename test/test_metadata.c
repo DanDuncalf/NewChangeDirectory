@@ -59,7 +59,10 @@ TEST(metadata_save_load_roundtrip) {
     /* Add an exclusion */
     db_exclusion_add(meta, "*/node_modules");
     
-    /* Save to default path */
+    /* Save to default path - ensure directory exists for system-mode */
+    #if !NCD_PLATFORM_WINDOWS
+    system("mkdir -p /var/lib/ncd 2>/dev/null");
+    #endif
     ASSERT_TRUE(db_metadata_save(meta));
     db_metadata_free(meta);
     

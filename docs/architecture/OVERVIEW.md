@@ -438,7 +438,6 @@ ncd_service               # Service (Linux)
 ## Related Documentation
 
 - **AGENTS.md** - Detailed module documentation
-- **docs/architecture/shared_memory_multiple_segments.md** - SHM details
 - **docs/architecture/shared_memory_pointers_explained.md** - Offset vs pointer
 - **test/README.md** - Testing architecture
 

@@ -8,23 +8,19 @@ Documentation for NewChangeDirectory (NCD) - a cross-platform command-line direc
 - [AGENTS.md](../AGENTS.md) - Comprehensive agent/AI documentation
 - [AGENT_RULES.md](../AGENT_RULES.md) - Agent workflow rules
 - [Agent Mode Reference](agent_mode.md) - Implemented `--agent:*` commands and flags
-- [Testing Best Practices](BEST_PRACTICES_TESTING.md) - Current test-harness guidance
-- [PowerShell Wrapper Notes](POWERHSHELL_TEST_RUNNER.md) - Wrapper-specific test runner notes
+- [Testing Guide](../AGENT_TESTING_GUIDE.md) - Complete testing workflow and isolation rules
 
 ## Documentation Structure
 
 ### Root Docs
 
 - **[agent_mode.md](agent_mode.md)** - Implemented agent mode behavior and flags
-- **[BEST_PRACTICES_TESTING.md](BEST_PRACTICES_TESTING.md)** - Testing workflow and isolation rules
-- **[POWERHSHELL_TEST_RUNNER.md](POWERHSHELL_TEST_RUNNER.md)** - PowerShell compatibility wrappers
-- **[TESTING_CHANGES_SUMMARY.md](TESTING_CHANGES_SUMMARY.md)** - Historical test-infrastructure summary
+- **[AGENT_TESTING_GUIDE.md](../AGENT_TESTING_GUIDE.md)** - Complete testing workflow and isolation rules
 
 ### `/architecture`
 Current architecture documentation:
 
 - **[OVERVIEW.md](architecture/OVERVIEW.md)** - System architecture overview
-- **[shared_memory_multiple_segments.md](architecture/shared_memory_multiple_segments.md)** - Shared-memory layout notes
 - **[shared_memory_pointers_explained.md](architecture/shared_memory_pointers_explained.md)** - Offset vs pointer model
 
 ### `/history`

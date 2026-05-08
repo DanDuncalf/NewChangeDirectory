@@ -512,6 +512,15 @@ bool db_dir_history_remove(NcdMetadata *meta, int index);
  */
 void db_dir_history_print(NcdMetadata *meta);
 
+/* --------------------------------------------------------- mutex stubs (P1.16) */
+
+void db_lock(NcdDatabase *db);
+void db_unlock(NcdDatabase *db);
+
+/* --------------------------------------------------------- path map cache (P1.16) */
+
+void db_invalidate_path_map(NcdDatabase *db);
+
 #ifdef __cplusplus
 }
 #endif

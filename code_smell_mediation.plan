@@ -1,0 +1,517 @@
+﻿# NCD Code Smell Remediation Plan
+
+**Date:** 2026-05-07  
+**Scope:** All source modules (client + service)  
+**Audit Method:** 6 parallel explore agents analyzing every `.c`/`.h` file
+
+---
+
+## Mandatory Red-Test-First Policy (Added 2026-05-08)
+
+Project state can be "all tests green" while known defects still exist if tests are skipped or absent. From this point forward, every correctness bug in this plan must be handled with test-first workflow:
+
+1. Add or unskip an exact regression test that fails on current code.
+2. Run the relevant harness and capture the failing output.
+3. Implement the fix.
+4. Re-run and capture passing output.
+5. Mark the plan item complete only with red->green evidence.
+
+Rules:
+- No P0/P1 correctness item may be fixed without a pre-fix failing test.
+- If CI cannot fail immediately, gate known-bug tests with `NCD_ENABLE_KNOWN_BUG_TESTS=1` and run that profile in a required nightly/PR job until fixed.
+- Replace SKIP-style known bug tests with fail-when-enabled assertions.
+- Every bug item must include: test name, file path, and exact failure condition.
+
+Suggested execution commands:
+- `python test/runner.py unit`
+- `python test/runner.py integration`
+- `python test/generate_report.py`
+
+---
+
+## Bug-to-Test Coverage Matrix (Must Fail Before Fix)
+
+Status legend:
+- `MISSING` = no test yet; must add first
+- `EXISTS-SKIP` = test exists but does not fail yet; convert to fail-when-enabled
+- `EXISTS-RED` = test already fails on baseline
+
+| Plan ID | Status | Test file + test name | Required failing assertion before fix |
+|---|---|---|---|
+| P0.1 | EXISTS-SKIP | `test/test_service_database.c` -> `TEST(regression_rescan_no_data_loss)` | Service-side rescan replacement must not reduce total dirs to zero; currently should fail when known-bug mode is enabled |
+| P0.2 | MISSING | `test/test_service_lifecycle.c` -> `TEST(regression_pending_queue_race)` | Under concurrent enqueue/dequeue, queue invariants (`count`, `head`, `tail`) must remain consistent; current code should show corruption or mismatch |
+| P0.3 | MISSING | `test/test_service_lifecycle.c` -> `TEST(regression_service_flags_atomicity)` | Concurrent set/read of control flags must observe ordered transitions; current volatile-only behavior should show missed transitions under stress |
+| P0.4 | MISSING | `test/test_shared_state.c` -> `TEST(regression_crc64_init_race)` | Concurrent first-call `shm_crc64()` must produce deterministic checksum and no partial-table corruption |
+| P0.5 | MISSING | `test/test_matcher.c` -> `TEST(regression_name_index_concurrent_rebuild)` | Parallel `matcher_find()` on same DB must not crash/UAF and must return stable counts |
+| P0.6 | MISSING | `test/test_service_integration.c` -> `TEST(regression_scan_matcher_concurrency)` | Concurrent scan+query must not crash and must keep result paths valid across iterations |
+| P0.7 | MISSING | `test/Win/test_platform_win.c` (or new `test/test_platform_ncd.c`) -> `TEST(regression_ncd_con_init_once)` | Parallel first print/init must open console handle once and avoid leaked duplicate init |
+| P0.8 | MISSING | `test/test_service_lazy_load.c` -> `TEST(regression_shm_publish_gap)` | Client reads during publish must not observe SHM missing/not-found window |
+| P1.1a | MISSING | `test/test_service_integration.c` -> `TEST(regression_version_check_not_found_parity)` | Windows and POSIX must return identical result when service stops during version check |
+| P2.20 | MISSING | `test/test_service_database.c` -> `TEST(regression_status_message_pointer_lifetime)` | Returned status message must remain valid after lock boundaries and concurrent updates |
+
+Execution requirement per row:
+- Baseline run: demonstrate failure with known-bug mode enabled.
+- Post-fix run: same test must pass with known-bug mode still enabled.
+
+---
+## Priority Legend
+
+| Tag | Meaning |
+|-----|---------|
+| ðŸ”´ **P0** | Critical â€” correctness/thread-safety bug; fix immediately |
+| ðŸŸ  **P1** | High â€” significant performance/duplication; fix this cycle |
+| ðŸŸ¡ **P2** | Medium â€” worthwhile cleanup; plan for next cycle |
+| ðŸŸ¢ **P3** | Low â€” nice-to-have; backlog |
+
+---
+
+## ðŸ”´ P0 â€” Critical Bugs & Thread Safety (Fix First)
+
+### P0.1 â€” `perform_rescan()` creates empty database, destroying all data
+- **File:** `src/service_main.c` lines 1391â€“1421
+- **Problem:** The service-side rescan calls `db_add_drive()` but never calls any scanner function. The loop increments `scanned_count` but `drv->dir_count` remains 0. The result replaces the existing database with an empty one.
+- **Fix:** Implement actual scanning via `scan_mounts()` or expose `scanner_scan_drive()`. Until fixed, service-side rescan should be disabled.
+- **Regression test:** `test/test_service_database.c` â†’ `TEST(regression_rescan_no_data_loss)`
+  - Simulates the exact `perform_rescan` pattern: populated DB â†’ empty scan â†’ replace
+  - Currently SKIPs (known bug, won't fail CI)
+  - Auto-detects fix: once `total_dirs > 0` after replacement, assertion enforces no regression
+  - **After fix:** remove the SKIP guard (the `if (total_dirs == 0)` branch) and let the hard ASSERT run
+
+### P0.2 â€” Pending request queue has no locking
+- **File:** `src/service_state.c` lines 868â€“907
+- **Problem:** `service_state_enqueue_request()` modifies `pending_head/tail/count` without any mutex. Queue is accessed from the main IPC thread, loader thread, and cleanup path concurrently.
+- **Fix:** Add a mutex (`SRWLOCK` on Windows, `pthread_mutex_t` on Linux) protecting all pending queue operations.
+
+### P0.3 â€” Global flags use `volatile` instead of atomics
+- **File:** `src/service_main.c` lines 50â€“53
+- **Problem:** `g_running`, `g_flush_requested`, `g_rescan_requested`, `g_shutdown_requested` are declared `volatile int`. Volatile does NOT guarantee atomicity or memory ordering on multi-core systems.
+- **Fix:** Replace with `atomic_int` (C11 `_Atomic int`) or `LONG` + `InterlockedExchange` on Windows.
+
+### P0.4 â€” CRC64 table initialization race
+- **File:** `src/shared_state.c` lines 14â€“32
+- **Problem:** Two threads calling `shm_crc64()` simultaneously can both enter `crc64_init()`, see `g_crc64_initialized == false`, and both initialize the table. One thread may read a partially-initialized table.
+- **Fix:** Use `pthread_once` / `InitOnceExecuteOnce` or compute the table at compile time.
+
+### P0.5 â€” `db->name_index` mutated without locking in matcher
+- **File:** `src/matcher.c` lines 338â€“343
+- **Problem:** `matcher_find()` reads `db->name_index`, may `free()` it, builds a new one, and writes it back â€” all without synchronization. Two concurrent `matcher_find()` calls cause use-after-free.
+- **Fix:** Add a mutex to `NcdDatabase` for `name_index` access, or use a generation-counter with RCU pattern.
+
+### P0.6 â€” `db->drives[]` read racily during scan + matcher
+- **File:** `src/matcher.c` lines 744â€“748, `src/scanner.c` lines 770â€“835
+- **Problem:** `matcher_find_fuzzy()` reads `const NcdDatabase*` drives while `scan_mount()` may `memmove` `db->drives[]` (line 386 of scanner.c). Also `scan_subdirectory()` does `free(drv->dirs)` + `free(drv->name_pool)` on the shared database.
+- **Fix:** Scans should build into a private `NcdDatabase` and atomically swap it in when complete. Matcher should hold a reader lock.
+
+### P0.7 â€” `ncd_con_init` double-checked locking bug
+- **File:** `src/platform_ncd.c` lines 411â€“443
+- **Problem:** Two threads can simultaneously pass `!g_ncd_con_initialized`, both call `platform_console_open_out()`, leaking a handle.
+- **Fix:** Use `call_once`-style initialization with a static mutex.
+
+### P0.8 â€” SHM unlink+recreate race with readers
+- **File:** `src/service_publish.c` lines 575â€“583, 659â€“667
+- **Problem:** Every snapshot publish calls `shm_remove()` then `shm_create()`. During the gap, the SHM object doesn't exist â€” clients mapping during this window get failures.
+- **Fix:** Use double-buffering (two SHM objects, toggle generation in name) or resize-in-place.
+
+---
+
+## ðŸŸ  P1 â€” High-Impact Performance & Duplication
+
+### P1.1 â€” Extract shared IPC protocol logic (~300+ duplicated lines)
+- **Files:** `src/control_ipc_win.c` + `src/control_ipc_posix.c`
+- **Duplicated:** `ipc_error_string()`, `ipc_client_get_state_info()`, `ipc_client_get_detailed_status()`, `ipc_client_get_version()`, `ipc_client_check_version()`, `ipc_server_send_response()`, `ipc_server_send_error()`, `ipc_server_send_version_mismatch()`, 6 thin client API functions
+- **Fix:** Create `src/control_ipc_common.c` with all payload-serialization/deserialization and error mapping. Platform files keep only `send_receive()` and connection management.
+- **Also fixes P1.1a:** `ipc_client_check_version()` has a behavioral inconsistency â€” Windows treats `NCD_IPC_ERROR_NOT_FOUND` as success after shutdown; POSIX doesn't.
+
+### P1.2 â€” Atomic write pattern duplicated in 5 sites
+- **Files:** `src/database.c` â€” `db_save_binary_single` (314â€“344), `db_save_binary` (1419â€“1486), `db_config_save` (474â€“501), `db_set_skipped_rescan_flag` (2055â€“2086), `db_metadata_save` (2703â€“2774)
+- **Problem:** Same `.tmp` â†’ `.old` backup â†’ rename â†’ clean pattern repeated with subtle variations.
+- **Fix:** Extract `db_atomic_write(path, buf, size, with_backup)` function.
+
+### P1.3 â€” Directory rebuild (remove + filter-excluded + remove-subtree) triplicated
+- **File:** `src/database.c` lines 928â€“988, 1164â€“1303, 3457â€“3535
+- **Problem:** Three identical blocks: mark descendants, build `old_to_new` map, allocate `new_dirs`/`new_pool`, copy surviving entries, update parents, free old arrays.
+- **Fix:** Extract `drive_rebuild_filtered(drv, to_remove_bitmap, rebuild_pool)`.
+
+### P1.4 â€” `metadata_transaction()` pattern repeated ~15 times in main.c
+- **File:** `src/main.c` lines ~4951â€“5316
+- **Problem:** Every metadata mutation (group add/remove, exclusion add/remove, history clear/remove) independently implements `is_service_backend()` branch:
+  ```
+  if (service) { send IPC } else { load meta, modify, save, free }
+  ```
+- **Fix:** Create `static bool with_metadata(MetadataMutator fn, void *ctx)`.
+
+### P1.5 â€” `platform_build_drive_root()` duplicated 5+ times in main.c
+- **File:** `src/main.c` lines 1740â€“1756, 1882â€“1890, 5810â€“5812, 810â€“850
+- **Problem:** Same Windows/Linux `#if` block for constructing a drive root path.
+- **Fix:** Extract into platform helper.
+
+### P1.6 â€” `agent_load_target_db()` duplicated 4 times in main.c agent dispatch
+- **File:** `src/main.c` lines 5470â€“5582
+- **Problem:** AGENT_SUB_QUERY, AGENT_SUB_TREE, AGENT_SUB_COMPLETE, AGENT_SUB_CHECK each duplicate the same 18-line "check db_override â†’ get CWD â†’ get drive â†’ load DB" block.
+- **Fix:** Extract `static NcdDatabase* agent_load_target_db(const NcdOptions *opts)`.
+
+### P1.7 â€” `platform_error_to_result_code()` duplicated 6+ times
+- **File:** `src/main.c` lines 3132â€“3149, 3321â€“3342, 3828â€“3845, 4080â€“4091, 4226â€“4246, 4284â€“4317
+- **Problem:** Each agent mutation function independently classifies Windows `GetLastError()` / Linux `errno` into result code strings.
+- **Fix:** Extract `static const char* platform_error_to_result_code(void)`.
+
+### P1.8 â€” `apply_filter()` O(N) full scan on every keystroke
+- **File:** `src/ui.c` lines 1324â€“1346
+- **Problem:** Every typed character in the selector filter scans ALL matches to rebuild the `filtered[]` index. With 100K+ results, this is ~6MB of string comparisons per keystroke.
+- **Fix:** Build a character-level inverted index or pre-segment results by first-character prefix.
+
+### P1.9 â€” `nav_reload_lists()` O(N) filesystem enumeration on every arrow key
+- **File:** `src/ui.c` lines 1585â€“1611
+- **Problem:** Every UP/DOWN/LEFT/RIGHT in the navigator calls `con_list_subdirs()` (kernel: `FindFirstFileExA`/`opendir` + `readdir` loop + `qsort`). Browsing a folder with 10K items re-sorts on every key.
+- **Fix:** Cache siblings/children per directory node. Only reload when the directory actually changes.
+
+### P1.10 â€” `db_filter_excluded()` O(D Ã— depth Ã— E) per directory
+- **File:** `src/database.c` lines 1176â€“1204
+- **Problem:** For each directory, calls `db_full_path()` (walks parent chain, O(depth)) then `db_exclusion_check()` (scans all exclusion patterns with `wildcard_match`, O(E)). With 100K dirs, 50 exclusions, avg depth 5 â†’ ~25M operations.
+- **Fix:** Pre-compute full paths once. Pre-compile exclusion patterns into a regex/trie. Filter during scan rather than post-hoc.
+
+### P1.11 â€” `db_remove_path()` O(N Ã— depth) linear scan
+- **File:** `src/database.c` lines 928â€“936
+- **Problem:** Linear scan through all dirs, each calling `db_full_path()` + `_stricmp`. For 100K dirs at depth 5, ~500K string operations per removal.
+- **Fix:** Build a full-path â†’ index hash map on database load, or maintain during scan.
+
+### P1.12 â€” `matcher_find()` fallback: full O(N) scan for all prefix searches
+- **File:** `src/matcher.c` lines 389â€“418
+- **Problem:** The `NameIndex` hash table only works for exact name matches. Every prefix search ("NewCh") falls back to scanning all 200K directories.
+- **Fix:** Build the bucket table (already has `bucket_starts`/`bucket_count` fields, never populated). Or use a trie/suffix array.
+
+### P1.13 â€” `matcher_find_fuzzy()` full O(N Ã— V) scan with no pruning
+- **File:** `src/matcher.c` lines 743â€“798
+- **Problem:** For N=200K directories and V=3 digit variations, 600K `dl_distance()` calls. Each DL is O(mÃ—n) for string lengths â€” up to 16M operations.
+- **Fix:** Use n-gram indexing to prune candidates. Pre-compute path lengths. Cache `strlen(s1)` (invariant across loop).
+
+### P1.14 â€” `scan_ctx_is_excluded()` O(D Ã— E) per directory
+- **File:** `src/scanner.c` lines 238â€“297
+- **Problem:** Every scanned directory entry tests all exclusion patterns with recursive wildcard matching.
+- **Fix:** Pre-compile exclusions into a DFSA or regex. Short-circuit on common prefixes.
+
+### P1.15 â€” `agent_json_escape` duplicated, emits character-by-character
+- **File:** `src/main.c` lines 1065â€“1084 and 2752â€“2775
+- **Problem:** Two implementations: one to stdout via `fputc`, one to buffer. The stdout version emits one `fputc` per character â€” a syscall per byte for non-escaped characters.
+- **Fix:** Unify into buffer-based version. Flush after complete JSON object. Use `setvbuf(stdout, NULL, _IOFBF, 65536)`.
+
+### P1.16 â€” PathMap built+destroyed per query (O(D) allocation per op)
+- **File:** `src/main.c` lines 1864, 2137, 2405
+- **Problem:** `agent_mode_tree`, `agent_mode_check`, and `add_path_to_database` each allocate a fresh PathMap (500K hash entries), fill it, use it for one lookup, then free. For a large database, this is ~4MB allocation per query.
+- **Fix:** Cache the PathMap on `NcdDatabase`, invalidate on mutation.
+
+### P1.17 â€” SID acquisition duplicated between IPC and SHM Windows files
+- **Files:** `src/control_ipc_win.c` (107â€“132) + `src/shm_platform_win.c` (468â€“498)
+- **Problem:** `OpenProcessToken` â†’ `GetTokenInformation` â†’ `ConvertSidToStringSidA` â†’ `LocalFree` sequence duplicated with identical fallback to `WTSGetActiveConsoleSessionId`.
+- **Fix:** Extract `get_user_sid_string()` into a shared Windows utility.
+
+### P1.18 â€” 85% duplicated scan loop between Windows and Linux
+- **Files:** `src/scanner.c` lines 877â€“1016 (Windows), 1023â€“1156 (Linux)
+- **Problem:** Both `platform_scan_directory()` implementations share core stack/frame/push/exclusion-check/progress logic. Only directory enumeration API differs.
+- **Fix:** Extract traversal skeleton into `do_scan()` with function pointers for `open_dir`, `read_entry`, `close_dir`.
+
+### P1.19 â€” `db_full_path()` walks parent chain twice (depth count + name collect)
+- **File:** `src/database.c` lines 1019â€“1151
+- **Problem:** First pass counts depth walking parent chain; second pass re-walks the same chain to collect names. Two full pointer-chase traversals for every path.
+- **Fix:** Push names onto a growable stack during first pass, pop during path construction.
+
+### P1.20 â€” `db_set_skipped_rescan_flag()` reads/writes entire 200MB file for 1 byte
+- **File:** `src/database.c` lines 2029â€“2072
+- **Problem:** `malloc(file_size)` â†’ `fread` entire DB â†’ modify 1 byte â†’ `fwrite` entire DB. For a 200MB database, this is 400MB of I/O.
+- **Fix:** `fseek` to `offsetof(BinFileHdr, skipped_rescan)`, `fwrite` 1 byte, `fflush`.
+
+---
+
+## ðŸŸ¡ P2 â€” Medium-Impact Cleanup
+
+### P2.1 â€” Table-drive agent subcommand dispatch (200-line switch in main.c)
+- **File:** `src/main.c` lines 5470â€“5667
+- **Problem:** Agent subcommand switch spans 200 lines. 10+ cases are 4-line "call handler, capture result, break" blocks.
+- **Fix:** Define function pointer table: `typedef int (*agent_handler_t)(const NcdOptions*);` with `static const agent_handler_t agent_handlers[]`.
+
+### P2.2 â€” Table-drive `parse_agent_args` (460-line if/else chain in cli.c)
+- **File:** `src/cli.c` lines 429â€“887
+- **Problem:** 14 if/else branches, each duplicating `--json`, `--force`, `--limit`, `--depth` parsing.
+- **Fix:** Create a subcommand descriptor table with option parser callbacks.
+
+### P2.3 â€” Table-drive error-to-string switches
+- **Files:** `src/main.c` (3356â€“3365, 3852â€“3858), `src/service_main.c` (108â€“124, 127â€“136, 685â€“699)
+- **Problem:** 7+ switch statements converting enums to strings.
+- **Fix:** Static `const char*[]` lookup arrays indexed by enum value.
+
+### P2.4 â€” Table-drive `is_known_long` (17 `_stricmp` calls, duplicated twice)
+- **File:** `src/cli.c` lines 198â€“219, 266â€“285
+- **Problem:** Identical chain of 17 `_stricmp` calls duplicated for `/` and `-` prefixes.
+- **Fix:** Sorted string array + `bsearch`, shared between both sites.
+
+### P2.5 â€” Table-drive key token parsing (18 `strncasecmp` calls)
+- **File:** `src/ui.c` lines 910â€“947
+- **Problem:** 18 sequential `strncasecmp` calls for key name matching.
+- **Fix:** Sorted `{name, token}` array + `bsearch`.
+
+### P2.6 â€” Table-drive result code switches in agent handlers
+- **Files:** `src/main.c` (multiple locations)
+- **Problem:** `switch (result_code) { case X: str = "..."; break; ... }` repeated.
+- **Fix:** Static string arrays.
+
+### P2.7 â€” `con_write_padded` / `clear_area` duplicated 4Ã— across I/O backends
+- **File:** `src/ui.c` lines 185â€“201, 402â€“419, 710â€“726, 1193â€“1209
+- **Problem:** Four identical copies of text padding/clearing logic, each calling a different I/O primitive.
+- **Fix:** Extract shared formatting logic. Backends supply a `write_n(const char*, int)` function pointer.
+
+### P2.8 â€” Group add multi-format parsing duplicated between service and local backend
+- **Files:** `src/service_main.c` (706â€“769), `src/state_backend_local.c` (295â€“354)
+- **Problem:** ~60 identical lines parsing newline-delimited, null-terminated, and binary-length-prefixed formats.
+- **Fix:** Extract `parse_group_add_payload()` into shared code.
+
+### P2.9 â€” `snapshot_publisher_publish_meta()` and `_publish_db()` are 95% identical
+- **File:** `src/service_publish.c` lines 547â€“629, 631â€“712
+- **Problem:** Same SHM create/map/copy/unmap/remap-readonly pattern. Only builder function differs.
+- **Fix:** Unify into `publish_snapshot(pub, state, builder_fn, shm_name_fn)`.
+
+### P2.10 â€” `draw_box` / `history_draw_box` / `draw_drive_box` / `draw_config_box` / `draw_exclusion_box` share title-bar+separator+list+footer pattern
+- **File:** `src/ui.c`
+- **Problem:** Five independent functions with 90% identical structure: title bar with centered text â†’ separator â†’ list rows â†’ footer with instructions â†’ bottom border.
+- **Fix:** Extract `draw_list_box(title, items[], count, selected, footer, on_select)`.
+
+### P2.11 â€” Three separate glob/wildcard matchers in codebase
+- **Files:** `src/matcher.c` (`glob_match`, `istartswith`), `src/scanner.c` (`match_exclusion_pattern`)
+- **Problem:** Two recursive, one iterative. All handle `*` and `?`.
+- **Fix:** Unify into a single `wildcard_match(pattern, text)` implementation.
+
+### P2.12 â€” `xmalloc`/`xrealloc` in matcher.c duplicate `ncd_malloc`/`ncd_realloc`
+- **File:** `src/matcher.c` lines 39â€“51
+- **Problem:** Matcher has its own `xmalloc` that does `malloc + exit(1) on NULL`. The project already has `ncd_malloc()` in `../shared/common.c`.
+- **Fix:** Use shared allocators. Remove matcher-local wrappers.
+
+### P2.13 â€” Service `load_all_drive_databases()` duplicates `service_state_load_databases()`
+- **Files:** `src/state_backend_local.c` (56â€“113), `src/service_state.c` (175â€“267)
+- **Problem:** Both enumerate drives, check file existence, load per-drive DB, merge. Only difference: service version adds status messages and exclusion filtering.
+- **Fix:** Share the core enumeration+load logic.
+
+### P2.14 â€” Retry logic copy-pasted in 4 service state_backend functions
+- **File:** `src/state_backend_service.c` lines 807â€“921
+- **Problem:** `submit_heuristic`, `submit_metadata`, `request_rescan`, `request_flush` all have identical retry loops.
+- **Fix:** Extract `submit_with_retry(do_fn)`.
+
+### P2.15 â€” `strlen(partial)` recomputed in loop in agent completion
+- **File:** `src/main.c` lines 3558, 3575, 3594
+- **Fix:** Compute once before loop.
+
+### P2.16 â€” `strlen(frame->path)` called 3Ã— per directory in scanner hot loop
+- **File:** `src/scanner.c` lines 899, 943, 962
+- **Fix:** Store path length in `ScanFrame` alongside `path`.
+
+### P2.17 â€” `dl_distance()` recomputes `strlen(s1)` for invariant query string
+- **File:** `src/matcher.c` line 598, called from line 775 inside O(NÃ—V) loop
+- **Fix:** Bundle variation string + length into struct `{const char *str; size_t len;}`.
+
+### P2.18 â€” `lstat()` on every Linux directory entry when `d_type` could be used
+- **File:** `src/scanner.c` line 1084
+- **Fix:** Check `d_type == DT_DIR` first. Only `lstat` when `DT_UNKNOWN` or additional metadata needed.
+
+### P2.19 â€” `db_config_save` and `db_metadata_save` duplicate directory creation logic
+- **Files:** `src/database.c` lines 358â€“376, 2121â€“2137
+- **Fix:** Extract `db_ncd_directory_path(buf, buf_size, subpath)`.
+
+### P2.20 â€” `db_service_state_get_status_message()` returns pointer without holding lock
+- **File:** `src/service_state.c` lines 838â€“841
+- **Fix:** Copy the message under lock to a caller-provided buffer, or document that caller must hold lock.
+
+---
+
+## ðŸŸ¢ P3 â€” Low-Priority / Nice-to-Have
+
+### P3.1 â€” `db_find_drive()` linear scan of 26 drives
+- **File:** `src/database.c` lines 865â€“872
+- **Fix:** Use 26-element `letter â†’ index` lookup table. Trivial win.
+
+### P3.2 â€” `db_group_count_unique()` / `db_group_list()` O(NÂ²) loop
+- **File:** `src/database.c` lines 656â€“673, 688â€“715
+- **Fix:** Sort groups by name first, then single-pass count/print.
+
+### P3.3 â€” `db_heur_note_choice()` rebuilds entire hash table on every update
+- **File:** `src/database.c` line 3244
+- **Fix:** Update affected hash entry only.
+
+### P3.4 â€” `parse_search()` returns 8KB struct by value
+- **File:** `src/matcher.c` lines 247â€“270
+- **Fix:** Pass as output parameter.
+
+### P3.5 â€” `generate_variations_recursive()` has 8 parameters
+- **File:** `src/matcher.c` lines 507â€“561
+- **Fix:** Bundle into context struct.
+
+### P3.6 â€” `service_state_flush()` per-drive database save could be batched
+- **File:** `src/service_state.c` lines 603â€“667
+- **Fix:** Use a single file enumeration + batch write if low contention.
+
+### P3.7 â€” `service_loop()` wakes every 10ms to poll
+- **File:** `src/service_main.c` lines 1462, 1536
+- **Fix:** Use blocking wait with timeout (`WaitForMultipleObjects` / `poll` with interrupt pipe).
+
+### P3.8 â€” `build_metadata_snapshot()` 160 lines of manual offset arithmetic
+- **File:** `src/service_publish.c` lines 203â€“365
+- **Fix:** Extract `write_section_with_string_pool()` helper.
+
+### P3.9 â€” `state_backend_open_service()` is 298 lines, single function
+- **File:** `src/state_backend_service.c` lines 351â€“648
+- **Fix:** Break into `init_platform()`, `connect_service()`, `map_metadata_shm()`, `map_database_shm()`.
+
+### P3.10 â€” `main()` is 1818 lines
+- **File:** `src/main.c` lines 4689â€“6507
+- **Fix:** Extract `main_handle_non_search_commands()`, `main_load_database()`, `main_perform_search()`, `main_handle_result()`.
+
+### P3.11 â€” `ui_select_match_ex` main event loop is 100 lines of nested switch
+- **File:** `src/ui.c` lines 1771â€“1868
+- **Fix:** Extract key handlers into function table.
+
+### P3.12 â€” Scattered `fopen("C:\\ncd_mv_debug.txt", "a")` debug I/O in production code
+- **Files:** `src/main.c` lines 155â€“160, 2428â€“2432, 4135â€“4181; `src/database.c` lines 1755â€“1768
+- **Fix:** Guard with `#ifdef NCD_DEBUG`.
+
+### P3.13 â€” Hardcoded `[26]` array sizes vs `NCD_MAX_DRIVES=64`
+- **File:** `src/scanner.c` lines 488â€“489, 532, 585â€“586
+- **Fix:** Use `NCD_MAX_DRIVES`.
+
+### P3.14 â€” `platform_is_pseudo_fs()` O(N) linear scan
+- **File:** `src/platform_ncd.c` lines 33â€“41
+- **Fix:** Pre-sort array + `bsearch`, or use perfect hash.
+
+### P3.15 â€” `name_index` bucket table designed but never populated
+- **File:** `src/matcher.c` lines 66â€“68, 80
+- **Fix:** Either implement bucket-based O(1) lookup or remove the fields.
+
+### P3.16 â€” `db_metadata_save` double-allocates full metadata buffer
+- **File:** `src/database.c` line 2612
+- **Fix:** Stream sections to file instead of building in-memory buffer.
+
+### P3.17 â€” `db_load_auto()` calls `fseek` twice to read header fields
+- **File:** `src/database.c` lines 1794, 1799
+- **Fix:** Read entire header at once.
+
+---
+
+## Summary Statistics
+
+| Category | P0 | P1 | P2 | P3 | Total |
+|----------|----|----|----|----|-------|
+| Thread Safety / Correctness | 7 | 1 | 1 | 0 | 9 |
+| Duplicated Code | 0 | 10 | 10 | 0 | 20 |
+| O(N) â†’ O(1) | 0 | 5 | 3 | 4 | 12 |
+| Excessive Allocation | 0 | 2 | 1 | 3 | 6 |
+| Poor I/O | 0 | 2 | 0 | 3 | 5 |
+| Elegance / Maintainability | 0 | 0 | 2 | 5 | 7 |
+| Table-Driven Opportunities | 0 | 0 | 6 | 0 | 6 |
+| **Total** | **8** | **20** | **23** | **17** | **68** |
+
+---
+
+## Suggested Implementation Order
+
+### Sprint 0 (Test Harness First) - Required before any fixes
+1. Add/convert all tests in the Bug-to-Test Coverage Matrix.
+2. Introduce known-bug enforcement toggle:
+   - `NCD_ENABLE_KNOWN_BUG_TESTS=1` => known defects fail (red mode)
+   - default => legacy CI remains green while migration is in progress
+3. Add a dedicated test command profile that always runs with known-bug enforcement for remediation branches.
+4. For each bug item, capture:
+   - baseline failing output
+   - fixing commit hash
+   - passing output after fix`r`n`r`n### Sprint 1 (Safety) â€” P0 items
+1. P0.1: Fix/disable broken `perform_rescan`
+   - **Verify:** `test_service_database.exe` â†’ `regression_rescan_no_data_loss` transitions from SKIP to PASS
+   - Remove the SKIP guard in the test to hard-enforce the regression check
+2. P0.2: Add locking to pending request queue
+3. P0.3: Replace `volatile` with proper atomics
+4. P0.4: Fix CRC64 table init race
+5. P0.5: Add mutex for `db->name_index`
+6. P0.6: Scan into private DB then atomic swap
+7. P0.7: Fix `ncd_con_init` double-checked locking
+8. P0.8: Double-buffer SHM publication
+
+### Sprint 2 (Consolidation) â€” P1 items
+1. P1.1: Extract shared IPC protocol logic
+2. P1.2: Extract `db_atomic_write()`
+3. P1.3: Extract `drive_rebuild_filtered()`
+4. P1.4: Extract `with_metadata()` wrapper
+5. P1.5, P1.6, P1.7: Extract helpers
+6. P1.10, P1.14: Optimize exclusion checking
+7. P1.12, P1.13: Optimize matcher indexing
+
+### Sprint 3 (UI Perf) â€” P1 UI items
+1. P1.8: Index match paths for O(1) filtering
+2. P1.9: Cache navigator siblings/children
+3. P1.15: Unify JSON output to buffered
+
+### Sprint 4 (Cleanup) â€” P2 items
+1. Table-drive all switches (P2.1â€“P2.6)
+2. Unify UI drawing functions (P2.7, P2.10)
+3. Share parsing logic (P2.8, P2.13)
+
+### Backlog â€” P3 items
+- As time permits
+
+---
+
+## DeepSeek Parallel Subagent Execution Blueprint
+
+Objective: remediate all plan items with maximum parallelism while preventing merge conflicts and hidden regressions.
+
+### Coordinator Rules
+
+1. Do not assign overlapping write scopes to two subagents.
+2. Every subagent must deliver in this order:
+   - add failing tests for owned bug items
+   - prove red
+   - implement fix/refactor
+   - prove green
+3. Each subagent must list changed files explicitly in handoff notes.
+4. Integrator runs full suite after each wave:
+   - `python test/runner.py unit`
+   - `python test/runner.py integration`
+   - `python test/generate_report.py`
+
+### Parallel Workstreams (Disjoint Ownership)
+
+1. Subagent A - Service rescan and runtime flags
+   - Owns: `src/service_main.c`, `test/test_service_database.c`, `test/test_service_lifecycle.c`
+   - Items: P0.1, P0.3, P3.7
+2. Subagent B - Service queue and state synchronization
+   - Owns: `src/service_state.c`, `src/service_state.h`, `test/test_service_lifecycle.c`, `test/test_service_database.c`
+   - Items: P0.2, P2.20, P3.6
+3. Subagent C - Shared memory publish and snapshot plumbing
+   - Owns: `src/service_publish.c`, `src/service_publish.h`, `src/shm_platform_*.c`, `test/test_service_lazy_load.c`, `test/test_shared_state.c`
+   - Items: P0.4, P0.8, P2.9, P3.8
+4. Subagent D - Matcher concurrency and algorithmic hot paths
+   - Owns: `src/matcher.c`, `src/matcher.h`, `test/test_matcher.c`, `test/bench_matcher.c`
+   - Items: P0.5, P1.12, P1.13, P2.11, P2.12, P2.17
+5. Subagent E - Scanner/database mutation safety and DRY extraction
+   - Owns: `src/scanner.c`, `src/database.c`, `src/database.h`, `test/test_database.c`, `test/test_service_integration.c`
+   - Items: P0.6, P1.2, P1.3, P1.10, P1.11, P1.14, P1.19, P1.20, P3.1, P3.2, P3.16, P3.17
+6. Subagent F - Agent mode/main/CLI dedup and platform boundary cleanup
+   - Owns: `src/main.c`, `src/cli.c`, `src/platform_ncd.c`, `src/platform.c`, `test/test_bugs.c`, `test/Win/*`, `test/Wsl/*`
+   - Items: P0.7, P1.4, P1.5, P1.6, P1.7, P1.15, P1.16, P2.1, P2.2, P2.3, P2.4, P2.6, P2.15, P3.4, P3.5, P3.10, P3.12, P3.14, P3.15
+7. Subagent G - IPC cross-platform consolidation
+   - Owns: `src/control_ipc_win.c`, `src/control_ipc_posix.c`, new `src/control_ipc_common.c/.h`, `test/test_service_integration.c`
+   - Items: P1.1 (and P1.1a behavior parity regression test)
+8. Subagent H - UI performance and DRY consolidation
+   - Owns: `src/ui.c`, `src/ui.h`, `test/test_bugs.c` (or new UI-focused tests)
+   - Items: P1.8, P1.9, P2.5, P2.7, P2.10, P3.11
+
+### Wave Schedule
+
+1. Wave 1 (all subagents): add failing tests only for owned bug/correctness items.
+2. Wave 2 (A/B/C/D/E/F/G): implement P0 fixes in parallel after red proof captured.
+3. Wave 3 (D/E/F/G/H): implement P1 high-impact refactors and performance work.
+4. Wave 4 (F/H + any free capacity): P2 cleanup/table-driven work.
+5. Wave 5: P3 backlog opportunistic improvements.
+
+### Completion Gate for Every Item
+
+- [ ] Failing regression test exists and is reproducible on baseline.
+- [ ] Fix merged with owned scope only.
+- [ ] Regression test now passes.
+- [ ] No new failures in unit/integration/full report.
+- [ ] Plan item marked done with links to test evidence.
+
