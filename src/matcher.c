@@ -10,6 +10,26 @@
 #include <string.h>
 #include <ctype.h>
 
+/* ================================================================ concurrency */
+
+#if NCD_PLATFORM_WINDOWS
+static CRITICAL_SECTION g_name_index_lock;
+static int g_name_index_lock_init = 0;
+static void ensure_name_index_lock(void) {
+    if (!g_name_index_lock_init) {
+        InitializeCriticalSection(&g_name_index_lock);
+        g_name_index_lock_init = 1;
+    }
+}
+#define NAME_INDEX_LOCK()   do { ensure_name_index_lock(); EnterCriticalSection(&g_name_index_lock); } while(0)
+#define NAME_INDEX_UNLOCK() LeaveCriticalSection(&g_name_index_lock)
+#else
+#include <pthread.h>
+static pthread_mutex_t g_name_index_lock = PTHREAD_MUTEX_INITIALIZER;
+#define NAME_INDEX_LOCK()   pthread_mutex_lock(&g_name_index_lock)
+#define NAME_INDEX_UNLOCK() pthread_mutex_unlock(&g_name_index_lock)
+#endif
+
 /* ================================================================ hash index */
 
 /* FNV-1a hash - fast, good distribution for strings */
@@ -333,14 +353,29 @@ NcdMatch *matcher_find(NcdDatabase *db,
     const char *leaf = sp.parts[sp.count - 1];
     uint32_t leaf_hash = fnv1a_hash(leaf);
 
-    /* Use cached name index if available and valid, otherwise build it */
+    /* Use cached name index if available and valid, otherwise build it.
+     * Lock-free double-check with locked build-then-swap to prevent races. */
+    NAME_INDEX_LOCK();
     NameIndex *idx = (NameIndex *)db->name_index;
-    if (!idx || db->name_index_generation != 0) {
-        /* Generation changed or no index yet - rebuild */
-        if (idx) name_index_free(idx);
-        idx = name_index_build(db);
-        db->name_index = (void *)idx;
+    int needs_rebuild = (!idx || db->name_index_generation != 0);
+    NAME_INDEX_UNLOCK();
+
+    if (needs_rebuild) {
+        NameIndex *new_idx = name_index_build(db);
+        NAME_INDEX_LOCK();
+        idx = (NameIndex *)db->name_index;
+        /* Free old index if nobody raced us to rebuild */
+        if (idx && db->name_index_generation == 0) {
+            name_index_free(idx);
+        }
+        db->name_index = (void *)new_idx;
         db->name_index_generation = 0;
+        idx = new_idx;
+        NAME_INDEX_UNLOCK();
+    } else {
+        NAME_INDEX_LOCK();
+        idx = (NameIndex *)db->name_index;
+        NAME_INDEX_UNLOCK();
     }
 
     int   cap     = 16;

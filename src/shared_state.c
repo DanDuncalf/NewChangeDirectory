@@ -12,11 +12,11 @@
 
 /* Precomputed CRC64 table */
 static uint64_t g_crc64_table[256];
-static bool g_crc64_initialized = false;
 
-static void crc64_init(void) {
-    if (g_crc64_initialized) return;
-    
+#if NCD_PLATFORM_WINDOWS
+static INIT_ONCE g_crc64_init_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK crc64_init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+    (void)once; (void)param; (void)ctx;
     for (int i = 0; i < 256; i++) {
         uint64_t crc = i;
         for (int j = 0; j < 8; j++) {
@@ -28,8 +28,31 @@ static void crc64_init(void) {
         }
         g_crc64_table[i] = crc;
     }
-    g_crc64_initialized = true;
+    return TRUE;
 }
+static void crc64_init(void) {
+    InitOnceExecuteOnce(&g_crc64_init_once, crc64_init_cb, NULL, NULL);
+}
+#else
+#include <pthread.h>
+static pthread_once_t g_crc64_init_once = PTHREAD_ONCE_INIT;
+static void crc64_init_impl(void) {
+    for (int i = 0; i < 256; i++) {
+        uint64_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ CRC64_POLY;
+            } else {
+                crc >>= 1;
+            }
+        }
+        g_crc64_table[i] = crc;
+    }
+}
+static void crc64_init(void) {
+    pthread_once(&g_crc64_init_once, crc64_init_impl);
+}
+#endif
 
 uint64_t shm_crc64(const void *data, size_t len) {
     crc64_init();

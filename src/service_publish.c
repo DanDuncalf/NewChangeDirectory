@@ -571,7 +571,41 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
         return false;
     }
     
-    /* Create/recreate shared memory */
+    /* Create NEW shared memory BEFORE removing old — no gap window.
+     * Build a temp name so old SHM stays live until new one is ready. */
+    char temp_name[288];
+    snprintf(temp_name, sizeof(temp_name), "%s.new", pub->meta_name);
+    
+    /* Round up to page size */
+    size_t shm_size = shm_round_up_size(new_size);
+    
+    /* Create temp SHM */
+    ShmHandle *shm;
+    ShmResult result = shm_create(temp_name, shm_size, &shm);
+    if (result != SHM_OK) {
+        fprintf(stderr, "NCD Service: shm_create failed for metadata temp: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Map temp SHM */
+    void *addr;
+    size_t mapped_size;
+    result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
+    if (result != SHM_OK) {
+        shm_close(shm);
+        shm_remove(temp_name);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Copy data to temp SHM */
+    memcpy(addr, temp_buf, new_size);
+    
+    /* Unmap temp */
+    shm_unmap(addr, mapped_size);
+    
+    /* Now remove old SHM — gap-free because new SHM is ready */
     if (pub->meta_addr) {
         shm_unmap(pub->meta_addr, pub->meta_size);
         pub->meta_addr = NULL;
@@ -581,42 +615,39 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
         shm_remove(pub->meta_name);
         pub->meta_shm = NULL;
     }
+    shm_close(shm);
     
-    /* Round up to page size */
-    size_t shm_size = shm_round_up_size(new_size);
-    
-    /* Create shared memory */
-    ShmHandle *shm;
-    ShmResult result = shm_create(pub->meta_name, shm_size, &shm);
+    /* Create canonical SHM and copy data from temp */
+    result = shm_create(pub->meta_name, shm_size, &shm);
     if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for metadata: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        fprintf(stderr, "NCD Service: shm_create failed for metadata canonical: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
     
-    /* Map it */
-    void *addr;
-    size_t mapped_size;
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
     if (result != SHM_OK) {
         shm_close(shm);
         shm_remove(pub->meta_name);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
-    
-    /* Copy data */
     memcpy(addr, temp_buf, new_size);
-    
-    /* Unmap and remap read-only */
     shm_unmap(addr, mapped_size);
     
+    /* Remap read-only */
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
         shm_remove(pub->meta_name);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
+    
+    /* Clean up temp */
+    shm_remove(temp_name);
     
     /* Update publisher state */
     pub->meta_shm = shm;
@@ -655,7 +686,41 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
         return false;
     }
     
-    /* Create/recreate shared memory */
+    /* Create NEW shared memory BEFORE removing old — no gap window.
+     * Build a temp name so old SHM stays live until new one is ready. */
+    char temp_name[288];
+    snprintf(temp_name, sizeof(temp_name), "%s.new", pub->db_name);
+    
+    /* Round up to page size */
+    size_t shm_size = shm_round_up_size(new_size);
+    
+    /* Create temp SHM */
+    ShmHandle *shm;
+    ShmResult result = shm_create(temp_name, shm_size, &shm);
+    if (result != SHM_OK) {
+        fprintf(stderr, "NCD Service: shm_create failed for database temp: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Map temp SHM */
+    void *addr;
+    size_t mapped_size;
+    result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
+    if (result != SHM_OK) {
+        shm_close(shm);
+        shm_remove(temp_name);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Copy data to temp SHM */
+    memcpy(addr, temp_buf, new_size);
+    
+    /* Unmap temp */
+    shm_unmap(addr, mapped_size);
+    
+    /* Now remove old SHM — gap-free because new SHM is ready */
     if (pub->db_addr) {
         shm_unmap(pub->db_addr, pub->db_size);
         pub->db_addr = NULL;
@@ -665,41 +730,39 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
         shm_remove(pub->db_name);
         pub->db_shm = NULL;
     }
+    shm_close(shm);
     
-    /* Round up to page size */
-    size_t shm_size = shm_round_up_size(new_size);
-    
-    /* Create shared memory */
-    ShmHandle *shm;
-    ShmResult result = shm_create(pub->db_name, shm_size, &shm);
+    /* Create canonical SHM and copy data from temp */
+    result = shm_create(pub->db_name, shm_size, &shm);
     if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for database: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        fprintf(stderr, "NCD Service: shm_create failed for database canonical: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
     
-    /* Map it */
-    void *addr;
-    size_t mapped_size;
-    if (shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size) != SHM_OK) {
+    result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
+    if (result != SHM_OK) {
         shm_close(shm);
         shm_remove(pub->db_name);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
-    
-    /* Copy data */
     memcpy(addr, temp_buf, new_size);
-    
-    /* Unmap and remap read-only */
     shm_unmap(addr, mapped_size);
     
+    /* Remap read-only */
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
         shm_remove(pub->db_name);
+        shm_remove(temp_name);
         free(temp_buf);
         return false;
     }
+    
+    /* Clean up temp */
+    shm_remove(temp_name);
     
     /* Update publisher state */
     pub->db_shm = shm;

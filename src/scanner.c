@@ -446,6 +446,9 @@ int scan_mount(NcdDatabase   *db,
         
         local_status.final_count = total_count;
         local_status.is_done = 1;
+        /* Invalidate cached name_index: the DB changed, matcher must rebuild. */
+        if (db->name_index_generation == 0) db->name_index_generation = 1;
+        else db->name_index_generation++;
         return total_count;
     }
 #endif
@@ -467,6 +470,10 @@ int scan_mount(NcdDatabase   *db,
         /* If thread creation fails, run inline in this thread. */
         worker_thread(&td);
     }
+
+    /* Invalidate cached name_index: the DB changed, matcher must rebuild. */
+    if (db->name_index_generation == 0) db->name_index_generation = 1;
+    else db->name_index_generation++;
 
     return td.dirs_found;
 }
@@ -705,6 +712,10 @@ int scan_mounts(NcdDatabase *db,
     int total = 0;
     for (int i = 0; i < count && i < 26; i++)
         total += td[i].dirs_found;
+
+    /* Invalidate cached name_index: the DB changed, matcher must rebuild. */
+    if (db->name_index_generation == 0) db->name_index_generation = 1;
+    else db->name_index_generation++;
 
     return total;
 }

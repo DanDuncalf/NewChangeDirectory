@@ -871,14 +871,20 @@ bool service_state_enqueue_request(ServiceState *state,
                                     size_t data_len) {
     if (!state) return false;
     
+    state_lock(state);
+    
     /* Check queue limit */
     if (state->pending_count >= state->pending_max) {
+        state_unlock(state);
         return false;
     }
     
     /* Allocate node */
     PendingRequestNode *node = (PendingRequestNode *)calloc(1, sizeof(PendingRequestNode));
-    if (!node) return false;
+    if (!node) {
+        state_unlock(state);
+        return false;
+    }
     
     node->type = type;
     node->next = NULL;
@@ -888,6 +894,7 @@ bool service_state_enqueue_request(ServiceState *state,
         node->data = malloc(data_len);
         if (!node->data) {
             free(node);
+            state_unlock(state);
             return false;
         }
         memcpy(node->data, data, data_len);
@@ -903,6 +910,7 @@ bool service_state_enqueue_request(ServiceState *state,
     state->pending_tail = node;
     state->pending_count++;
     
+    state_unlock(state);
     return true;
 }
 
@@ -916,7 +924,12 @@ bool service_state_dequeue_pending(ServiceState *state, PendingRequestType *out_
                                     void **out_data, size_t *out_data_len) {
     if (!state || !out_type || !out_data || !out_data_len) return false;
     
-    if (!state->pending_head) return false;
+    state_lock(state);
+    
+    if (!state->pending_head) {
+        state_unlock(state);
+        return false;
+    }
     
     PendingRequestNode *node = state->pending_head;
     state->pending_head = node->next;
@@ -924,6 +937,8 @@ bool service_state_dequeue_pending(ServiceState *state, PendingRequestType *out_
         state->pending_tail = NULL;
     }
     state->pending_count--;
+    
+    state_unlock(state);
     
     *out_type = node->type;
     *out_data = node->data;  /* Transfer ownership */
@@ -954,6 +969,8 @@ void service_state_process_pending(ServiceState *state, void *pub) {
 void service_state_clear_pending(ServiceState *state) {
     if (!state) return;
     
+    state_lock(state);
+    
     while (state->pending_head) {
         PendingRequestNode *node = state->pending_head;
         state->pending_head = node->next;
@@ -966,6 +983,8 @@ void service_state_clear_pending(ServiceState *state) {
     
     state->pending_tail = NULL;
     state->pending_count = 0;
+    
+    state_unlock(state);
 }
 
 int service_state_get_pending_count(const ServiceState *state) {

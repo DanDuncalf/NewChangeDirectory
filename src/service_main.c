@@ -47,10 +47,25 @@
 
 /* --------------------------------------------------------- globals            */
 
-static volatile int g_running = 1;
-static volatile int g_flush_requested = 0;
-static volatile int g_rescan_requested = 0;
-static volatile int g_shutdown_requested = 0;
+#if NCD_PLATFORM_WINDOWS
+#include <windows.h>
+static LONG g_running = 1;
+static LONG g_flush_requested = 0;
+static LONG g_rescan_requested = 0;
+static LONG g_shutdown_requested = 0;
+#define ATOMIC_LOAD(v)  InterlockedCompareExchange(&(v), 0, 0)
+#define ATOMIC_STORE(v, val) InterlockedExchange(&(v), (val))
+#define ATOMIC_CLEAR(v) InterlockedExchange(&(v), 0)
+#else
+#include <stdatomic.h>
+static atomic_int g_running = 1;
+static atomic_int g_flush_requested = 0;
+static atomic_int g_rescan_requested = 0;
+static atomic_int g_shutdown_requested = 0;
+#define ATOMIC_LOAD(v)  atomic_load(&(v))
+#define ATOMIC_STORE(v, val) atomic_store(&(v), (val))
+#define ATOMIC_CLEAR(v) atomic_store(&(v), 0)
+#endif
 static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
 
 /* Init-database option: block startup and scan drives synchronously */
@@ -354,7 +369,7 @@ static void perform_init_scan(ServiceState *state, SnapshotPublisher *pub) {
         scanned = scan_mounts(new_db, NULL, 0, show_hidden, show_system, timeout, exclusions);
     }
 
-    if (!g_running) {
+    if (!ATOMIC_LOAD(g_running)) {
         LOG_EVENT("Service stopping, discarding init scan results");
         db_free(new_db);
         return;
@@ -417,7 +432,7 @@ static PlatformHandle g_loader_thread = NULL;
 #if NCD_PLATFORM_WINDOWS
 static BOOL WINAPI signal_handler(DWORD sig) {
     if (sig == CTRL_C_EVENT || sig == CTRL_BREAK_EVENT) {
-        g_running = 0;
+        ATOMIC_STORE(g_running, 0);
         return TRUE;
     }
     return FALSE;
@@ -425,7 +440,7 @@ static BOOL WINAPI signal_handler(DWORD sig) {
 #else
 static void signal_handler(int sig) {
     (void)sig;
-    g_running = 0;
+    ATOMIC_STORE(g_running, 0);
 }
 #endif
 
@@ -461,7 +476,7 @@ static void handle_get_version(NcdIpcConnection *conn, uint32_t sequence) {
 
 static void handle_request_shutdown(NcdIpcConnection *conn, uint32_t sequence, ServiceState *state) {
     LOG_EVENT("REQUEST_SHUTDOWN received (seq=%u) - initiating graceful shutdown", sequence);
-    g_shutdown_requested = 1;
+    ATOMIC_STORE(g_shutdown_requested, 1);
 
     /* Mark service state as shutting down to reject new operations */
     if (state) {
@@ -876,7 +891,7 @@ static void handle_request_rescan(NcdIpcConnection *conn,
               sequence, payload->drive_mask, payload->is_partial);
 
     /* Signal main loop to perform rescan */
-    g_rescan_requested = 1;
+    ATOMIC_STORE(g_rescan_requested, 1);
 
     ipc_server_send_response(conn, sequence, NULL, 0);
     LOG_RESPONSE("REQUEST_RESCAN response sent (seq=%u)", sequence);
@@ -890,7 +905,7 @@ static void handle_request_flush(NcdIpcConnection *conn,
     LOG_EVENT("REQUEST_FLUSH received (seq=%u)", sequence);
 
     /* Signal main loop to flush */
-    g_flush_requested = 1;
+    ATOMIC_STORE(g_flush_requested, 1);
 
     ipc_server_send_response(conn, sequence, NULL, 0);
     LOG_RESPONSE("REQUEST_FLUSH response sent (seq=%u)", sequence);
@@ -928,12 +943,12 @@ void handle_pending_rescan(ServiceState *state, void *pub) {
     (void)state;
     (void)pub;
     /* Just set the flag - main loop will handle it */
-    g_rescan_requested = 1;
+    ATOMIC_STORE(g_rescan_requested, 1);
 }
 
 void handle_pending_flush(ServiceState *state) {
     (void)state;
-    g_flush_requested = 1;
+    ATOMIC_STORE(g_flush_requested, 1);
 }
 
 /*
@@ -1396,9 +1411,15 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
         return;
     }
 
+    /* Use metadata defaults for scan options */
+    const NcdMetadata *meta = service_state_get_metadata(state);
+    bool show_hidden = meta ? meta->cfg.default_show_hidden : false;
+    bool show_system = meta ? meta->cfg.default_show_system : false;
+    const NcdExclusionList *exclusions = meta ? &meta->exclusions : NULL;
+
     /* Scan each drive */
     int scanned_count = 0;
-    for (int i = 0; i < drive_count && g_running; i++) {
+    for (int i = 0; i < drive_count && ATOMIC_LOAD(g_running); i++) {
         char mount_path[MAX_PATH];
         if (!platform_build_mount_path(drives[i], mount_path, sizeof(mount_path))) {
             LOG_DETAIL("Skipping drive %c: - failed to build mount path", drives[i]);
@@ -1414,21 +1435,31 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
         }
 
         /* Scan the drive */
-        /* Note: scanner_scan_drive is not exposed, using simplified approach */
-        /* In full implementation, use proper scanner API */
-        scanned_count++;
-        LOG_DETAIL("Drive %c: scanned (%d dirs)", drives[i], drv->dir_count);
+        int dirs = scan_mount(new_db, mount_path, show_hidden, show_system,
+                             NULL, NULL, exclusions);
+        if (dirs >= 0) {
+            scanned_count++;
+            LOG_DETAIL("Drive %c: scanned (%d dirs)", drives[i], dirs);
+        } else {
+            LOG_DETAIL("ERROR - Failed to scan drive %c:", drives[i]);
+        }
     }
 
     /* Update database and publish */
-    if (g_running) {
-        LOG_DETAIL("Rescan completed, updating database (%d drives scanned)", scanned_count);
-        /* Full rescan - not partial */
-        service_state_update_database(state, new_db, false);
-        service_state_bump_db_generation(state);
-        LOG_DETAIL("Publishing updated database snapshot...");
-        snapshot_publisher_publish_db(pub, state);
-        LOG_EVENT("Database snapshot published after rescan");
+    if (ATOMIC_LOAD(g_running)) {
+        if (scanned_count == 0) {
+            LOG_DETAIL("Rescan completed but no drives scanned, discarding empty database");
+            LOG_EVENT("Rescan complete: 0 drives scanned, database unchanged");
+            db_free(new_db);
+        } else {
+            LOG_DETAIL("Rescan completed, updating database (%d drives scanned)", scanned_count);
+            /* Full rescan - not partial */
+            service_state_update_database(state, new_db, false);
+            service_state_bump_db_generation(state);
+            LOG_DETAIL("Publishing updated database snapshot...");
+            snapshot_publisher_publish_db(pub, state);
+            LOG_EVENT("Database snapshot published after rescan");
+        }
     } else {
         LOG_DETAIL("Service stopping, discarding rescan results");
         db_free(new_db);
@@ -1457,7 +1488,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
     const int DEFERRED_FLUSH_SEC = 10;  /* Deferred flush after 10 seconds of no activity */
     int client_connection_count = 0;
 
-    while (g_running) {
+    while (ATOMIC_LOAD(g_running)) {
         /* Accept client connections (non-blocking with timeout) */
         NcdIpcConnection *conn = ipc_server_accept(server, 100);  /* 100ms timeout */
 
@@ -1467,7 +1498,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
             DBG_LOG("NCD Service: Client connected, handling messages...\n");
             LOG_DETAIL("Client #%d connected", client_connection_count);
             int msg_count = 0;
-            while (g_running) {
+            while (ATOMIC_LOAD(g_running)) {
                 int result = handle_client_connection(conn, state, pub);
                 if (result < 0) {
                     /* Client disconnected or error */
@@ -1483,15 +1514,14 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
         }
 
         /* Check for rescan request */
-        if (g_rescan_requested) {
-            g_rescan_requested = 0;
+        if (ATOMIC_CLEAR(g_rescan_requested)) {
             perform_rescan(state, pub);
         }
 
         /* Check for shutdown request */
-        if (g_shutdown_requested) {
+        if (ATOMIC_LOAD(g_shutdown_requested)) {
             LOG_EVENT("Shutdown requested, exiting main loop");
-            g_running = 0;
+            ATOMIC_STORE(g_running, 0);
             break;
         }
 
@@ -1504,7 +1534,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
         time_t now = time(NULL);
 
         /* Only explicit flush requests are immediate - all database changes use deferred flush */
-        bool needs_immediate = g_flush_requested;
+        bool needs_immediate = ATOMIC_LOAD(g_flush_requested);
 
         /* Deferred flush: ALL database changes use deferred flush with reset timer.
          * Both full rescans (DIRTY_DATABASE) and partial updates (DIRTY_DATABASE_PARTIAL)
@@ -1523,7 +1553,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
         if (needs_immediate || needs_deferred || needs_periodic) {
             LOG_DETAIL("Flushing state to disk (immediate=%d, deferred=%d, periodic=%d)",
                        needs_immediate, needs_deferred, needs_periodic);
-            g_flush_requested = 0;
+            ATOMIC_STORE(g_flush_requested, 0);
             last_flush_check = now;
             if (service_state_flush(state)) {
                 LOG_DETAIL("State flushed successfully");

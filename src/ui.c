@@ -564,6 +564,16 @@ static bool con_list_subdirs(const char *dir_path, NameList *out)
 static UiIoOps g_default_ops;
 static UiIoOps *g_ui_ops = NULL;
 
+#if NCD_PLATFORM_WINDOWS
+static volatile LONG g_ui_ops_init_flag = 0;
+#define UI_OPS_BEGIN_INIT() (InterlockedCompareExchange(&g_ui_ops_init_flag, 1, 0) == 0)
+#define UI_OPS_END_INIT()   InterlockedExchange(&g_ui_ops_init_flag, 0)
+#else
+static int g_ui_ops_init_flag = 0;
+#define UI_OPS_BEGIN_INIT() (__sync_bool_compare_and_swap(&g_ui_ops_init_flag, 0, 1))
+#define UI_OPS_END_INIT()   __sync_lock_release(&g_ui_ops_init_flag)
+#endif
+
 #if !defined(NDEBUG) || defined(NCD_TEST_BUILD)
 /* Forward declaration for stdio TUI test backend.
  * Returns pointer to static ops struct, or NULL if NCD_TEST_MODE is not set. */
@@ -634,23 +644,37 @@ void ui_set_io_backend(UiIoOps *ops)
 
 UiIoOps *ui_get_io_backend(void)
 {
-    if (!g_ui_ops) {
-        /* Auto-load keys from environment (enables testing and automation) */
-        load_keys_from_env();
+    if (g_ui_ops) return g_ui_ops;
+
+    /* One-time init: first caller initializes, concurrent callers spin-wait. */
+    if (!UI_OPS_BEGIN_INIT()) {
+        while (!g_ui_ops) {
+#if NCD_PLATFORM_WINDOWS
+            Sleep(0);
+#else
+            usleep(0);
+#endif
+        }
+        return g_ui_ops;
+    }
+
+    /* Auto-load keys from environment (enables testing and automation) */
+    load_keys_from_env();
 
 #if !defined(NDEBUG) || defined(NCD_TEST_BUILD)
-        /* In debug or test builds, check for stdio TUI test mode */
-        {
-            UiIoOps *stdio_ops = stdio_backend_init();
-            if (stdio_ops) {
-                g_ui_ops = stdio_ops;
-                return g_ui_ops;
-            }
+    /* In debug or test builds, check for stdio TUI test mode */
+    {
+        UiIoOps *stdio_ops = stdio_backend_init();
+        if (stdio_ops) {
+            g_ui_ops = stdio_ops;
+            UI_OPS_END_INIT();
+            return g_ui_ops;
         }
-#endif
-        init_default_ops();
-        g_ui_ops = &g_default_ops;
     }
+#endif
+    init_default_ops();
+    g_ui_ops = &g_default_ops;
+    UI_OPS_END_INIT();
     return g_ui_ops;
 }
 
