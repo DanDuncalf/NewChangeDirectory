@@ -120,9 +120,7 @@ TEST(ipc_client_connect_fails_when_no_service) {
     ASSERT_EQ_INT(0, result);
 
     if (ipc_service_exists()) {
-        printf("SKIP: Service is running, connect-fail test expects no service\n");
-        ipc_client_cleanup();
-        return 0;
+SKIP_TEST("Service is running, connect-fail test expects no service");
     }
     
     /* Try to connect when no service is running */
@@ -267,8 +265,7 @@ TEST(ipc_payload_structures_sizes) {
 #if !NCD_PLATFORM_WINDOWS
 TEST(ipc_rejects_truncated_payload_length_in_response) {
     if (ipc_service_exists()) {
-        printf("SKIP: Service is running; malformed fake server test requires free IPC path\n");
-        return 0;
+SKIP_TEST("Service is running; malformed fake server test requires free IPC path");
     }
 
     uint8_t resp[64];
@@ -291,8 +288,7 @@ TEST(ipc_rejects_truncated_payload_length_in_response) {
 
 TEST(ipc_rejects_oversized_state_info_name_lengths) {
     if (ipc_service_exists()) {
-        printf("SKIP: Service is running; malformed fake server test requires free IPC path\n");
-        return 0;
+SKIP_TEST("Service is running; malformed fake server test requires free IPC path");
     }
 
     uint8_t resp[1024];

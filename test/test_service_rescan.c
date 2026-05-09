@@ -129,7 +129,7 @@ static bool ensure_service_running(void) {
 
 TEST(rescan_request_while_already_scanning) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -157,7 +157,7 @@ TEST(rescan_request_while_already_scanning) {
 
 TEST(rescan_request_with_specific_drives) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -182,7 +182,7 @@ TEST(rescan_request_with_specific_drives) {
 
 TEST(rescan_request_with_exclude_pattern) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -204,7 +204,7 @@ TEST(rescan_request_with_exclude_pattern) {
 
 TEST(rescan_atomic_update_no_downtime) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -243,7 +243,7 @@ TEST(rescan_atomic_update_no_downtime) {
 
 TEST(rescan_progress_reporting) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -271,7 +271,7 @@ TEST(rescan_progress_reporting) {
 
 TEST(rescan_cancellation_mid_scan) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -299,7 +299,7 @@ TEST(rescan_cancellation_mid_scan) {
 
 TEST(rescan_failure_rollback) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -334,7 +334,7 @@ TEST(rescan_failure_rollback) {
 
 TEST(rescan_concurrent_client_queries) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -371,7 +371,7 @@ TEST(rescan_concurrent_client_queries) {
 
 TEST(rescan_large_database_memory_pressure) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -393,7 +393,7 @@ TEST(rescan_large_database_memory_pressure) {
 
 TEST(rescan_with_no_changes_detected) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -433,7 +433,7 @@ TEST(rescan_with_no_changes_detected) {
 
 TEST(rescan_triggers_client_cache_invalidation) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -471,7 +471,7 @@ TEST(rescan_triggers_client_cache_invalidation) {
 
 TEST(rescan_updates_generation_counter) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -499,7 +499,7 @@ TEST(rescan_updates_generation_counter) {
 
 TEST(rescan_preserves_heuristics) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -528,7 +528,7 @@ TEST(rescan_preserves_heuristics) {
 
 TEST(rescan_preserves_groups) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -556,7 +556,7 @@ TEST(rescan_preserves_groups) {
 
 TEST(rescan_preserves_exclusions) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -584,7 +584,7 @@ TEST(rescan_preserves_exclusions) {
 
 TEST(rescan_preserves_config) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -609,7 +609,7 @@ TEST(rescan_preserves_config) {
 
 TEST(rescan_preserves_history) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -637,7 +637,7 @@ TEST(rescan_preserves_history) {
 
 TEST(rescan_merges_with_existing_data) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -672,7 +672,7 @@ TEST(rescan_merges_with_existing_data) {
 
 TEST(rescan_removes_deleted_directories) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -694,7 +694,7 @@ TEST(rescan_removes_deleted_directories) {
 
 TEST(rescan_adds_new_directories) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);

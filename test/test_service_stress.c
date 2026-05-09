@@ -362,7 +362,7 @@ static bool ensure_service_running(void) {
 
 TEST(svc_stress_state_transition_starting_to_loading) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Service state transition is internal; verify service starts successfully */
     char _buf[256];
@@ -378,7 +378,7 @@ TEST(svc_stress_state_transition_starting_to_loading) {
 
 TEST(svc_stress_state_transition_loading_to_ready) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     
@@ -407,7 +407,7 @@ TEST(svc_stress_state_transition_loading_to_ready) {
 
 TEST(svc_stress_state_transition_ready_to_scanning) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -429,7 +429,7 @@ TEST(svc_stress_state_transition_ready_to_scanning) {
 
 TEST(svc_stress_state_transition_scanning_to_ready) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -450,7 +450,7 @@ TEST(svc_stress_state_transition_scanning_to_ready) {
 
 TEST(svc_stress_state_transition_any_to_stopped) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     ASSERT_TRUE(ipc_service_exists());
@@ -463,7 +463,7 @@ TEST(svc_stress_state_transition_any_to_stopped) {
 TEST(svc_stress_state_transition_invalid_rejected) {
     /* Test that invalid state transitions are handled gracefully */
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Stopping an already stopped service should fail gracefully */
     char output[256] = {0};
@@ -483,7 +483,7 @@ TEST(svc_stress_state_transition_invalid_rejected) {
 
 TEST(svc_stress_ipc_1000_concurrent_connections) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -512,7 +512,7 @@ TEST(svc_stress_ipc_1000_concurrent_connections) {
 
 TEST(svc_stress_ipc_message_queue_overflow_handling) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -543,7 +543,7 @@ TEST(svc_stress_ipc_message_queue_overflow_handling) {
 
 TEST(svc_stress_ipc_large_payload_handling) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -572,7 +572,7 @@ TEST(svc_stress_ipc_large_payload_handling) {
 
 TEST(svc_stress_ipc_malformed_message_rejection) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -593,7 +593,7 @@ TEST(svc_stress_ipc_malformed_message_rejection) {
 
 TEST(svc_stress_ipc_connection_during_shutdown) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -625,7 +625,7 @@ TEST(svc_stress_ipc_connection_during_shutdown) {
 
 TEST(svc_stress_service_crash_during_scan_recovery) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -645,7 +645,7 @@ TEST(svc_stress_service_crash_during_scan_recovery) {
 
 TEST(svc_stress_service_crash_during_save_recovery) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -673,7 +673,7 @@ TEST(svc_stress_service_crash_during_save_recovery) {
 
 TEST(svc_stress_client_detects_service_crash) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -703,7 +703,7 @@ TEST(svc_stress_client_detects_service_crash) {
 
 TEST(svc_stress_client_reconnect_after_service_restart) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -734,7 +734,7 @@ TEST(svc_stress_client_reconnect_after_service_restart) {
 
 TEST(svc_stress_dirty_data_preserved_on_crash) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service and make changes */
     ensure_service_running();
@@ -766,7 +766,7 @@ TEST(svc_stress_dirty_data_preserved_on_crash) {
 
 TEST(svc_stress_version_new_client_old_service) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -789,7 +789,7 @@ TEST(svc_stress_version_new_client_old_service) {
 
 TEST(svc_stress_version_old_client_new_service) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -813,7 +813,7 @@ TEST(svc_stress_version_old_client_new_service) {
 
 TEST(svc_stress_version_protocol_mismatch_handling) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -836,7 +836,7 @@ TEST(svc_stress_version_protocol_mismatch_handling) {
 
 TEST(svc_stress_version_force_override_flag) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -869,7 +869,7 @@ TEST(svc_stress_fallback_when_service_not_running) {
 
 TEST(svc_stress_fallback_when_shm_mapping_fails) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -890,7 +890,7 @@ TEST(svc_stress_fallback_when_shm_mapping_fails) {
 
 TEST(svc_stress_fallback_when_version_incompatible) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -912,7 +912,7 @@ TEST(svc_stress_fallback_when_version_incompatible) {
 
 TEST(svc_stress_fallback_when_service_busy_timeout) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ensure_service_running();
     platform_sleep_ms(500);
@@ -943,7 +943,7 @@ TEST(svc_stress_fallback_when_service_busy_timeout) {
 
 TEST(svc_stress_fallback_recovery_when_service_returns) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     ensure_service_running();

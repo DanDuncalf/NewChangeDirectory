@@ -86,8 +86,7 @@ TEST(legacy_shutdown_graceful_stop_succeeds) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -112,8 +111,7 @@ TEST(legacy_shutdown_block_command_waits_for_stop) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -134,8 +132,7 @@ TEST(legacy_shutdown_double_stop_is_safe) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -164,8 +161,7 @@ TEST(legacy_shutdown_force_kill_as_last_resort) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -193,8 +189,7 @@ TEST(legacy_shutdown_ipc_request_shutdown_works) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -223,8 +218,7 @@ TEST(legacy_start_after_force_kill) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service normally */

@@ -137,7 +137,7 @@ TEST(ipc_pipe_create_with_invalid_name) {
 
 TEST(ipc_pipe_create_already_exists) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service - creates pipe */
     char _buf[256];
@@ -196,7 +196,7 @@ TEST(ipc_pipe_connect_timeout) {
 
 TEST(ipc_pipe_disconnect_mid_transfer) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
 #if NCD_PLATFORM_WINDOWS
@@ -262,7 +262,7 @@ TEST(ipc_socket_permission_denied) {
 
 TEST(ipc_socket_unlink_race_condition) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start and stop service rapidly to test cleanup */
     for (int i = 0; i < 3; i++) {
@@ -298,7 +298,7 @@ TEST(ipc_socket_connection_refused) {
 
 TEST(ipc_message_partial_read_handling) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -320,7 +320,7 @@ TEST(ipc_message_partial_read_handling) {
 
 TEST(ipc_message_partial_write_handling) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -344,7 +344,7 @@ TEST(ipc_message_partial_write_handling) {
 
 TEST(ipc_message_exact_buffer_size) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -370,7 +370,7 @@ TEST(ipc_message_exact_buffer_size) {
 
 TEST(ipc_message_oversized_rejection) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -398,7 +398,7 @@ TEST(ipc_message_oversized_rejection) {
 
 TEST(ipc_message_corrupted_header) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -421,7 +421,7 @@ TEST(ipc_message_corrupted_header) {
 
 TEST(ipc_message_unknown_message_type) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -443,7 +443,7 @@ TEST(ipc_message_unknown_message_type) {
 
 TEST(ipc_message_sequence_number_mismatch) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -469,7 +469,7 @@ TEST(ipc_message_sequence_number_mismatch) {
 
 TEST(ipc_timeout_exact_boundary) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -491,7 +491,7 @@ TEST(ipc_timeout_exact_boundary) {
 
 TEST(ipc_timeout_zero_immediate_return) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -516,7 +516,7 @@ TEST(ipc_timeout_negative_rejected) {
 
 TEST(ipc_timeout_with_slow_response) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");
@@ -539,7 +539,7 @@ TEST(ipc_timeout_with_slow_response) {
 
 TEST(ipc_timeout_recovery_reconnect) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
     system("../ncd_service start 2>/dev/null || NCDService.exe start");

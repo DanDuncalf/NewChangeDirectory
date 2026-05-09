@@ -293,12 +293,11 @@ static thread_result_t THREAD_CALL race_loading_thread(void *arg) {
 
 TEST(race_detailed_status_during_loading) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     /* Start service - this begins background loader */
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+SKIP_TEST("Could not start service");
     }
 
     /* Give service a moment to enter LOADING state */
@@ -402,7 +401,7 @@ static thread_result_t THREAD_CALL race_mutation_thread(void *arg) {
 
 TEST(race_concurrent_mutation_storm) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     ensure_service_running();
     platform_sleep_ms(1000); /* Wait for READY */
@@ -554,7 +553,7 @@ static thread_result_t THREAD_CALL race_shm_mutator_thread(void *arg) {
 
 TEST(race_shm_window_during_publication) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -619,7 +618,7 @@ TEST(race_shm_window_during_publication) {
 
 TEST(race_generation_monotonicity) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -692,7 +691,7 @@ TEST(race_generation_monotonicity) {
 
 TEST(race_cascading_rescan_requests) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     ensure_service_running();
     platform_sleep_ms(1000);
@@ -777,7 +776,7 @@ static thread_result_t THREAD_CALL race_connect_storm_thread(void *arg) {
 
 TEST(race_concurrent_connect_storm) {
     ensure_service_stopped();
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
 
     ensure_service_running();
     platform_sleep_ms(1000);

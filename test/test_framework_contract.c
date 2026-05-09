@@ -129,13 +129,25 @@ TEST(contract_run_test_skip_prints_skipped) {
 
 /* ------------------------------------------------------------------ */
 /*  Contract: Previous skip pattern (return 0 + text) still works       */
+/*  This test INTENTIONALLY uses the legacy pattern to validate that    */
+/*  the Python executor's _classify_block still detects "SKIP:" in     */
+/*  output from C tests returning 0. It produces a false PASS in the   */
+/*  C framework itself (return 0) but the Python executor classifies   */
+/*  it as SKIPPED based on the output marker.                          */
 /* ------------------------------------------------------------------ */
 TEST(contract_legacy_skip_with_return_zero) {
-    /* Tests that used to do: printf("SKIP: reason"); return 0;
-     * still work because the Python executor detects the SKIP: pattern.
-     * This test itself is a pattern example for the executor. */
     printf("SKIP: legacy_pattern_for_executor_detection\n");
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Contract: Modern SKIP_TEST macro produces correct C-framework result */
+/* ------------------------------------------------------------------ */
+TEST(contract_modern_skip_uses_skip_test) {
+    /* Tests that use SKIP_TEST() return TEST_SKIP (77), which the
+     * C framework correctly classifies as SKIPPED (not PASS, not FAIL).
+     * This validates the canonical skip mechanism. */
+    SKIP_TEST("modern_skip_pattern_validation");
 }
 
 /* ------------------------------------------------------------------ */
@@ -151,6 +163,7 @@ static void suite_framework_contract(void) {
     RUN_TEST(contract_skip_test_produces_structured_marker);
     RUN_TEST(contract_run_test_skip_prints_skipped);
     RUN_TEST(contract_legacy_skip_with_return_zero);
+    RUN_TEST(contract_modern_skip_uses_skip_test);
 }
 
 TEST_MAIN(

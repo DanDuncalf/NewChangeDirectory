@@ -47,14 +47,12 @@ TEST(version_check_when_service_running) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     /* Connect to service */
@@ -83,13 +81,11 @@ TEST(version_check_gets_service_version_info) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     NcdIpcClient *client = ipc_client_connect();
@@ -113,13 +109,11 @@ TEST(version_check_mismatch_triggers_shutdown) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     NcdIpcClient *client = ipc_client_connect();
@@ -148,13 +142,11 @@ TEST(version_check_result_populated_correctly) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     NcdIpcClient *client = ipc_client_connect();
@@ -188,13 +180,11 @@ TEST(version_check_invalid_params_fails) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     NcdIpcClient *client = ipc_client_connect();
@@ -223,13 +213,11 @@ TEST(protocol_version_matches_expected) {
     ensure_service_stopped();
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     if (!ensure_service_running()) {
-        printf("SKIP: Could not start service\n");
-        return 0;
+        SKIP_TEST("Could not start service");
     }
     
     NcdIpcClient *client = ipc_client_connect();

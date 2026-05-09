@@ -5,6 +5,10 @@
 #include "shared_state.h"
 #include <string.h>
 
+#if !NCD_PLATFORM_WINDOWS
+#include <stdatomic.h>
+#endif
+
 /* --------------------------------------------------------- CRC64 implementation */
 
 /* CRC64-ECMA polynomial: 0x42F0E1EBA9EA3693 */
@@ -28,6 +32,7 @@ static BOOL CALLBACK crc64_init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx) {
         }
         g_crc64_table[i] = crc;
     }
+    MemoryBarrier();
     return TRUE;
 }
 static void crc64_init(void) {
@@ -48,6 +53,7 @@ static void crc64_init_impl(void) {
         }
         g_crc64_table[i] = crc;
     }
+    atomic_thread_fence(memory_order_seq_cst);
 }
 static void crc64_init(void) {
     pthread_once(&g_crc64_init_once, crc64_init_impl);

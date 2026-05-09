@@ -78,8 +78,7 @@ TEST(verify_existing_directory_passes) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
@@ -120,8 +119,7 @@ TEST(verify_missing_directory_fails) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
@@ -160,8 +158,7 @@ TEST(verify_empty_directory_passes) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
@@ -202,8 +199,7 @@ TEST(verify_mode_mismatch_fails) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
     snprintf(cmd, sizeof(cmd),
         "%s --agent:verify \"%s\" --mode 0700 --json > \"%s\" 2>&1",
@@ -258,8 +254,7 @@ TEST(verify_tree_structure_matches) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
@@ -305,8 +300,7 @@ TEST(chmod_changes_mode) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
     snprintf(cmd, sizeof(cmd),
         "%s --agent:chmod \"%s\" --mode 0700 --json > \"%s\" 2>&1",
@@ -357,8 +351,7 @@ TEST(chmod_recursive_changes_all) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
     snprintf(cmd, sizeof(cmd),
         "%s --agent:chmod \"%s\" --mode 0700 --recursive --json > \"%s\" 2>&1",
@@ -404,8 +397,7 @@ TEST(chmod_returns_unsupported_on_windows) {
 
     const char *exe = find_exe();
     if (!exe) {
-        printf("SKIP: NCD executable not found\n");
-        return 0;
+        SKIP_TEST("NCD executable not found");
     }
     snprintf(cmd, sizeof(cmd),
         "%s /agent:chmod \"%s\" --mode 0700 --json > \"%s\" 2>&1",

@@ -261,8 +261,7 @@ TEST(matcher_fuzzy_typo_tolerance) {
 TEST(metadata_full_workflow) {
     char test_path[MAX_PATH];
     if (!db_metadata_path(test_path, sizeof(test_path))) {
-        printf("    SKIPPED (cannot get metadata path)\n");
-        return 0;
+SKIP_TEST("Cannot get metadata path");
     }
     
     /* Backup existing metadata */

@@ -189,8 +189,7 @@ static bool metadata_has_group_path(const NcdMetadata *meta,
 /* Test 1: Service starts and responds to ping */
 TEST(service_starts_and_responds_to_ping) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -214,8 +213,7 @@ TEST(service_starts_and_responds_to_ping) {
 /* Test 2: Service provides database via shared memory */
 TEST(service_provides_database_via_shared_memory) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -244,8 +242,7 @@ TEST(service_provides_database_via_shared_memory) {
 /* Test 3: Service accepts heuristic update */
 TEST(service_accepts_heuristic_update) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -270,8 +267,7 @@ TEST(service_accepts_heuristic_update) {
 /* Test 4: Service accepts metadata update */
 TEST(service_accepts_metadata_update) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -301,8 +297,7 @@ TEST(service_accepts_metadata_update) {
 /* Test 5: Service handles rescan request */
 TEST(service_handles_rescan_request) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -328,8 +323,7 @@ TEST(service_handles_rescan_request) {
 /* Test 6: Service handles flush request */
 TEST(service_handles_flush_request) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -354,8 +348,7 @@ TEST(service_handles_flush_request) {
 /* Test 7: Service version check compatibility */
 TEST(service_version_check_compatibility) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -389,8 +382,7 @@ TEST(service_version_check_compatibility) {
 /* Test 8: Service graceful shutdown */
 TEST(service_graceful_shutdown) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -447,8 +439,7 @@ TEST(client_falls_back_to_local_on_service_down) {
 /* Test 10: Snapshot publisher produces valid snapshots */
 TEST(snapshot_publisher_produces_valid_snapshots) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -499,8 +490,7 @@ TEST(ipc_error_strings_meaningful) {
 /* Test 12: State backend connects to service when available */
 TEST(state_backend_connects_to_service_when_available) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();
@@ -533,8 +523,7 @@ TEST(state_backend_connects_to_service_when_available) {
 /* Test 13: Metadata updates through state_backend in service mode persist */
 TEST(state_backend_group_update_roundtrip_when_service_running) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();

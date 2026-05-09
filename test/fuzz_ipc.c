@@ -140,7 +140,7 @@ static bool service_accepts_requests(void) {
 /* --------------------------------------------------------- fuzz tests */
 
 TEST(fuzz_ipc_message_header_random_bytes) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -164,7 +164,7 @@ TEST(fuzz_ipc_message_header_random_bytes) {
 }
 
 TEST(fuzz_ipc_message_payload_overflow) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -192,7 +192,7 @@ TEST(fuzz_ipc_message_payload_overflow) {
 }
 
 TEST(fuzz_ipc_message_type_confusion) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -239,7 +239,7 @@ TEST(fuzz_ipc_message_type_confusion) {
 }
 
 TEST(fuzz_ipc_message_sequence_wraparound) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -267,7 +267,7 @@ TEST(fuzz_ipc_message_sequence_wraparound) {
 }
 
 TEST(fuzz_ipc_message_fragmentation) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -295,7 +295,7 @@ TEST(fuzz_ipc_message_fragmentation) {
 }
 
 TEST(fuzz_ipc_bit_flipping) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -318,7 +318,7 @@ TEST(fuzz_ipc_bit_flipping) {
 }
 
 TEST(fuzz_ipc_byte_swapping) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -341,7 +341,7 @@ TEST(fuzz_ipc_byte_swapping) {
 }
 
 TEST(fuzz_ipc_known_integers) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -372,7 +372,7 @@ TEST(fuzz_ipc_known_integers) {
 }
 
 TEST(fuzz_ipc_dictionary_words) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);
@@ -402,7 +402,7 @@ TEST(fuzz_ipc_dictionary_words) {
 }
 
 TEST(fuzz_ipc_boundary_values) {
-    if (!service_executable_exists()) { printf("SKIP: Service executable not found\n"); return 0; }
+    if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     ASSERT_TRUE(ensure_service_running());
     platform_sleep_ms(1000);

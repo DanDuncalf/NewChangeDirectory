@@ -93,6 +93,9 @@ static int run_command(const char *cmd, char *output, size_t output_size) {
 #endif
 }
 
+/* Resolve NCD executable path (forward declared for run_ncd_command) */
+static const char* get_ncd_exe(void);
+
 /* Run ncd command and capture output */
 static int run_ncd_command(const char *args, char *output, size_t output_size) {
     char full_cmd[512];
@@ -155,8 +158,7 @@ TEST(help_shows_standalone_when_service_stopped) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     char output[4096] = {0};
@@ -177,8 +179,7 @@ TEST(help_shows_service_running_when_service_active) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Start service */
@@ -207,10 +208,7 @@ TEST(help_shows_service_running_when_service_active) {
     ipc_client_cleanup();
     
     if (!service_ready) {
-        printf("  [WARNING] Service did not reach READY state, skipping test\n");
-        /* Don't fail - service might not have databases to load */
-        ensure_service_stopped();
-        return 0;
+SKIP_TEST("Service did not reach READY state");
     }
     
     /* Extra wait for service to stabilize */
@@ -247,8 +245,7 @@ TEST(agent_service_status_not_running) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     char output[256] = {0};
@@ -267,8 +264,7 @@ TEST(agent_service_status_json_not_running) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Extra delay to ensure service is fully stopped */
@@ -307,8 +303,7 @@ TEST(agent_service_status_running) {
 
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
 
     /* Start service */
@@ -354,8 +349,7 @@ TEST(agent_service_status_json_running) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Start service */
@@ -395,8 +389,7 @@ TEST(agent_service_status_after_stop) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Start service */
@@ -428,8 +421,7 @@ TEST(ncd_search_works_without_service) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Create a temp directory that should be found */
@@ -452,8 +444,7 @@ TEST(ncd_search_works_with_service) {
     
     /* Skip if executables not built */
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     /* Start service */
@@ -483,8 +474,7 @@ TEST(help_includes_exclusion_and_agent_options) {
     ensure_service_stopped();
 
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
 
     char output[8192] = {0};
@@ -505,8 +495,7 @@ TEST(a_flag_is_not_agent_alias) {
     ensure_service_stopped();
     
     if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
+        SKIP_TEST("Executables not found");
     }
     
     char output[1024] = {0};

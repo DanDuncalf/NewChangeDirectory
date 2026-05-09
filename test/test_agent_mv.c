@@ -146,9 +146,7 @@ TEST(mv_renames_directory) {
     int status = run_agent(base, args, out, sizeof(out));
 
     if (strstr(out, "EXE_NOT_FOUND")) {
-        printf("SKIP: NCD executable not found\n");
-        rm_rf(base);
-        return 0;
+SKIP_TEST("NCD executable not found");
     }
 
     ASSERT_EQ_INT(0, status);
@@ -193,9 +191,7 @@ TEST(mv_updates_database) {
     int status = run_agent(base, args, out, sizeof(out));
 
     if (strstr(out, "EXE_NOT_FOUND")) {
-        printf("SKIP: NCD executable not found\n");
-        rm_rf(base);
-        return 0;
+SKIP_TEST("NCD executable not found");
     }
 
     ASSERT_EQ_INT(0, status);
@@ -255,9 +251,7 @@ TEST(mv_force_overwrite_empty) {
     int status = run_agent(base, args, out, sizeof(out));
 
     if (strstr(out, "EXE_NOT_FOUND")) {
-        printf("SKIP: NCD executable not found\n");
-        rm_rf(base);
-        return 0;
+SKIP_TEST("NCD executable not found");
     }
 
     ASSERT_EQ_INT(0, status);
@@ -303,9 +297,7 @@ TEST(ln_creates_symlink) {
     int status = run_agent(base, args, out, sizeof(out));
 
     if (strstr(out, "EXE_NOT_FOUND")) {
-        printf("SKIP: NCD executable not found\n");
-        rm_rf(base);
-        return 0;
+SKIP_TEST("NCD executable not found");
     }
 
     ASSERT_EQ_INT(0, status);

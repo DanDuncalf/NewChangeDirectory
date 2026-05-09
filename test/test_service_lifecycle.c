@@ -59,8 +59,7 @@ TEST(service_start_when_stopped) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     char output[256] = {0};
@@ -84,8 +83,7 @@ TEST(service_double_start_fails) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Start service first time */
@@ -114,8 +112,7 @@ TEST(service_stop_when_running) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -144,8 +141,7 @@ TEST(service_stop_when_already_stopped) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Try to stop when not running */
@@ -170,8 +166,7 @@ TEST(service_restart) {
 
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
 
     /* Start service */
@@ -205,8 +200,7 @@ TEST(service_ipc_ping) {
 
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
 
     /* Start service */
@@ -274,8 +268,7 @@ TEST(service_ipc_get_version) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -310,8 +303,7 @@ TEST(service_ipc_get_state_info) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -345,8 +337,7 @@ TEST(service_ipc_shutdown_request) {
     
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     /* Start service */
@@ -384,8 +375,7 @@ TEST(service_state_progression) {
 
     /* Skip if service executable not built */
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
 
     /* Start service and verify it launched successfully */
@@ -438,8 +428,7 @@ TEST(service_termination_graceful_then_force) {
      * before spawning a new daemon, preventing double-start races. */
     
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found: %s\n", SERVICE_EXE);
-        return 0;
+SKIP_TEST("Service executable not found");
     }
     
     ensure_service_stopped();

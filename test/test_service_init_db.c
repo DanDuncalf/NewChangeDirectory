@@ -398,8 +398,7 @@ static bool restore_metadata(void) {
 
 TEST(init_db_help_shows_option) {
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
 
     char output[1024] = {0};
@@ -422,8 +421,7 @@ TEST(init_db_help_shows_option) {
 TEST(init_db_starts_service_with_no_drive_list) {
     ensure_service_stopped();
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
 
     backup_metadata();
@@ -458,8 +456,7 @@ TEST(init_db_starts_service_with_no_drive_list) {
 TEST(init_db_starts_service_with_drive_list) {
     ensure_service_stopped();
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
 
     backup_metadata();
@@ -492,8 +489,7 @@ TEST(init_db_starts_service_with_drive_list) {
 TEST(init_db_creates_metadata_when_missing) {
     ensure_service_stopped();
     if (!service_executable_exists()) {
-        printf("SKIP: Service executable not found\n");
-        return 0;
+        SKIP_TEST("Service executable not found");
     }
 
     backup_metadata();
