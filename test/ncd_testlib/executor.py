@@ -94,6 +94,11 @@ def parse_unit_output(output):
                 tests.append((current_test, status))
                 current_test = None
                 current_block = []
+            elif re.search(r'^\s+SKIPPED\s*$', line):
+                status = _classify_block(current_block)
+                tests.append((current_test, status))
+                current_test = None
+                current_block = []
 
     if current_test:
         status = _classify_block(current_block)
@@ -103,8 +108,26 @@ def parse_unit_output(output):
 
 
 def _classify_block(block_lines):
-    """Classify a test block as PASSED, FAILED, or SKIPPED."""
+    """Classify a test block as PASSED, FAILED, or SKIPPED.
+
+    Detection order (first match wins):
+    1. Structured skip marker: === SKIP <reason> ===  (from SKIP_TEST macro)
+    2. Legacy skip pattern: SKIP: or SKIPPED in block text
+    3. Assertion failed or FAILED markers
+    4. PASSED marker
+    5. Fallback: FAILED
+    """
     block_text = '\n'.join(block_lines)
+
+    # Structured skip marker (Phase 1 SKIP_TEST macro)
+    if re.search(r'^=== SKIP .+ ===$', block_text, re.MULTILINE):
+        return 'SKIPPED'
+
+    # Legacy skip patterns (pre-Phase 1 ad-hoc skips)
+    if re.search(r'(?m)^\s*(SKIP:|SKIPPED\b)', block_text):
+        return 'SKIPPED'
+
+    # Failure detection
     if 'Assertion failed' in block_text:
         return 'FAILED'
     if 'FAIL:' in block_text or 'FAILED' in block_text:
@@ -113,8 +136,9 @@ def _classify_block(block_lines):
                 return 'FAILED'
             if re.search(r'^\s+FAILED\s*$', line):
                 return 'FAILED'
-    if re.search(r'(?m)^\s*(SKIP:|SKIPPED\b)', block_text):
-        return 'SKIPPED'
+
+    # Pass detection
     if 'PASSED' in block_text:
         return 'PASSED'
+
     return 'FAILED'

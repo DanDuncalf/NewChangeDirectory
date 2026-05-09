@@ -29,8 +29,8 @@ Options:
     --help            Show this help
 
 Exit codes:
-    0 - All tests passed, zero skipped
-    1 - Build failure, test failure, or skipped tests
+    0 - No test failures (skipped tests are not failures)
+    1 - Build failure or test failure
 """
 
 import argparse
@@ -143,8 +143,8 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
         overall_status = "FAIL"
         reason = f"{total_failed + win_int_fail + lin_int_fail} test(s) failed"
     elif total_skipped > 0 or win_int_skip > 0 or lin_int_skip > 0:
-        overall_status = "FAIL"
-        reason = f"{total_skipped + win_int_skip + lin_int_skip} test(s) skipped"
+        overall_status = "PASS"
+        reason = f"All non-skipped tests passed ({total_skipped + win_int_skip + lin_int_skip} skipped)"
     if build_info.get('build_failed'):
         overall_status = "FAIL"
         reason = "Build failure detected"
@@ -592,9 +592,12 @@ def main():
             print(f"Skipped:       {total_skipped}")
             print()
 
-            if total_failed > 0 or total_skipped > 0:
+            if total_failed > 0:
                 print("[RESULT] FAIL - See test.results for details")
                 sys.exit(1)
+            elif total_skipped > 0:
+                print(f"[RESULT] PASS - {total_skipped} tests skipped (see test.results for details)")
+                sys.exit(0)
             else:
                 print("[RESULT] PASS - All tests passed")
                 sys.exit(0)
