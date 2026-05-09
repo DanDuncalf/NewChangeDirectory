@@ -122,6 +122,7 @@ COMMON_SOURCES=(
     "${SRC_DIR}/shared_state.c"
     "${SRC_DIR}/shm_platform_posix.c"
     "${SRC_DIR}/control_ipc_posix.c"
+    "${SRC_DIR}/control_ipc_common.c"
     "${SRC_DIR}/service_state.c"
     "${SRC_DIR}/service_publish.c"
     "${SHARED_DIR}/platform.c"

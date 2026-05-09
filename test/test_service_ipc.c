@@ -163,10 +163,7 @@ static bool stop_service(void) {
     return !ipc_service_exists() && !service_process_still_running();
 }
 
-/* Ensure service is stopped before/after tests */
-static void ensure_service_stopped(void) {
-    (void)stop_service();
-}
+/* Ensure service is stopped before/after tests — provided by service_test_common.h */
 
 static bool metadata_has_group_path(const NcdMetadata *meta,
                                     const char *group_name,
