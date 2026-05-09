@@ -27,6 +27,8 @@
 #include <sys/stat.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 /* Maximum time to wait for service state changes */
@@ -98,7 +100,7 @@ static int run_command(const char *cmd, char *output, size_t output_size) {
     }
     
     int status = pclose(pipe);
-    return WEXITSTATUS(status);
+    return safe_exit_code(status);
 #endif
 }
 
@@ -651,36 +653,6 @@ TEST(a_flag_is_not_agent_alias) {
     return 0;
 }
 
-/* /agdb is an internal debug path; keep implementation out of the compile unit
- * when not wired into RUN_TEST (avoids -Werror=unused-function on Linux). */
-#if 0
-#if 0
-TEST(agentic_debug_mode_with_service_exits_cleanly) {
-    ensure_service_stopped();
-    
-    if (!executables_exist()) {
-        printf("SKIP: Executables not found\n");
-        return 0;
-    }
-    
-    run_service_command("start");
-    ASSERT_TRUE(wait_for_service_state(true, SERVICE_TIMEOUT));
-    
-    platform_sleep_ms(1000);
-    
-    char output[16384] = {0};
-    int exit_code = run_ncd_command("-agdb", output, sizeof(output));
-    
-    /* /agdb should complete successfully and not hit fatal allocator paths. */
-    ASSERT_EQ_INT(0, exit_code);
-    ASSERT_TRUE(strstr(output, "fatal: out of memory") == NULL);
-    
-    ensure_service_stopped();
-    return 0;
-}
-#endif
-#endif
-
 /* --------------------------------------------------------- test suite         */
 
 void suite_service_integration(void) {
@@ -702,9 +674,7 @@ void suite_service_integration(void) {
     RUN_TEST(ncd_search_works_without_service);
     RUN_TEST(ncd_search_works_with_service);
     RUN_TEST(a_flag_is_not_agent_alias);
-    /* /agdb is an internal debug path and can be changed ad hoc during investigations. */
-    /* RUN_TEST(agentic_debug_mode_with_service_exits_cleanly); */
-    
+
     /* Final cleanup - ensure service is fully stopped */
     printf("\n--- Final cleanup ---\n");
     ensure_service_stopped();

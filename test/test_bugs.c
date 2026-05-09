@@ -154,6 +154,7 @@ TEST(metadata_heuristics_bounds_check) {
     ASSERT_EQ_INT(1, loaded->heuristics.count);
 
     db_metadata_free(loaded);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -206,6 +207,7 @@ TEST(strbuilder_use_after_free_no_hang) {
     }
 
     ASSERT_TRUE(sb_test_completed);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -264,6 +266,7 @@ TEST(strbuilder_use_after_free_no_hang) {
                WIFSIGNALED(status) ? WTERMSIG(status) : -1);
     }
 
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -312,6 +315,7 @@ TEST(full_path_deep_chain_truncation) {
     ASSERT_TRUE(has_d000);
 
     db_free(db);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -357,6 +361,7 @@ TEST(fuzzy_match_digit_heavy_performance) {
     }
     ASSERT_TRUE(seconds < 2.0);
 
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -402,6 +407,7 @@ TEST(check_version_truncated_after_magic) {
     ASSERT_EQ_INT(DB_VERSION_ERROR, result);
 
     remove(test_file);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -443,6 +449,7 @@ TEST(load_auto_truncated_after_magic) {
     ASSERT_NULL(db);
 
     remove(test_file);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -528,6 +535,7 @@ TEST(metadata_groups_bounds_check) {
     ASSERT_EQ_INT(1, loaded->groups.count);
 
     db_metadata_free(loaded);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -572,6 +580,7 @@ TEST(full_path_circular_parent_chain) {
     ASSERT_TRUE(path_len < 200);
 
     db_free(db);
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -671,6 +680,7 @@ TEST(strbuilder_ensure_cap_from_zero) {
     printf("    [BUG] After sb_free: cap=%d -- calling sb_ensure_cap would infinite-loop\n",
            (int)sb.cap);
 
+    BUG_CHECK_PASS();
     return 0;
 }
 
@@ -716,6 +726,7 @@ TEST(heuristics_roundtrip_multiple_entries) {
     ASSERT_EQ_INT(5, loaded->heuristics.count);
 
     db_metadata_free(loaded);
+    BUG_CHECK_PASS();
     return 0;
 }
 

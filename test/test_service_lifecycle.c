@@ -29,6 +29,8 @@
 #include <sys/wait.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 /* Service executable name */
@@ -129,7 +131,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     }
     
     int status = pclose(pipe);
-    return WEXITSTATUS(status);
+    return safe_exit_code(status);
 #endif
 }
 

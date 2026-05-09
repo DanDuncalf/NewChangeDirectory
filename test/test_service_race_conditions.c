@@ -37,6 +37,8 @@
 #include <sys/wait.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 #define SERVICE_EXE NCD_PLATFORM_WINDOWS ? "NCDService.exe" : "../ncd_service"
@@ -109,7 +111,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
         output[total] = '\0';
     }
     int status = pclose(pipe);
-    return WEXITSTATUS(status);
+    return safe_exit_code(status);
 #endif
 }
 

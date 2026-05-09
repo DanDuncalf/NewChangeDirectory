@@ -28,6 +28,8 @@
 #include <signal.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 #define SERVICE_TIMEOUT 10
@@ -79,7 +81,7 @@ static int run_service_command(const char *cmd) {
     return (int)exitCode;
 #else
     int status = system(full_cmd);
-    return WEXITSTATUS(status);
+    return safe_exit_code(status);
 #endif
 }
 

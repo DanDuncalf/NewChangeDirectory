@@ -33,6 +33,8 @@
 #include <dirent.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 /* Maximum time to wait for service operations */
@@ -143,7 +145,7 @@ static int run_service_command_ex(const char *cmd, const char *extra_args, char 
 
     {
         int status = pclose(pipe);
-        return WEXITSTATUS(status);
+        return safe_exit_code(status);
     }
 #endif
 }

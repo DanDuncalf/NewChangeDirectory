@@ -7,6 +7,24 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+/* Known-bug enforcement toggle:
+ * Define NCD_ENABLE_KNOWN_BUG_TESTS=1 to make known-bug tests fail
+ * with a hard assertion instead of just printing a diagnostic.
+ * Default: off (known bugs print diagnostics but pass). */
+#ifndef NCD_ENABLE_KNOWN_BUG_TESTS
+#define NCD_ENABLE_KNOWN_BUG_TESTS 0
+#endif
+
+/* When known-bug mode is on, transform BUG_CHECK into a hard failure */
+#if NCD_ENABLE_KNOWN_BUG_TESTS
+#define BUG_CHECK_PASS() do { \
+    fprintf(stderr, "  FAIL: Known-bug test enforced (NCD_ENABLE_KNOWN_BUG_TESTS=1)\n"); \
+    return 1; \
+} while(0)
+#else
+#define BUG_CHECK_PASS() do { /* known bugs are tracked but don't fail */ } while(0)
+#endif
+
 /* Test statistics */
 extern int tests_run;
 extern int tests_passed;

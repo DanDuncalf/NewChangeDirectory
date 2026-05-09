@@ -28,6 +28,8 @@
 #include <dirent.h>
 #endif
 
+#include "test_posix_exit.h"
+
 /* --------------------------------------------------------- test utilities     */
 
 #define SERVICE_START_TIMEOUT 15
@@ -106,7 +108,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
         output[total] = '\0';
     }
     int status = pclose(pipe);
-    return WEXITSTATUS(status);
+    return safe_exit_code(status);
 #endif
 }
 
