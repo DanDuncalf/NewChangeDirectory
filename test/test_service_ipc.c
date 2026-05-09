@@ -134,34 +134,7 @@ static bool start_service(void) {
     return false;
 }
 
-/* Stop service */
-static bool stop_service(void) {
-    if (!ipc_service_exists()) {
-        wait_for_service_fully_exited(5);
-        if (service_process_still_running()) {
-            force_terminate_service();
-            wait_for_service_fully_exited(3);
-        }
-        return !service_process_still_running();
-    }
-
-    {
-        char output[256] = {0};
-        (void)run_service_command("stop", output, sizeof(output));
-    }
-
-    if (!wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT)) {
-        force_terminate_service();
-    }
-
-    wait_for_service_fully_exited(SERVICE_STOP_TIMEOUT);
-    if (service_process_still_running()) {
-        force_terminate_service();
-        wait_for_service_fully_exited(3);
-    }
-
-    return !ipc_service_exists() && !service_process_still_running();
-}
+/* ensure_service_stopped() is now provided by service_test_common.h */
 
 /* Ensure service is stopped before/after tests — provided by service_test_common.h */
 

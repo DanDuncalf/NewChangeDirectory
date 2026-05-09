@@ -124,12 +124,12 @@ test_scanner: test_scanner.c test_framework.c $(SCANNER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - lazy loading
-SERVICE_LAZY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_LAZY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_lazy_load: test_service_lazy_load.c test_framework.c $(SERVICE_LAZY_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - parity
-SERVICE_PARITY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_PARITY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_parity: test_service_parity.c test_framework.c $(SERVICE_PARITY_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -144,12 +144,12 @@ test_service_integration: test_service_integration.c test_framework.c $(SERVICE_
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - database snapshot loading
-SERVICE_DATABASE_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_DATABASE_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_database: test_service_database.c test_framework.c $(SERVICE_DATABASE_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - empty database scenario
-SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_empty_db: test_service_empty_db.c test_framework.c $(SERVICE_EMPTY_DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -159,7 +159,7 @@ test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - logging
-SERVICE_LOGGING_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_LOGGING_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_logging: test_service_logging.c test_framework.c $(SERVICE_LOGGING_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -180,17 +180,17 @@ test_cli_parse: test_cli_parse.c test_framework.c $(CLI_TEST_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Tier 3 tests - Agent mode
-AGENT_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
+AGENT_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_mode: test_agent_mode.c test_framework.c $(AGENT_TEST_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Tier 3 tests - Agent integration (Phase 3 of CODEBASE_CLEANUP_PLAN.md)
-AGENT_INTEGRATION_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
+AGENT_INTEGRATION_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_integration: test_agent_integration.c test_framework.c $(AGENT_INTEGRATION_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Tier 3 tests - Agent CLI extended (comprehensive parse_agent_args + glob_match)
-AGENT_CLI_EXTENDED_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
+AGENT_CLI_EXTENDED_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_cli_extended: test_agent_cli_extended.c test_framework.c $(AGENT_CLI_EXTENDED_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -362,12 +362,12 @@ test_stress: test_stress.c test_framework.c $(AGENT4_SOURCES)
 
 # Agent 2: Service Infrastructure Tests
 # Service stress tests
-SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_stress: test_service_stress.c test_framework.c $(SERVICE_STRESS_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service rescan tests
-SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
+SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_rescan: test_service_rescan.c test_framework.c $(SERVICE_RESCAN_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
