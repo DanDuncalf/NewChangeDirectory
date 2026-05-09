@@ -270,6 +270,9 @@ static bool is_service_backend(void)
     return (g_state_view != NULL && g_state_info.from_service);
 }
 
+/* Forward declaration for metadata_load_or_create (defined later) */
+static NcdMetadata *metadata_load_or_create(void);
+
 /* ============================================================= directory history */
 
 /*
@@ -301,8 +304,7 @@ static void add_current_dir_to_history(void)
         free(data);
     } else {
         /* Standalone mode: load, modify, save */
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
+        NcdMetadata *meta = metadata_load_or_create();
         if (!meta) return;
         
         if (db_dir_history_add(meta, cwd, drive)) {
@@ -1194,6 +1196,62 @@ static int agent_mode_help(const NcdOptions *opts)
 /* parse_agent_args and glob_match are defined in cli.c */
 extern bool parse_agent_args(int argc, char *argv[], int *consumed, NcdOptions *opts);
 extern bool glob_match(const char *pattern, const char *text);
+
+/* ============================================================ shared helpers */
+
+/*
+ * metadata_load_or_create  --  Load metadata from disk, falling back
+ * to a fresh empty metadata object if no file exists.  The caller
+ * owns the returned pointer and must call db_metadata_free().
+ */
+static NcdMetadata *metadata_load_or_create(void)
+{
+    NcdMetadata *meta = db_metadata_load();
+    if (!meta) {
+        meta = db_metadata_create();
+    }
+    return meta;
+}
+
+/*
+ * agent_load_target_db  --  Resolve and load the target database for
+ * agent commands that need one.  Determines the drive from the search
+ * string or current directory, resolves the per-drive database path,
+ * and loads it with db_load_auto().
+ *
+ * Returns the loaded database (caller must db_free), or NULL.
+ * If out_db_path is non-NULL, the resolved path is written there.
+ */
+static NcdDatabase *agent_load_target_db(const NcdOptions *opts,
+                                         char *out_db_path,
+                                         size_t db_path_size)
+{
+    char target_db[NCD_MAX_PATH] = {0};
+    NcdDatabase *db = NULL;
+
+    if (opts->db_override[0]) {
+        platform_strncpy_s(target_db, sizeof(target_db), opts->db_override);
+        db = db_load_auto(target_db);
+    } else {
+        char cwd[MAX_PATH] = {0};
+        platform_get_current_dir(cwd, sizeof(cwd));
+        char target_drive = platform_get_drive_letter(cwd);
+
+        if (opts->has_search &&
+            isalpha((unsigned char)opts->search[0]) && opts->search[1] == ':') {
+            target_drive = (char)toupper((unsigned char)opts->search[0]);
+        }
+
+        if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
+            db = db_load_auto(target_db);
+        }
+    }
+
+    if (out_db_path && db_path_size > 0) {
+        platform_strncpy_s(out_db_path, db_path_size, target_db);
+    }
+    return db;
+}
 
 /* ============================================================ agent mode   */
 
@@ -4969,8 +5027,7 @@ int main(int argc, char *argv[])
         }
         
         /* Standalone mode: load, modify, save */
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
+        NcdMetadata *meta = metadata_load_or_create();
         
         /* Check if current directory is in the group */
         bool in_group = false;
@@ -5075,8 +5132,7 @@ int main(int argc, char *argv[])
         }
         
         /* Standalone mode: load, modify, save */
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
+        NcdMetadata *meta = metadata_load_or_create();
         
         /* Check if already in group before adding */
         bool already_in_group = false;
@@ -5144,8 +5200,7 @@ int main(int argc, char *argv[])
             }
         } else {
             /* Standalone mode: load, modify, save */
-            NcdMetadata *meta = db_metadata_load();
-            if (!meta) meta = db_metadata_create();
+            NcdMetadata *meta = metadata_load_or_create();
             
             if (db_exclusion_remove(meta, opts.exclusion_pattern)) {
                 db_metadata_save(meta);
@@ -5173,8 +5228,7 @@ int main(int argc, char *argv[])
             }
         } else {
             /* Standalone mode: load, modify, save */
-            NcdMetadata *meta = db_metadata_load();
-            if (!meta) meta = db_metadata_create();
+            NcdMetadata *meta = metadata_load_or_create();
             
             if (db_exclusion_add(meta, opts.exclusion_pattern)) {
                 db_metadata_save(meta);
@@ -5362,8 +5416,7 @@ int main(int argc, char *argv[])
             meta_view = get_state_metadata();
         } else {
             /* Standalone: load metadata */
-            NcdMetadata *meta = db_metadata_load();
-            if (!meta) meta = db_metadata_create();
+            NcdMetadata *meta = metadata_load_or_create();
             meta_view = meta;
         }
         
@@ -5422,8 +5475,7 @@ int main(int argc, char *argv[])
     
     /* ------------------------------------------------ directory history jump /1-/9 */
     if (opts.history_index > 0) {
-        NcdMetadata *meta = db_metadata_load();
-        if (!meta) meta = db_metadata_create();
+        NcdMetadata *meta = metadata_load_or_create();
         
         int count = db_dir_history_count(meta);
         if (count == 0) {
@@ -5470,26 +5522,7 @@ int main(int argc, char *argv[])
         
         switch (opts.agent_subcommand) {
             case AGENT_SUB_QUERY: {
-                /* Load database and search */
-                NcdDatabase *db = NULL;
-                char target_db[NCD_MAX_PATH] = {0};
-                if (opts.db_override[0]) {
-                    platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
-                    db = db_load_auto(target_db);
-                } else {
-                    char cwd[MAX_PATH] = {0};
-                    platform_get_current_dir(cwd, sizeof(cwd));
-                    char target_drive = platform_get_drive_letter(cwd);
-                    
-                    if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                        target_drive = (char)toupper((unsigned char)opts.search[0]);
-                    }
-                    
-                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-                        db = db_load_auto(target_db);
-                    }
-                }
-                
+                NcdDatabase *db = agent_load_target_db(&opts, NULL, 0);
                 int count = agent_mode_query(db, &opts);
                 result = (count > 0) ? 0 : 1;
                 if (db) db_free(db);
@@ -5508,75 +5541,25 @@ int main(int argc, char *argv[])
                 if (state_db && is_service_backend()) {
                     db = (NcdDatabase *)state_db;
                 } else {
-                    char target_db[NCD_MAX_PATH] = {0};
-                    if (opts.db_override[0]) {
-                        platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
-                        db = db_load_auto(target_db);
-                    } else {
-                        char cwd[MAX_PATH] = {0};
-                        platform_get_current_dir(cwd, sizeof(cwd));
-                        char target_drive = platform_get_drive_letter(cwd);
-                        
-                        if (isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                            target_drive = (char)toupper((unsigned char)opts.search[0]);
-                        }
-                        
-                        if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-                            db = db_load_auto(target_db);
-                        }
-                    }
+                    db = agent_load_target_db(&opts, NULL, 0);
                     owns_db = true;
                 }
-                
                 int count = agent_mode_tree(db, &opts);
                 result = (count > 0) ? 0 : 1;
                 if (db && owns_db) db_free(db);
                 break;
             }
             case AGENT_SUB_CHECK: {
-                /* Load database for check */
                 NcdDatabase *db = NULL;
                 if (opts.agent_check_db_age || opts.agent_check_stats || opts.has_search) {
-                    char target_db[NCD_MAX_PATH] = {0};
-                    if (opts.db_override[0]) {
-                        platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
-                        db = db_load_auto(target_db);
-                    } else {
-                        char cwd[MAX_PATH] = {0};
-                        platform_get_current_dir(cwd, sizeof(cwd));
-                        char target_drive = platform_get_drive_letter(cwd);
-                        
-                        if (opts.has_search && isalpha((unsigned char)opts.search[0]) && opts.search[1] == ':') {
-                            target_drive = (char)toupper((unsigned char)opts.search[0]);
-                        }
-                        
-                        if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-                            db = db_load_auto(target_db);
-                        }
-                    }
+                    db = agent_load_target_db(&opts, NULL, 0);
                 }
-                
                 result = agent_mode_check(db, &opts);
                 if (db) db_free(db);
                 break;
             }
             case AGENT_SUB_COMPLETE: {
-                /* Complete doesn't need database, but can use it if available */
-                NcdDatabase *db = NULL;
-                char target_db[NCD_MAX_PATH] = {0};
-                if (opts.db_override[0]) {
-                    platform_strncpy_s(target_db, sizeof(target_db), opts.db_override);
-                    db = db_load_auto(target_db);
-                } else {
-                    char cwd[MAX_PATH] = {0};
-                    platform_get_current_dir(cwd, sizeof(cwd));
-                    char target_drive = platform_get_drive_letter(cwd);
-                    
-                    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-                        db = db_load_auto(target_db);
-                    }
-                }
-                
+                NcdDatabase *db = agent_load_target_db(&opts, NULL, 0);
                 result = agent_mode_complete(db, &opts);
                 if (db) db_free(db);
                 break;

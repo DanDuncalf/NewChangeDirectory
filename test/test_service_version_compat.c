@@ -12,123 +12,20 @@
  */
 
 #include "test_framework.h"
-#include "../src/control_ipc.h"
-#include "../src/ncd.h"
-#include "../src/platform.h"
+#include "service_test_common.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
-#include <process.h>
-#include <tlhelp32.h>
 #else
 #include <unistd.h>
-#include <signal.h>
 #endif
-
-#include "test_posix_exit.h"
 
 /* --------------------------------------------------------- test utilities     */
 
 #define SERVICE_TIMEOUT 10
-
-/* Resolve service executable path */
-static const char* get_service_exe(void) {
-#if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA("NCDService.exe");
-    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
-        return "NCDService.exe";
-    return "..\\NCDService.exe";
-#else
-    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
-    return "../ncd_service";
-#endif
-}
-
-/* Check if service executable exists */
-static bool service_executable_exists(void) {
-    const char *exe = get_service_exe();
-#if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA(exe);
-    return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
-#else
-    return (access(exe, X_OK) == 0);
-#endif
-}
-
-/* Run service command */
-static int run_service_command(const char *cmd) {
-    char full_cmd[512];
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_exe(), cmd);
-    
-#if NCD_PLATFORM_WINDOWS
-    STARTUPINFOA si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {0};
-    
-    if (!CreateProcessA(NULL, full_cmd, NULL, NULL, FALSE,
-                       CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        return -1;
-    }
-    
-    WaitForSingleObject(pi.hProcess, 5000);
-    DWORD exitCode = 1;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    
-    return (int)exitCode;
-#else
-    int status = system(full_cmd);
-    return safe_exit_code(status);
-#endif
-}
-
-/* Wait for service to reach expected state */
-static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
-    for (int i = 0; i < timeout_seconds * 10; i++) {
-        bool currently_running = ipc_service_exists();
-        if (currently_running == expected_running) {
-            return true;
-        }
-        platform_sleep_ms(100);
-    }
-    return false;
-}
-
-/* Ensure service is stopped */
-static void ensure_service_stopped(void) {
-    if (!ipc_service_exists()) {
-        return;
-    }
-    
-    run_service_command("stop");
-    wait_for_service_state(false, 5);
-    
-    /* Force kill if still running */
-#if NCD_PLATFORM_WINDOWS
-    if (ipc_service_exists()) {
-        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (hSnap != INVALID_HANDLE_VALUE) {
-            PROCESSENTRY32 pe = {sizeof(pe)};
-            if (Process32First(hSnap, &pe)) {
-                do {
-                    if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
-                        HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
-                        if (hProc) {
-                            TerminateProcess(hProc, 1);
-                            CloseHandle(hProc);
-                        }
-                    }
-                } while (Process32Next(hSnap, &pe));
-            }
-            CloseHandle(hSnap);
-        }
-    }
-#endif
-    wait_for_service_state(false, 2);
-}
 
 /* Ensure service is running */
 static bool ensure_service_running(void) {
@@ -140,7 +37,7 @@ static bool ensure_service_running(void) {
         return false;
     }
     
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     return wait_for_service_state(true, SERVICE_TIMEOUT);
 }
 

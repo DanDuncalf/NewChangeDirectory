@@ -12,35 +12,24 @@
  */
 
 #include "test_framework.h"
-#include "../src/control_ipc.h"
-#include "../src/ncd.h"
-#include "../src/platform.h"
+#include "service_test_common.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
-#include <tlhelp32.h>
 #else
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
-
-#include "test_posix_exit.h"
 
 /* --------------------------------------------------------- test utilities     */
 
 /* Maximum time to wait for service state changes */
 #define SERVICE_TIMEOUT 10
 
-/* Timeout for graceful shutdown */
-#define GRACEFUL_SHUTDOWN_TIMEOUT 3
-
-static const char* get_service_exe(void);
-static const char* get_ncd_exe(void);
-
-/* Run command and capture output */
+/* Run a generic command and capture output */
 static int run_command(const char *cmd, char *output, size_t output_size) {
 #if NCD_PLATFORM_WINDOWS
     SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
@@ -104,82 +93,11 @@ static int run_command(const char *cmd, char *output, size_t output_size) {
 #endif
 }
 
-/* Run service command */
-static int run_service_command(const char *cmd) {
-    char full_cmd[512];
-    char output[256] = {0};
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_exe(), cmd);
-    return run_command(full_cmd, output, sizeof(output));
-}
-
 /* Run ncd command and capture output */
 static int run_ncd_command(const char *args, char *output, size_t output_size) {
     char full_cmd[512];
     snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_ncd_exe(), args);
     return run_command(full_cmd, output, output_size);
-}
-
-/* Wait for service to reach expected state */
-static bool wait_for_service_state(bool expected_running, int timeout_seconds) {
-    for (int i = 0; i < timeout_seconds * 10; i++) {
-        bool currently_running = ipc_service_exists();
-        if (currently_running == expected_running) {
-            return true;
-        }
-        platform_sleep_ms(100);
-    }
-    return false;
-}
-
-/* Force terminate service process */
-static void force_terminate_service(void) {
-#if NCD_PLATFORM_WINDOWS
-    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnap != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32 pe = {sizeof(pe)};
-        if (Process32First(hSnap, &pe)) {
-            do {
-                if (_stricmp(pe.szExeFile, "NCDService.exe") == 0) {
-                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
-                    if (hProc) {
-                        TerminateProcess(hProc, 1);
-                        CloseHandle(hProc);
-                    }
-                }
-            } while (Process32Next(hSnap, &pe));
-        }
-        CloseHandle(hSnap);
-    }
-#else
-    /* Kill both the shell wrapper (ncd_service) and the actual binary (NCDService) */
-    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
-    /* Clean up PID file so the shell wrapper doesn't think it's still running */
-    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
-#endif
-    /* Wait for process to actually exit */
-    for (int i = 0; i < 30; i++) {
-        if (!ipc_service_exists()) break;
-        platform_sleep_ms(100);
-    }
-}
-
-/* Wait for the service process to fully exit (mutex released).
- * The IPC pipe closes before the mutex during shutdown, so
- * ipc_service_exists() alone is not sufficient. */
-static void wait_for_service_fully_exited(int timeout_seconds) {
-#if NCD_PLATFORM_WINDOWS
-    /* The service holds a named mutex while running.  Wait for it to
-     * disappear so the next start won't see "Already running". */
-    for (int i = 0; i < timeout_seconds * 10; i++) {
-        HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, "NCDService_Instance_7D3F9A2E");
-        if (!hMutex) return;  /* mutex gone - service fully exited */
-        CloseHandle(hMutex);
-        platform_sleep_ms(100);
-    }
-#else
-    (void)timeout_seconds;
-    /* On Linux the pipe check is sufficient */
-#endif
 }
 
 static void ensure_ncd_test_dir_exists(void) {
@@ -205,44 +123,6 @@ static void ensure_ncd_test_dir_exists(void) {
 #endif
 }
 
-/* Ensure service is stopped - tries graceful first, then force kill */
-static void ensure_service_stopped(void) {
-    if (!ipc_service_exists()) {
-        /* Pipe is gone, but service process may still be cleaning up.
-         * Wait for the mutex to be released too. */
-        wait_for_service_fully_exited(5);
-        return;
-    }
-
-    /* Try graceful stop first */
-    run_service_command("stop");
-
-    /* Wait for graceful shutdown */
-    bool stopped = wait_for_service_state(false, GRACEFUL_SHUTDOWN_TIMEOUT);
-    if (stopped) {
-        wait_for_service_fully_exited(5);
-        return;
-    }
-
-    /* Graceful shutdown timed out - force kill */
-    printf("  [WARNING] Graceful shutdown timed out, force terminating...\n");
-    force_terminate_service();
-    wait_for_service_fully_exited(3);
-}
-
-/* Resolve service executable path */
-static const char* get_service_exe(void) {
-#if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA("NCDService.exe");
-    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
-        return "NCDService.exe";
-    return "..\\NCDService.exe";
-#else
-    if (access("ncd_service", X_OK) == 0) return "./ncd_service";
-    return "../ncd_service";
-#endif
-}
-
 /* Resolve NCD executable path */
 static const char* get_ncd_exe(void) {
 #if NCD_PLATFORM_WINDOWS
@@ -260,13 +140,11 @@ static const char* get_ncd_exe(void) {
 static bool executables_exist(void) {
 #if NCD_PLATFORM_WINDOWS
     DWORD attribs;
-    attribs = GetFileAttributesA(get_service_exe());
-    bool service_exists = (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
     attribs = GetFileAttributesA(get_ncd_exe());
     bool ncd_exists = (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
-    return service_exists && ncd_exists;
+    return service_executable_exists() && ncd_exists;
 #else
-    return (access(get_service_exe(), X_OK) == 0) && (access(get_ncd_exe(), X_OK) == 0);
+    return service_executable_exists() && (access(get_ncd_exe(), X_OK) == 0);
 #endif
 }
 
@@ -305,7 +183,7 @@ TEST(help_shows_service_running_when_service_active) {
     
     /* Start service */
     ensure_ncd_test_dir_exists();
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -435,7 +313,7 @@ TEST(agent_service_status_running) {
 
     /* Start service */
     ensure_ncd_test_dir_exists();
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
 
@@ -482,7 +360,7 @@ TEST(agent_service_status_json_running) {
     
     /* Start service */
     ensure_ncd_test_dir_exists();
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     
@@ -523,12 +401,12 @@ TEST(agent_service_status_after_stop) {
     
     /* Start service */
     ensure_ncd_test_dir_exists();
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     
     /* Stop service */
-    run_service_command("stop");
+    run_service_command("stop", NULL, 0);
     bool stopped = wait_for_service_state(false, SERVICE_TIMEOUT);
     ASSERT_TRUE(stopped);
     
@@ -580,7 +458,7 @@ TEST(ncd_search_works_with_service) {
     
     /* Start service */
     ensure_ncd_test_dir_exists();
-    run_service_command("start");
+    run_service_command("start", NULL, 0);
     bool started = wait_for_service_state(true, SERVICE_TIMEOUT);
     ASSERT_TRUE(started);
     

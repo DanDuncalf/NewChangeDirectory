@@ -27,16 +27,6 @@
  * Helpers
  * ------------------------------------------------------------------ */
 
-#if NCD_PLATFORM_WINDOWS
-static void get_temp_dir(char *buf, size_t size, const char *suffix)
-{
-    const char *tmp = getenv("TEMP");
-    if (!tmp) tmp = getenv("TMP");
-    if (!tmp) tmp = "/tmp";
-    snprintf(buf, size, "%s\\ncd_a1_%s", tmp, suffix);
-}
-#endif
-
 static void rm_rf(const char *path)
 {
 #if NCD_PLATFORM_WINDOWS

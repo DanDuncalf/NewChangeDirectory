@@ -1,0 +1,251 @@
+﻿# NCD Test Suite Quality Remediation Plan
+
+Date: 2026-05-08
+Scope: `test/` C tests, test harness scripts, and test utility code
+Objective: make the test suite deterministic, DRY, platform-abstracted, and trustworthy for staff-level engineering quality.
+
+---
+
+## Audit Method
+
+1. Full repository scan of tracked `test/` sources and scripts.
+2. Pattern analysis for skip behavior, dead code, duplicated helpers, platform conditionals, and fragile command execution.
+3. Targeted manual review of high-risk files.
+
+---
+
+## Core Quality Rules (Required)
+
+1. A skipped test is never counted as passed.
+2. Platform branching belongs in shared test helpers, not repeated in every test file.
+3. Service/process orchestration helpers must be centralized and reused.
+4. Shell command construction must be quoted/escaped and path-safe.
+5. Sleep-based synchronization should be replaced with bounded condition polling whenever possible.
+
+---
+
+## Priority Legend
+
+- T0: correctness risk in test verdicts or regression coverage (fix first)
+- T1: high-value DRY/platform/bug-risk cleanup
+- T2: maintainability and readability improvements
+- T3: nice-to-have quality polish
+
+---
+
+## T0 - Correctness / Trustworthiness
+
+### T0.1 - Skip-as-pass semantics in C test framework
+- Evidence:
+  - `test/test_framework.h:79-89` (`RUN_TEST`) treats any `test_*() == 0` as PASSED.
+  - Many tests print `SKIP:` then `return 0;` (examples: `test/test_service_rescan.c:130`, `test/test_service_integration.c:628`).
+- Risk: false-green test runs with missing executable/runtime prerequisites.
+- Fix:
+  - Add explicit skip signaling to framework (`TEST_SKIP()` macro and `tests_skipped` counter).
+  - Update `RUN_TEST` to classify PASS/FAIL/SKIP distinctly.
+  - Fail suite if required test classes are skipped unexpectedly.
+- Required tests:
+  - New `test/test_framework_contract.c` validating PASS/FAIL/SKIP accounting.
+
+### T0.2 - P0.1 regression test is missing from suite
+- Evidence:
+  - `test/test_service_database.c` currently has no `regression_rescan_no_data_loss` test.
+  - Main remediation plan previously referenced this test as existing.
+- Risk: known service rescan data-loss path is not guarded by regression coverage.
+- Fix:
+  - Add `TEST(regression_rescan_no_data_loss)` in `test/test_service_database.c`.
+  - Gate with `NCD_ENABLE_KNOWN_BUG_TESTS=1` until fixed; then enforce always-on.
+- Required tests:
+  - Red baseline with known-bug mode enabled, then green post-fix.
+
+### T0.3 - Dead disabled test block in source (`#if 0` nested)
+- Evidence:
+  - `test/test_service_integration.c:656-682` has nested `#if 0` around a full test.
+- Risk: dead code rots and silently diverges from behavior expectations.
+- Fix:
+  - Either delete block or convert to active test with proper registration and guards.
+- Required tests:
+  - If re-enabled, ensure it runs under harness and fails meaningfully when behavior regresses.
+
+---
+
+## T1 - DRY, Platform Boundaries, and Potential Bugs
+
+### T1.1 - Service helper logic duplicated across 10+ files
+- Evidence (representative):
+  - `test/test_service_integration.c:106` (`run_service_command`)
+  - `test/test_service_lifecycle.c:70`
+  - `test/test_service_ipc.c:77`
+  - `test/test_service_rescan.c:54`
+  - `test/test_service_stress.c:62`
+  - Similar duplication for `service_executable_exists`, `ensure_service_stopped`, `wait_for_service_state`, `force_terminate_service`.
+- Risk: behavioral drift, inconsistent timeouts, and repeated bugs.
+- Fix:
+  - Create `test/service_test_common.h/.c` and migrate all service tests to it.
+  - Centralize start/stop/wait/process-check logic.
+- Required tests:
+  - New unit tests for helper contract (start-stop idempotency, timeout behavior).
+
+### T1.2 - Agent integration helper duplication across test files
+- Evidence:
+  - Repeated `get_temp_dir`, `rm_rf`, `find_exe`, `run_agent`, `create_test_db` across:
+    - `test/test_agent_complete_mkdir_quit.c`
+    - `test/test_agent_ls_check.c`
+    - `test/test_agent_query_tree.c`
+    - `test/test_agent_mv.c`
+    - `test/test_agent_rmdir.c`
+    - `test/test_agent_verify.c`
+- Risk: bug fixes must be patched repeatedly; quoting/path rules diverge.
+- Fix:
+  - Create `test/agent_test_common.h/.c` and delete per-file clones.
+- Required tests:
+  - One helper-focused test binary validating temp-dir and executable-discovery behavior.
+
+### T1.3 - Unquoted Windows command environment assignment (path with spaces bug)
+- Evidence:
+  - `test/test_agent_mv.c:106` and `test/test_agent_rmdir.c:93`: `set LOCALAPPDATA=%s&& ...`
+- Risk: breaks in user profiles with spaces; potential command injection in test env strings.
+- Fix:
+  - Quote and sanitize env assignments (`set "LOCALAPPDATA=%s" && ...`).
+- Required tests:
+  - Add test case with temp path containing spaces.
+
+### T1.4 - Process exit-status handling is unsafe on POSIX
+- Evidence:
+  - `return WEXITSTATUS(status);` without `WIFEXITED(status)` in multiple files:
+    - `test/test_service_integration.c:101`
+    - `test/test_service_lifecycle.c:132`
+    - `test/test_service_ipc.c:146`
+    - `test/test_service_rescan.c:98`
+    - `test/test_service_stress.c:106`
+    - and others.
+- Risk: undefined/incorrect status reporting when child exits via signal.
+- Fix:
+  - Centralize decode helper (`normalize_exit_status`) and use everywhere.
+- Required tests:
+  - Simulated signaled child process case in helper tests.
+
+### T1.5 - Large platform-specific conditional blocks in tests
+- Evidence (examples):
+  - `test/test_service_init_db.c:152-300` (`#if NCD_PLATFORM_WINDOWS`, span ~149 lines)
+  - `test/test_service_stress.c:147-295` (span ~149 lines)
+  - `test/test_service_ipc.c:192-340` (span ~149 lines)
+  - `test/test_ipc_extended.c:130-234` (span ~105 lines)
+- Risk: giant dual implementations reduce readability and increase platform drift.
+- Fix:
+  - Move platform specifics to helper APIs in `service_test_common` and `ipc_test_common`.
+- Required tests:
+  - Cross-platform parity checks that call shared helper APIs.
+
+### T1.6 - Sleep-driven synchronization causes flakiness and slow tests
+- Evidence:
+  - High density of `platform_sleep_ms(...)` in service tests (`test_service_rescan.c`, `test_service_stress.c`, `test_service_race_conditions.c`, etc.).
+- Risk: nondeterministic timing, longer runtime, occasional CI flakes.
+- Fix:
+  - Replace fixed sleeps with `wait_until(predicate, timeout, poll_interval)` helper.
+  - Keep sleeps only where explicitly testing timing behavior.
+- Required tests:
+  - Helper tests proving timeout and wake behavior.
+
+### T1.7 - Repeated shell-based recursive delete wrappers (`rm_rf`) in agent tests
+- Evidence:
+  - Repeated `system("rmdir /s /q ...")` and `system("rm -rf ...")` in 8+ files.
+- Risk: command quoting risks and repeated shell dependence.
+- Fix:
+  - Replace with one safe helper in `agent_test_common` using platform wrappers where possible.
+- Required tests:
+  - Path with spaces and special chars deletion tests.
+
+---
+
+## T2 - Maintainability and Dead Code
+
+### T2.1 - Unused static helper
+- Evidence:
+  - `test/test_agent_mkdir_extended.c:31` `get_temp_dir` appears unused.
+- Risk: dead code and reader confusion.
+- Fix:
+  - Remove unused helper or use shared helper.
+
+### T2.2 - Monolithic test files
+- Evidence:
+  - `test/service_race_tester.c` (~1281 lines)
+  - `test/test_database.c` (~1138 lines)
+  - `test/test_scanner_extended.c` (~1002 lines)
+- Risk: difficult review/debug, high merge-conflict probability.
+- Fix:
+  - Split by domain and helper layer; keep each test file under ~500 lines when practical.
+
+### T2.3 - Legacy disabled tests in Makefile comments
+- Evidence:
+  - `test/Makefile` comments show disabled agent tests (`test_agent_mkdir`, `test_mkdirs`) rather than explicit harness policy.
+- Risk: stale intent and confusing coverage expectations.
+- Fix:
+  - Move disabled rationale into a single test manifest with owner and re-enable criteria.
+
+---
+
+## T3 - Polish
+
+### T3.1 - Normalize test command wrappers and output formatting
+- Standardize command execution helpers and logging format between `.bat`, `.sh`, and Python runner glue.
+
+### T3.2 - Add test-health dashboard
+- Generate summary metrics: skipped-by-reason, flaky retries, platform parity failures, and missing executable rates.
+
+---
+
+## Implementation Waves (Parallel-Friendly)
+
+### Wave A (T0 first, blocking)
+1. Add framework skip semantics and contract tests.
+2. Restore/add `regression_rescan_no_data_loss`.
+3. Remove/resolve `#if 0` dead test block.
+
+### Wave B (shared helper extraction)
+1. Build `service_test_common` and migrate service test files.
+2. Build `agent_test_common` and migrate agent test files.
+3. Add centralized exit-status normalize helper.
+
+### Wave C (stability + platform cleanup)
+1. Replace fixed sleeps with wait-until helper.
+2. Shrink large `#if` blocks by moving logic into helper implementation files.
+3. Fix Windows quoting and path handling in command construction.
+
+### Wave D (maintainability)
+1. Remove dead helpers.
+2. Split monolithic test files.
+3. Replace disabled-comment patterns with tracked manifest.
+
+---
+
+## DeepSeek Subagent Ownership Plan
+
+1. Agent T-A (framework + harness)
+   - Owns: `test/test_framework.h`, `test/test_framework.c`, `test/runner.py`, `test/ncd_testlib/executor.py`
+   - Items: T0.1, parts of reporting semantics.
+2. Agent T-B (service helper consolidation)
+   - Owns: service-oriented test C files + new `test/service_test_common.*`
+   - Items: T1.1, T1.4, T1.6.
+3. Agent T-C (agent helper consolidation)
+   - Owns: `test/test_agent_*.c` + new `test/agent_test_common.*`
+   - Items: T1.2, T1.3, T1.7, T2.1.
+4. Agent T-D (dead code / manifest / structure)
+   - Owns: `test/Makefile`, integration test file cleanup, file splitting plan
+   - Items: T0.3, T2.2, T2.3, T3.1.
+
+Rules:
+- Disjoint write scopes only.
+- Every bug-risk item must include red->green evidence.
+- Full integration run required after each wave.
+
+---
+
+## Completion Gate
+
+- [ ] No skipped tests are reported as passed.
+- [ ] All critical regression tests exist and are runnable via harness.
+- [ ] Duplicated service/agent helpers replaced by shared utility modules.
+- [ ] Platform `#if` blocks in test files reduced to thin wrappers.
+- [ ] Command invocation and exit-status handling are safe and consistent.
+- [ ] Full report (`python test/generate_report.py`) remains green with explicit skip accounting.

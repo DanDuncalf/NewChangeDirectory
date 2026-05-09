@@ -6,6 +6,26 @@
 
 ---
 
+## Validation Snapshot (2026-05-08)
+
+This plan was revalidated against current `src/` and `../shared` code.
+
+Current status of critical items:
+- P0.1 `perform_rescan` still contains placeholder scan path and can publish empty drive payloads.
+- P0.2 pending queue operations are still not lock-protected.
+- P0.3 service control flags are still `volatile int` instead of atomic operations.
+- P0.4 CRC64 init is still guarded by unsynchronized boolean state.
+- P0.5 matcher `db->name_index` rebuild path is still unsynchronized.
+- P0.6 scan paths still mutate shared drive buffers while matcher reads.
+- P0.7 `ncd_con_init` is still unsynchronized one-time initialization.
+- P0.8 snapshot publication still unlinks/recreates SHM names per publish.
+
+Plan accuracy note:
+- Most items remain valid.
+- Line numbers may drift as files evolve; treat function names as authoritative anchors.
+
+---
+
 ## Mandatory Red-Test-First Policy (Added 2026-05-08)
 
 Project state can be "all tests green" while known defects still exist if tests are skipped or absent. From this point forward, every correctness bug in this plan must be handled with test-first workflow:
@@ -38,7 +58,7 @@ Status legend:
 
 | Plan ID | Status | Test file + test name | Required failing assertion before fix |
 |---|---|---|---|
-| P0.1 | EXISTS-SKIP | `test/test_service_database.c` -> `TEST(regression_rescan_no_data_loss)` | Service-side rescan replacement must not reduce total dirs to zero; currently should fail when known-bug mode is enabled |
+| P0.1 | MISSING | `test/test_service_database.c` -> `TEST(regression_rescan_no_data_loss)` | Add this regression test first: service-side rescan replacement must not reduce total dirs to zero |
 | P0.2 | MISSING | `test/test_service_lifecycle.c` -> `TEST(regression_pending_queue_race)` | Under concurrent enqueue/dequeue, queue invariants (`count`, `head`, `tail`) must remain consistent; current code should show corruption or mismatch |
 | P0.3 | MISSING | `test/test_service_lifecycle.c` -> `TEST(regression_service_flags_atomicity)` | Concurrent set/read of control flags must observe ordered transitions; current volatile-only behavior should show missed transitions under stress |
 | P0.4 | MISSING | `test/test_shared_state.c` -> `TEST(regression_crc64_init_race)` | Concurrent first-call `shm_crc64()` must produce deterministic checksum and no partial-table corruption |
@@ -418,7 +438,9 @@ Execution requirement per row:
 4. For each bug item, capture:
    - baseline failing output
    - fixing commit hash
-   - passing output after fix`r`n`r`n### Sprint 1 (Safety) â€” P0 items
+   - passing output after fix
+
+### Sprint 1 (Safety) â€” P0 items
 1. P0.1: Fix/disable broken `perform_rescan`
    - **Verify:** `test_service_database.exe` â†’ `regression_rescan_no_data_loss` transitions from SKIP to PASS
    - Remove the SKIP guard in the test to hard-enforce the regression check
@@ -514,4 +536,6 @@ Objective: remediate all plan items with maximum parallelism while preventing me
 - [ ] Regression test now passes.
 - [ ] No new failures in unit/integration/full report.
 - [ ] Plan item marked done with links to test evidence.
+
+
 

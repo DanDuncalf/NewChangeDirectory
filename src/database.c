@@ -227,6 +227,55 @@ void db_make_mutable(NcdDatabase *db)
     db->blob_buf = NULL;
 }
 
+/* ============================================================ atomic write */
+
+/*
+ * db_atomic_file_install  --  Atomically install a pre-written .tmp file
+ *
+ * Implements the atomic write-with-backup pattern:
+ *   1. If final file exists, move it to .old (backup)
+ *   2. Move .tmp to final name (atomic rename)
+ *   3. On success, delete .old; on failure, restore from .old
+ *
+ * The caller is responsible for writing data to the .tmp file, fsync'ing,
+ * and freeing any buffers.  The tmp_path must equal path + ".tmp".
+ *
+ * 'label' is used in error messages (e.g., "database", "metadata").
+ */
+static bool db_atomic_file_install(const char *path, const char *tmp_path,
+                                  const char *label)
+{
+    char old_path[MAX_PATH];
+    snprintf(old_path, sizeof(old_path), "%s.old", path);
+    
+    /* Step 1: Backup existing file to .old if it exists */
+    if (platform_file_exists(path)) {
+        /* Remove any stale .old file first */
+        platform_delete_file(old_path);
+        if (!platform_move_file(path, old_path)) {
+            db_set_error("Failed to backup existing %s to .old: %s",
+                        label, strerror(errno));
+            platform_delete_file(tmp_path);
+            return false;
+        }
+    }
+    
+    /* Step 2: Atomic rename .tmp to final */
+    if (!platform_move_file_replace(tmp_path, path)) {
+        db_set_error("Failed to install %s file: %s", label, strerror(errno));
+        /* Try to restore from backup on failure */
+        if (platform_file_exists(old_path)) {
+            platform_move_file_replace(old_path, path);
+        }
+        platform_delete_file(tmp_path);
+        return false;
+    }
+    
+    /* Step 3: Success - remove backup */
+    platform_delete_file(old_path);
+    return true;
+}
+
 /* ============================================================ path helper */
 
 char *db_default_path(char *buf, size_t buf_size)
@@ -1496,38 +1545,9 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
     fclose(f);
     free(buf);
 
-    /* Atomic file replacement with backup:
-     * 1. If final file exists, move it to .old (backup)
-     * 2. Move .tmp to final name (atomic rename)
-     * 3. On success, delete .old; on failure, restore from .old
-     */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    
-    /* Step 1: Backup existing file to .old if it exists */
-    if (platform_file_exists(path)) {
-        /* Remove any stale .old file first */
-        platform_delete_file(old_path);
-        if (!platform_move_file(path, old_path)) {
-            db_set_error("Failed to backup existing database to .old: %s", strerror(errno));
-            platform_delete_file(tmp_path);
-            return false;
-        }
-    }
-    
-    /* Step 2: Atomic rename .tmp to final */
-    if (!platform_move_file_replace(tmp_path, path)) {
-        db_set_error("Failed to install database file: %s", strerror(errno));
-        /* Try to restore from backup on failure */
-        if (platform_file_exists(old_path)) {
-            platform_move_file_replace(old_path, path);
-        }
-        platform_delete_file(tmp_path);
+    if (!db_atomic_file_install(path, tmp_path, "database")) {
         return false;
     }
-    
-    /* Step 3: Success - remove backup */
-    platform_delete_file(old_path);
     return true;
 }
 
@@ -2778,38 +2798,9 @@ bool db_metadata_save(NcdMetadata *meta)
         return false;
     }
     
-    /* Atomic file replacement with backup:
-     * 1. If final file exists, move it to .old (backup)
-     * 2. Move .tmp to final name (atomic rename)
-     * 3. On success, delete .old; on failure, restore from .old
-     */
-    char old_path[MAX_PATH];
-    snprintf(old_path, sizeof(old_path), "%s.old", path);
-    
-    /* Step 1: Backup existing file to .old if it exists */
-    if (platform_file_exists(path)) {
-        /* Remove any stale .old file first */
-        platform_delete_file(old_path);
-        if (!platform_move_file(path, old_path)) {
-            db_set_error("Failed to backup existing metadata to .old: %s", strerror(errno));
-            platform_delete_file(tmp_path);
-            return false;
-        }
-    }
-    
-    /* Step 2: Atomic rename .tmp to final */
-    if (!platform_move_file_replace(tmp_path, path)) {
-        db_set_error("Failed to install metadata file: %s", strerror(errno));
-        /* Try to restore from backup on failure */
-        if (platform_file_exists(old_path)) {
-            platform_move_file_replace(old_path, path);
-        }
-        platform_delete_file(tmp_path);
+    if (!db_atomic_file_install(path, tmp_path, "metadata")) {
         return false;
     }
-    
-    /* Step 3: Success - remove backup */
-    platform_delete_file(old_path);
     
     meta->config_dirty = false;
     meta->groups_dirty = false;

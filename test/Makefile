@@ -124,22 +124,22 @@ test_scanner: test_scanner.c test_framework.c $(SCANNER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - lazy loading
-SERVICE_LAZY_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_LAZY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_lazy_load: test_service_lazy_load.c test_framework.c $(SERVICE_LAZY_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - parity
-SERVICE_PARITY_SOURCES = ../src/control_ipc_posix.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_PARITY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_parity: test_service_parity.c test_framework.c $(SERVICE_PARITY_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - lifecycle
-SERVICE_LIFECYCLE_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_LIFECYCLE_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_lifecycle: test_service_lifecycle.c test_framework.c $(SERVICE_LIFECYCLE_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - integration
-SERVICE_INTEGRATION_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_INTEGRATION_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_integration: test_service_integration.c test_framework.c $(SERVICE_INTEGRATION_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -149,12 +149,12 @@ test_service_database: test_service_database.c test_framework.c $(SERVICE_DATABA
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - empty database scenario
-SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_empty_db: test_service_empty_db.c test_framework.c $(SERVICE_EMPTY_DB_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - Tier 5 IPC integration
-SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -164,12 +164,12 @@ test_service_logging: test_service_logging.c test_framework.c $(SERVICE_LOGGING_
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - version compatibility
-SERVICE_VERSION_COMPAT_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_VERSION_COMPAT_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_version_compat: test_service_version_compat.c test_framework.c $(SERVICE_VERSION_COMPAT_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service tests - legacy shutdown
-LEGACY_SHUTDOWN_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+LEGACY_SHUTDOWN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_legacy_service_shutdown: test_legacy_service_shutdown.c test_framework.c $(LEGACY_SHUTDOWN_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -247,7 +247,7 @@ test_shm_platform: test_shm_platform.c test_framework.c $(SHM_PLATFORM_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Tier 4 tests - IPC
-IPC_TEST_SOURCES = ../src/control_ipc_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+IPC_TEST_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_ipc: test_ipc.c test_framework.c $(IPC_TEST_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -306,7 +306,7 @@ test_key_injection: $(KEY_INJECTION_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # IPC Test Programs - Common infrastructure
-IPC_TEST_COMMON_SOURCES = ipc_test_common.c ../src/control_ipc_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+IPC_TEST_COMMON_SOURCES = ipc_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
 # Phase 1: Basic connectivity tests
 ipc_ping_test: ipc_ping_test.c $(IPC_TEST_COMMON_SOURCES)
@@ -362,12 +362,12 @@ test_stress: test_stress.c test_framework.c $(AGENT4_SOURCES)
 
 # Agent 2: Service Infrastructure Tests
 # Service stress tests
-SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_stress: test_service_stress.c test_framework.c $(SERVICE_STRESS_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Service rescan tests
-SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_rescan: test_service_rescan.c test_framework.c $(SERVICE_RESCAN_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -375,7 +375,7 @@ test_service_init_db: test_service_init_db.c test_framework.c $(SERVICE_RESCAN_S
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # IPC extended tests
-IPC_EXTENDED_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+IPC_EXTENDED_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_ipc_extended: test_ipc_extended.c test_framework.c $(IPC_EXTENDED_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -385,7 +385,7 @@ test_shm_stress: test_shm_stress.c test_framework.c $(SHM_STRESS_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # IPC fuzz tests
-FUZZ_IPC_SOURCES = ../src/control_ipc_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+FUZZ_IPC_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
@@ -596,7 +596,7 @@ ipc-tests: ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
 	@echo "IPC test programs built successfully."
 
 # Standalone threaded service race tester (not part of harness yet)
-service_race_tester: service_race_tester.c ipc_test_common.c ../src/control_ipc_posix.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
+service_race_tester: service_race_tester.c ipc_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:

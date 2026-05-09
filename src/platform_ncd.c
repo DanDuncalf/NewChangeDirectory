@@ -68,48 +68,74 @@ bool ncd_is_system_mode(void)
     return g_ncd_system_mode;
 }
 
+/*
+ * ncd_platform_user_data_dir  --  Resolve the user-mode data directory
+ *
+ * Returns the base path for per-user NCD data files (creates the
+ * directory if it doesn't exist). Used by both default and per-drive
+ * path builders to avoid duplicating the XDG/LOCALAPPDATA resolution.
+ *
+ * On success, writes the directory path to buf (without trailing sep)
+ * and returns true.  On failure, returns false.
+ */
+static bool ncd_platform_user_data_dir(char *buf, size_t buf_size)
+{
+#if NCD_PLATFORM_WINDOWS
+    if (!platform_get_env("LOCALAPPDATA", buf, buf_size)) return false;
+    /* Append \NCD subdirectory */
+    size_t len = strlen(buf);
+    int need = snprintf(buf + len, buf_size - len, "%sNCD", NCD_PATH_SEP);
+    if (need <= 0 || (size_t)need >= buf_size - len) return false;
+    platform_create_dir(buf);
+    return true;
+#else
+    const char *xdg = getenv("XDG_DATA_HOME");
+    const char *home = xdg && xdg[0] ? xdg : getenv("HOME");
+    if (!home || !home[0]) return false;
+
+    if (xdg && xdg[0]) {
+        size_t l = strlen(xdg);
+        if (l >= buf_size) return false;
+        memcpy(buf, xdg, l + 1);
+    } else {
+        int w = snprintf(buf, buf_size, "%s/.local/share", home);
+        if (w <= 0 || (size_t)w >= buf_size) return false;
+    }
+
+    /* mkdir -p style: create base and ncd subdir */
+    size_t base_len = strlen(buf);
+    if (base_len + 5 >= buf_size) return false;
+    memcpy(buf + base_len, "/ncd", 5);
+    buf[base_len + 4] = '\0';
+    platform_create_dir(buf);
+    return true;
+#endif
+}
+
 bool ncd_platform_db_default_path(char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0) return false;
     
-    /* System mode: use shared system directory */
     if (ncd_is_system_mode()) {
         platform_create_dir(NCD_SYSTEM_DIR);
         int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
         return written > 0 && (size_t)written < buf_size;
     }
     
+    char data_dir[MAX_PATH];
+    if (!ncd_platform_user_data_dir(data_dir, sizeof(data_dir))) return false;
 #if NCD_PLATFORM_WINDOWS
-    char local_app[MAX_PATH];
-    if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;
-    int written = snprintf(buf, buf_size, "%s%s%s", local_app, NCD_PATH_SEP, NCD_DB_FILENAME);
-    return written > 0 && (size_t)written < buf_size;
+    int written = snprintf(buf, buf_size, "%s%s%s", data_dir, NCD_PATH_SEP, NCD_DB_FILENAME);
 #else
-    const char *xdg = getenv("XDG_DATA_HOME");
-    const char *home = xdg && xdg[0] ? xdg : getenv("HOME");
-    if (!home || !home[0]) return false;
-    char base[MAX_PATH];
-    if (xdg && xdg[0]) {
-        size_t l = strlen(xdg);
-        if (l >= sizeof(base)) return false;
-        memcpy(base, xdg, l + 1);
-    } else {
-        int w = snprintf(base, sizeof(base), "%s/.local/share", home);
-        if (w <= 0 || (size_t)w >= sizeof(base)) return false;
-    }
-    char dir[MAX_PATH + 8];
-    snprintf(dir, sizeof(dir), "%s/ncd", base);
-    platform_create_dir(dir);
-    int w = snprintf(buf, buf_size, "%s/ncd/%s", base, NCD_DB_FILENAME);
-    return w > 0 && (size_t)w < buf_size;
+    int written = snprintf(buf, buf_size, "%s/%s", data_dir, NCD_DB_FILENAME);
 #endif
+    return written > 0 && (size_t)written < buf_size;
 }
 
 bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0) return false;
     
-    /* System mode: use shared system directory */
     if (ncd_is_system_mode()) {
         platform_create_dir(NCD_SYSTEM_DIR);
 #if NCD_PLATFORM_WINDOWS
@@ -120,33 +146,14 @@ bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
         return w > 0 && (size_t)w < buf_size;
     }
     
+    char data_dir[MAX_PATH];
+    if (!ncd_platform_user_data_dir(data_dir, sizeof(data_dir))) return false;
 #if NCD_PLATFORM_WINDOWS
-    char local_app[MAX_PATH];
-    if (!platform_get_env("LOCALAPPDATA", local_app, sizeof(local_app))) return false;
-    char dir[MAX_PATH];
-    snprintf(dir, sizeof(dir), "%s%sNCD", local_app, NCD_PATH_SEP);
-    platform_create_dir(dir);
-    int w = snprintf(buf, buf_size, "%s%sNCD%sncd_%c.database", local_app, NCD_PATH_SEP, NCD_PATH_SEP, toupper((unsigned char)letter));
-    return w > 0 && (size_t)w < buf_size;
+    int written = snprintf(buf, buf_size, "%s%sncd_%c.database", data_dir, NCD_PATH_SEP, toupper((unsigned char)letter));
 #else
-    const char *xdg = getenv("XDG_DATA_HOME");
-    const char *home = xdg && xdg[0] ? xdg : getenv("HOME");
-    if (!home || !home[0]) return false;
-    char base[MAX_PATH];
-    if (xdg && xdg[0]) {
-        size_t l = strlen(xdg);
-        if (l >= sizeof(base)) return false;
-        memcpy(base, xdg, l + 1);
-    } else {
-        int w = snprintf(base, sizeof(base), "%s/.local/share", home);
-        if (w <= 0 || (size_t)w >= sizeof(base)) return false;
-    }
-    char dir[MAX_PATH + 8];
-    snprintf(dir, sizeof(dir), "%s/ncd", base);
-    platform_create_dir(dir);
-    int w = snprintf(buf, buf_size, "%s/ncd/ncd_%02x.database", base, (unsigned char)letter);
-    return w > 0 && (size_t)w < buf_size;
+    int written = snprintf(buf, buf_size, "%s/ncd_%02x.database", data_dir, (unsigned char)letter);
 #endif
+    return written > 0 && (size_t)written < buf_size;
 }
 
 /* ================================================================ NCD-specific mount enumeration */

@@ -929,7 +929,8 @@ TEST(p2_20_status_message_lifetime_safety) {
 void suite_p0_regression(void) {
     printf("\n========================================\n");
     printf("  P0 Regression Test Suite\n");
-    printf("  These tests should FAIL before fixes are applied\n");
+    printf("  Tests that FAIL indicate unresolved bugs.\n");
+    printf("  Tests that PASS indicate the fix is verified.\n");
     printf("========================================\n\n");
 
     printf("--- P0.1: perform_rescan data-loss ---\n");

@@ -241,6 +241,8 @@ cl %CFLAGS% /Fo%ARCH_OBJDIR%\shm_types.obj %SRCDIR%\shm_types.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\shm_platform_win.obj %SRCDIR%\shm_platform_win.c
 if errorlevel 1 exit /b 1
+cl %CFLAGS% /Fo%ARCH_OBJDIR%\control_ipc_common.obj %SRCDIR%\control_ipc_common.c
+if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\control_ipc_win.obj %SRCDIR%\control_ipc_win.c
 if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fo%ARCH_OBJDIR%\service_state.obj %SRCDIR%\service_state.c
@@ -276,6 +278,7 @@ link /nologo /SUBSYSTEM:CONSOLE /MANIFEST:EMBED /MANIFESTINPUT:NCD.manifest %LIN
     %ARCH_OBJDIR%\shared_state.obj ^
     %ARCH_OBJDIR%\shm_types.obj ^
     %ARCH_OBJDIR%\shm_platform_win.obj ^
+    %ARCH_OBJDIR%\control_ipc_common.obj ^
     %ARCH_OBJDIR%\control_ipc_win.obj ^
     kernel32.lib user32.lib advapi32.lib shlwapi.lib
 
@@ -301,6 +304,7 @@ link /nologo /SUBSYSTEM:CONSOLE /MANIFEST:EMBED /MANIFESTINPUT:NCD.manifest %LIN
     %ARCH_OBJDIR%\shared_state.obj ^
     %ARCH_OBJDIR%\shm_types.obj ^
     %ARCH_OBJDIR%\shm_platform_win.obj ^
+    %ARCH_OBJDIR%\control_ipc_common.obj ^
     %ARCH_OBJDIR%\control_ipc_win.obj ^
     %ARCH_OBJDIR%\sh_platform.obj ^
     %ARCH_OBJDIR%\sh_strbuilder.obj ^

@@ -103,7 +103,7 @@ static int run_agent(const char *base_dir, const char *agent_args, char *out, si
     char cmd[NCD_MAX_PATH * 4];
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
-        "set LOCALAPPDATA=%s&& set NCD_TEST_MODE=1 && %s /agent %s",
+        "set \"LOCALAPPDATA=%s\" && set NCD_TEST_MODE=1 && \"%s\" /agent %s",
         base_dir, exe, agent_args);
 #else
     snprintf(cmd, sizeof(cmd),

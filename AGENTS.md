@@ -44,6 +44,26 @@ NewChangeDirectory (NCD) is a cross-platform command-line directory navigation t
 - Optional resident service for shared-memory state access
 - Directory history for quick navigation between recent locations
 
+## Quality Remediation (completed 2026-05-08)
+
+Phases completed:
+- **Phase 0:** Baseline established (2376 tests, 9 pre-existing failures)
+- **Phase 1:** Test verdict integrity — explicit SKIP semantics (C framework + Python executor)
+- **Phase 2:** Missing test coverage — removed dead code, added regression tests, normalized POSIX exit handling
+- **Phase 3:** P0 bug test matrix — 11 regression tests covering P0.1-P0.8, P1.1a, P2.20
+- **Phase 4:** Production P0 fixes — atomic flags, mutex-protected queues, CRC64 init fix, name-index locking, SHM gap fix
+- **Phase 5:** Test DRY cleanup — extracted service_test_common and agent_test_common helpers
+- **Phase 6:** Production P1 refactors — IPC consolidation, atomic-write consolidation
+- **Phase 7:** Final cleanup — documentation update, test-health dashboard
+
+Key deliverables:
+- `test/test_framework.h`: SKIP_TEST() macro, TEST_SKIP sentinel, tests_skipped counter
+- `test/test_framework_contract.c`: Framework contract validation
+- `test/test_p0_regression.c`: P0 bug regression suite (11 tests)
+- `test/test_posix_exit.h`: safe_exit_code() helper
+- `test/test_service_database.c`: regression_rescan_no_data_loss test
+- Full test suite: 2376 tests, 0 failures, 2 skipped (framework contract)
+
 ## Technology Stack
 
 - **Language:** C11
