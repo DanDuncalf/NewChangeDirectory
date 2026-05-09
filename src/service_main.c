@@ -64,7 +64,7 @@ static atomic_int g_rescan_requested = 0;
 static atomic_int g_shutdown_requested = 0;
 #define ATOMIC_LOAD(v)  atomic_load(&(v))
 #define ATOMIC_STORE(v, val) atomic_store(&(v), (val))
-#define ATOMIC_CLEAR(v) atomic_store(&(v), 0)
+#define ATOMIC_CLEAR(v) atomic_exchange(&(v), 0)
 #endif
 static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
 
