@@ -1,0 +1,149 @@
+# NCD Remaining Test Failures Remediation Plan
+Date: 2026-05-09
+Context: After completing the combined_quality_remediation.plan (Phases 0-7).
+Current state: 14 failures, 6 skips remaining (down from 76/6).
+
+---
+
+## Current Status
+
+```
+Windows: 1177 unit tests, 3 failures, 0 skips
+Linux:   1199 unit tests, 11 failures, 6 skips
+All integration suites: PASS (including Windows Feature Tests at 54/54)
+```
+
+## Remaining Issues
+
+### 1. Windows: test_bugs.exe — 2 FAILED
+- `metadata_heuristics_bounds_check` — FAILED
+- `metadata_groups_bounds_check` — FAILED
+
+These are known-bug tests. The `BUG_CHECK_PASS()` macro (Phase 2) defaults to no-op.
+Something in the Phase 4 P0 fixes (service_state.c atomic changes) may have affected
+the heuristics/groups parsing bounds checking. These were PASSING in the Phase 2 baseline.
+
+**Fix approach:** Run `test_bugs.exe` directly to see assertion failure details.
+Check if `db_config_init_defaults` or `exclusion_init_defaults` API changed.
+These two tests may need updated expected values.
+
+### 2. Windows: test_p0_regression.exe — 1 FAILED (unknown)
+Binary shows as `unknown` — no parseable output. This means the binary crashes
+or hangs before producing test output. Previously this was the `scan_mount()` hang;
+after simplifying P0.1 to avoid real filesystem access, the crash may be from
+a multi-threaded test (P0.2-P0.6 or P2.20).
+
+**Fix approach:** Run `test_p0_regression.exe` directly via Python subprocess
+with a 30s timeout to see partial output. Isolate which test crashes.
+The `create_populated_state()` function calls `service_state_update_database()`
+which may have changed behavior after Phase 4 fixes (mutex-protected swap).
+Check for double-free: `service_state_update_database` takes ownership of `db`,
+so `db_free(db)` after `service_state_cleanup(state)` is a double-free.
+
+### 3. Linux: test_legacy_service_shutdown — 6 FAILED
+All 6 tests fail. Likely cause: the WSL service binary is stale.
+The Linux main binaries were built before the Phase 4 P0 fixes (atomic flags,
+pending queue locking). The test runner showed "Linux main binaries are up-to-date"
+but source has changed since.
+
+**Fix approach:** Force-rebuild Linux binaries:
+```bash
+rm -f NewChangeDirectory NCDService
+wsl -e bash -c 'cd /mnt/e/llama/NewChangeDirectory && ./build.sh'
+```
+Then re-run tests.
+
+### 4. Linux: test_service_integration — 5 FAILED
+Service-integration tests failing: `help_shows_service_running_when_service_active`,
+`agent_service_status_running`, `agent_service_status_json_running`,
+`agent_service_status_after_stop`, `ncd_search_works_with_service`.
+Same root cause as #3 — stale service binary.
+
+### 5. Linux: test_service_version_compat — 6 SKIPPED
+All 6 tests show SKIPPED. The migration agent converted `printf("SKIP:..."); return 0;`
+to `SKIP_TEST(...)` in this file. On WSL, `service_executable_exists()` might
+be checking the wrong path for `ncd_service`. 
+
+**Fix approach:** Check the `service_executable_exists()` implementation in
+`service_test_common.c` for the POSIX path. It may be looking for `./ncd_service`
+in the test directory instead of the project root. The SKIP_TEST macro was
+correctly applied but the precondition check is failing.
+
+### 6. Linux: test_service_integration has 1 FAILED service test
+`test_service_integration` shows 6 pass, 5 fail. The 5 failing tests require
+a running service. After rebuilding the Linux service binary, these should pass.
+
+---
+
+## Fix Order (by dependency)
+
+1. **Rebuild Linux binaries** — fixes issues 3, 4, 6
+   ```bash
+   # Delete stale Linux binaries to force rebuild
+   rm -f NewChangeDirectory NCDService
+   # The test runner will auto-rebuild via build.sh
+   ```
+
+2. **Fix test_bugs.exe failures** — run directly, check assertion details
+   ```bash
+   cd test
+   .\test_bugs.exe 2>&1 | findstr "FAIL"
+   ```
+   Check if `metadata_heuristics_bounds_check` expects 1 entry but gets 3
+   (the bug condition it was testing). May need to update expected counts.
+
+3. **Fix test_p0_regression.exe crash** — isolate test, fix double-free
+   ```bash
+   cd test
+   python -c "import subprocess; r=subprocess.run(['.\\test_p0_regression.exe'], capture_output=True, text=True, timeout=30); print(r.stdout[-2000:])"
+   ```
+   Check `create_populated_state()` — it calls `service_state_update_database(state, db, false)`
+   which takes ownership of `db`. The P0.1 test must NOT call `db_free(db)` after this.
+
+4. **Fix test_service_version_compat skips** — check service path on WSL
+   The `service_executable_exists()` in `service_test_common.c` uses:
+   ```c
+   if (access("ncd_service", X_OK) == 0) return "./ncd_service";
+   return "../ncd_service";
+   ```
+   On WSL, `ncd_service` is in the project root. Check if the CWD when
+   running Linux tests is the test/ directory or the project root.
+
+5. **Final verification**
+   ```bash
+   python test/generate_report.py
+   ```
+   Target: 0 failures, 0 skips on both Windows and Linux.
+
+---
+
+## Quick-Reference Commands
+
+```bash
+# Force-rebuild everything
+cmd /c clean.bat
+cmd /c build.bat
+cd test && cmd /c build-tests.bat && cmd /c build_new_tests.bat
+
+# Force-rebuild Linux
+rm -f NewChangeDirectory NCDService
+rm -f test/*.{elf,out}  # remove stale Linux test binaries
+
+# Run full suite
+python test/generate_report.py
+
+# Debug specific test
+cd test
+.\test_bugs.exe 2>&1
+.\test_p0_regression.exe 2>&1
+```
+
+## File locations for debugging
+
+| Issue | Key files |
+|-------|-----------|
+| test_bugs failures | `test/test_bugs.c` (lines for heuristics/groups tests) |
+| P0 crash | `test/test_p0_regression.c` (P0.1, create_populated_state) |
+| Linux service | `src/build.sh`, `test/Makefile`, `test/service_test_common.c` |
+| Version compat skips | `test/test_service_version_compat.c`, `test/service_test_common.c` |
+| VHD cleanup fix | `test/ncd_testlib/env.py` (already committed: e7568b9) |

@@ -70,6 +70,8 @@ ncd -r                    # Rescan all drives
 ncd -r:c                   # Rescan drive C only
 ncd -r <path>              # Rescan a specific directory
 ncd -r .                   # Rescan from current directory
+ncd -r <path>              # Rescan a specific directory
+ncd -r .                   # Rescan from current directory
 ncd -i <search>           # Include hidden directories
 ncd -s                    # Include system directories
 ncd -a                    # Include all (hidden + system)

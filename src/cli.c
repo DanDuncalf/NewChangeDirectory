@@ -929,6 +929,10 @@ static bool apply_short_val(char key, const char *val, NcdOptions *opts)
                     return false;
                 }
                 opts->force_rescan = true;
+            } else if (strchr(val, '\\') || strchr(val, '/')) {
+                /* Path-like value: rescan a specific directory */
+                opts->force_rescan = true;
+                platform_strncpy_s(opts->scan_subdirectory, NCD_MAX_PATH, val);
             } else {
                 if (!parse_drive_list_token(val, opts->scan_drive_mask, &opts->scan_drive_count)) {
                     ncd_printf("NCD: invalid drive list: %s\r\n", val);

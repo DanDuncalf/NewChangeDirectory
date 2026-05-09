@@ -961,7 +961,8 @@ static void print_usage(void)
         "  -r                               Rescan all mounted filesystems\r\n"
         "  -r:/                             Rescan root filesystem only (excludes /mnt/*)\r\n"
 #endif
-        "  -r:.                             Rescan current subdirectory only\r\n"
+        "  -r <path>                        Rescan a specific directory (-r C:\\Users or -r /home/user)\r\n"
+        "  -r:.                             Rescan current directory (same as -r .)\r\n"
         "  -r:<drives>                      Rescan specific drives (-r:d, -r=d, or -r d)\r\n"
         "  -r:-<drives>                     Rescan all except specified (-r:-c, -r=-c, or -r -c)\r\n"
         "\r\n"
