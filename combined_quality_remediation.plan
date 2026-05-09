@@ -1,0 +1,221 @@
+# NCD Unified Quality Remediation Plan
+
+Date: 2026-05-08
+Scope: Production code (`src/`, `../shared`) + Test code (`test/`) + harness scripts
+Purpose: Single canonical plan combining code-smell remediation and test-quality remediation in the correct execution order.
+
+---
+
+## Why This Order
+
+1. Fixing production bugs without trustworthy tests can create false greens.
+2. We must first make test outcomes reliable (PASS/FAIL/SKIP correctness).
+3. Then add missing regression tests for known bug risks.
+4. Only then implement production fixes and larger refactors.
+
+---
+
+## Hard Gates (Non-Negotiable)
+
+1. Every correctness bug must have a failing test before code fix.
+2. SKIP must never be counted as PASS.
+3. No overlapping write scopes for parallel subagents.
+4. Each phase requires red->green evidence before moving on.
+
+---
+
+## Phase 0 - Baseline And Control
+
+Goals:
+- Establish reproducible baseline and artifacts.
+- Prevent stale-object and stale-process noise.
+
+Tasks:
+1. Run `cmd /c clean.bat` before broad rebuild/test cycles.
+2. Capture baseline:
+   - `python test/runner.py unit`
+   - `python test/runner.py integration`
+   - `python test/generate_report.py`
+3. Record current skip counts and reasons.
+
+Exit criteria:
+- Baseline report saved.
+- Current skipped tests are enumerated by reason.
+
+---
+
+## Phase 1 - Test Verdict Integrity (Must Go First)
+
+Includes prior test-plan T0.1 and aligns with review findings.
+
+Tasks:
+1. Implement explicit SKIP semantics in test framework:
+   - add `TEST_SKIP(...)` macro
+   - track `tests_skipped`
+   - update `RUN_TEST` result classification
+2. Update parser/reporting layers:
+   - `test/ncd_testlib/executor.py`
+   - `test/runner.py`
+3. Add framework contract tests:
+   - new `test/test_framework_contract.c`
+   - validate PASS/FAIL/SKIP accounting
+
+Exit criteria:
+- A skipped test is reported as SKIPPED, never PASSED.
+- Harness summaries include skipped totals explicitly.
+
+---
+
+## Phase 2 - Missing And Dead Test Coverage
+
+Includes review findings:
+- Missing regression guard
+- Dead `#if 0` test block
+- POSIX exit-status handling gap
+
+Tasks:
+1. Add `TEST(regression_rescan_no_data_loss)` to `test/test_service_database.c`.
+2. Add known-bug enforcement toggle:
+   - `NCD_ENABLE_KNOWN_BUG_TESTS=1` => known bug tests fail (red mode)
+3. Resolve dead disabled block in `test/test_service_integration.c` (`#if 0` nested):
+   - remove, or re-enable with deterministic guard and registration.
+4. Normalize POSIX process exit handling:
+   - central helper using `WIFEXITED/WEXITSTATUS`
+   - migrate service tests that currently use raw `WEXITSTATUS(status)`.
+
+Exit criteria:
+- P0.1 regression test exists and can fail in known-bug mode.
+- No nested dead `#if 0` test bodies remain.
+- Exit-code decoding is safe and consistent in service test files.
+
+---
+
+## Phase 3 - P0 Bug Test Matrix (Red First)
+
+Create/activate failing tests for production P0 items before fixes:
+
+1. P0.1 `perform_rescan` data-loss path
+2. P0.2 pending queue locking race
+3. P0.3 volatile flags atomicity
+4. P0.4 CRC64 init race
+5. P0.5 matcher name-index concurrency
+6. P0.6 scan/matcher shared-db mutation race
+7. P0.7 console init one-time race
+8. P0.8 SHM unlink/recreate publication gap
+
+Plus:
+9. P1.1a IPC version-check parity
+10. P2.20 status-message lifetime safety
+
+Exit criteria:
+- Each item has a named test and baseline red evidence.
+- Red evidence is attached before any corresponding production fix.
+
+---
+
+## Phase 4 - Production P0 Fixes (After Red Evidence)
+
+Implement fixes for P0.1-P0.8 only after Phase 3 red tests exist.
+
+Rules:
+1. Fix one bug group at a time with immediate rerun of owned regression tests.
+2. Keep wire compatibility unless explicitly approved.
+3. Use small platform abstractions; avoid large split-function `#if` branches.
+
+Exit criteria:
+- All P0 regression tests pass.
+- Known-bug mode shows green for resolved P0 set.
+
+---
+
+## Phase 5 - Test DRY And Platform Boundary Cleanup
+
+Includes prior test-plan T1/T2 priorities and review findings on duplication/flakiness/dead code.
+
+Tasks:
+1. Extract `test/service_test_common.h/.c`:
+   - `service_executable_exists`
+   - `run_service_command`
+   - `wait_for_service_state`
+   - `ensure_service_stopped`
+   - `force_terminate_service`
+   - `wait_for_service_fully_exited`
+2. Extract `test/agent_test_common.h/.c`:
+   - temp dir, exe discovery, recursive cleanup, command builder helpers
+3. Replace repeated shell delete helpers with shared safe helper.
+4. Fix Windows env assignment quoting (`set "LOCALAPPDATA=..."`).
+5. Replace broad fixed sleeps with bounded `wait_until` helper where behavior permits.
+6. Remove dead unused helpers (for example unused `get_temp_dir` clones).
+
+Exit criteria:
+- Service helper duplication removed from individual test files.
+- Agent helper duplication reduced to shared modules.
+- Sleep-heavy flake hotspots replaced with condition polling in non-timing tests.
+
+---
+
+## Phase 6 - Production P1 Refactors (High Impact)
+
+Execute high-value code-smell P1 items after test integrity and P0 stability:
+
+1. IPC protocol consolidation (`control_ipc_common` extraction).
+2. Atomic-write path consolidation in `database.c`.
+3. Shared directory-rebuild helper extraction.
+4. Main/agent helper dedup (`with_metadata`, `agent_load_target_db`, error mapping).
+5. Scanner and matcher performance hot paths.
+6. Platform conditional minimization:
+   - move OS-specific logic into concise platform helper surfaces
+   - avoid large dual-implementation functions where feasible.
+
+Exit criteria:
+- P1 regressions covered and green.
+- Measurable duplication reduction in targeted files.
+
+---
+
+## Phase 7 - P2/P3 Cleanup And Maintenance
+
+Tasks:
+1. Table-driven cleanup and helper consolidation (P2 set).
+2. Remaining low-priority P3 cleanup.
+3. Test-health dashboard and disabled-test manifest.
+
+Exit criteria:
+- Backlog reduced with no regression in full suite.
+- Final report includes pass/fail/skip and known-bug-mode status.
+
+---
+
+## Parallel Subagent Layout (Disjoint Ownership)
+
+Wave A (Phases 1-2):
+1. Agent QA-A: framework + harness (`test_framework.*`, runner/executor parsing).
+2. Agent QA-B: missing/dead tests and exit-status normalization in service tests.
+
+Wave B (Phases 3-4):
+3. Agent Core-A: service_main/service_state/shared_state/service_publish P0 fixes.
+4. Agent Core-B: matcher/scanner/platform_ncd P0 fixes.
+
+Wave C (Phase 5):
+5. Agent Test-A: service_test_common extraction + migration.
+6. Agent Test-B: agent_test_common extraction + migration.
+
+Wave D (Phase 6):
+7. Agent Refactor-A: IPC/database consolidation.
+8. Agent Refactor-B: main/scanner/matcher dedup and performance.
+
+Constraints:
+- No two agents edit the same files in one wave.
+- Each agent must submit: changed files, red proof, green proof.
+
+---
+
+## Universal Completion Checklist
+
+- [ ] SKIP is distinct from PASS across C framework and Python reporting.
+- [ ] P0/P1 correctness issues have test-first evidence.
+- [ ] P0 fixes are complete and regression-guarded.
+- [ ] Large cross-platform test `#if` blocks reduced via shared helpers.
+- [ ] Production `#if` sprawl is reduced with platform helper boundaries.
+- [ ] Full run is green: `python test/generate_report.py`.
+
