@@ -1,0 +1,220 @@
+================================================================================
+NCD Test Results Report
+================================================================================
+Generated: 2026-05-09T01:25:28Z
+Generator: runner.py
+Platform: Windows
+WSL Available: True
+
+================================================================================
+BUILD INFORMATION
+================================================================================
+
+[Windows Main Binaries]
+  NCDService.exe                           : 2026-05-09T00:54:25Z
+  NewChangeDirectory.exe                   : 2026-05-09T00:54:25Z
+
+[Linux Main Binaries]
+  NCDService                               : 2026-05-08T21:06:25Z
+  NewChangeDirectory                       : 2026-05-08T21:06:16Z
+
+================================================================================
+UNIT TEST RESULTS - WINDOWS
+================================================================================
+
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load.exe                       2026-05-09    00:56:10
+     0       1       0  fuzz_ipc.exe                                 2026-05-09    00:56:16
+    58       0       0  test_agent_cli_extended.exe                  2026-05-09    00:56:25
+    11       1       0  test_agent_complete_mkdir_quit.exe           2026-05-09    00:56:26
+    26       0       0  test_agent_integration.exe                   2026-05-09    00:56:25
+    11       4       0  test_agent_ls_check.exe                      2026-05-09    00:56:26
+    10       3       0  test_agent_mkdir_extended.exe                2026-05-09    00:56:49
+    16       0       0  test_agent_mode.exe                          2026-05-09    00:56:36
+     4       0       0  test_agent_mv.exe                            2026-05-09    00:56:51
+    14       0       0  test_agent_query_tree.exe                    2026-05-09    00:56:26
+     7       0       0  test_agent_rmdir.exe                         2026-05-09    00:56:49
+     5       0       0  test_agent_verify.exe                        2026-05-09    00:56:52
+    15       0       0  test_bugs.exe                                2026-05-09    00:55:55
+    30       0       0  test_cli_edge_cases.exe                      2026-05-09    00:56:18
+    40       0       0  test_cli_parse.exe                           2026-05-09    00:56:22
+    47       0       0  test_cli_parse_extended.exe                  2026-05-09    00:56:23
+     7       0       0  test_common.exe                              2026-05-09    00:55:56
+    33       0       0  test_common_extended.exe                     2026-05-09    00:56:24
+    22       0       0  test_config.exe                              2026-05-09    00:56:20
+    50       0       0  test_database.exe                            2026-05-09    00:55:53
+    50       0       0  test_database_extended.exe                   2026-05-09    00:56:09
+    13       0       0  test_db_corruption.exe                       2026-05-09    00:55:55
+    17       0       0  test_history.exe                             2026-05-09    00:56:21
+    13       0       0  test_integration_extended.exe                2026-05-09    00:56:24
+    11       0       0  test_ipc.exe                                 2026-05-09    00:56:21
+    19       0       0  test_ipc_extended.exe                        2026-05-09    00:56:15
+    11       0       0  test_key_injection.exe                       2026-05-09    00:56:32
+     7       0       0  test_legacy_service_shutdown.exe             2026-05-09    00:56:01
+    40       0       0  test_main.exe                                2026-05-09    00:56:17
+    23       0       0  test_matcher.exe                             2026-05-09    00:55:54
+    30       0       0  test_matcher_extended.exe                    2026-05-09    00:56:19
+    10       0       0  test_metadata.exe                            2026-05-09    00:55:57
+    30       0       0  test_odd_cases.exe                           2026-05-09    00:56:10
+    12       0       0  test_platform.exe                            2026-05-09    00:55:56
+    20       0       0  test_result_edge_cases.exe                   2026-05-09    00:56:19
+    13       0       0  test_result_output.exe                       2026-05-09    00:56:22
+    11       0       0  test_scanner.exe                             2026-05-09    00:55:57
+    35       0       0  test_scanner_extended.exe                    2026-05-09    00:56:18
+     9       0       0  test_service_database.exe                    2026-05-09    00:56:28
+     4       0       0  test_service_empty_db.exe                    2026-05-09    00:56:29
+     4       0       0  test_service_init_db.exe                     2026-05-09    00:56:13
+    11       0       0  test_service_integration.exe                 2026-05-09    00:56:00
+    13       0       0  test_service_ipc.exe                         2026-05-09    00:56:29
+    22       0       0  test_service_lazy_load.exe                   2026-05-09    00:55:58
+    13       0       0  test_service_lifecycle.exe                   2026-05-09    00:55:59
+     7       0       0  test_service_logging.exe                     2026-05-09    00:56:30
+     9       0       0  test_service_parity.exe                      2026-05-09    00:56:31
+     6       0       0  test_service_race_conditions.exe             2026-05-09    00:56:12
+    20       0       0  test_service_rescan.exe                      2026-05-09    00:56:12
+    25       0       0  test_service_stress.exe                      2026-05-09    00:56:11
+     6       0       0  test_service_version_compat.exe              2026-05-09    00:56:00
+    10       0       0  test_shared_state_extended.exe               2026-05-09    00:56:31
+    11       0       0  test_shm_platform.exe                        2026-05-09    00:56:31
+    20       0       0  test_shm_stress.exe                          2026-05-09    00:56:15
+    15       0       0  test_strbuilder.exe                          2026-05-09    00:55:55
+    41       0       0  test_strbuilder_extended.exe                 2026-05-09    00:56:23
+    25       0       0  test_stress.exe                              2026-05-09    00:56:20
+     8       0       0  test_ui_config.exe                           2026-05-09    00:56:28
+    15       0       0  test_ui_exclusions.exe                       2026-05-09    00:56:17
+    45       0       0  test_ui_extended.exe                         2026-05-09    00:56:16
+     9       0       0  test_ui_history.exe                          2026-05-09    00:56:27
+     9       0       0  test_ui_navigator.exe                        2026-05-09    00:56:28
+    10       0       0  test_ui_selector.exe                         2026-05-09    00:56:27
+
+================================================================================
+UNIT TEST RESULTS - LINUX
+================================================================================
+
+  Pass    Fail    Skip  Name                                               Date        Time
+------  ------  ------  ------------------------------------------ ------------  ----------
+    10       0       0  fuzz_database_load                           2026-05-08    22:02:17
+    10       0       0  fuzz_ipc                                     2026-05-08    22:02:32
+    58       0       0  test_agent_cli_extended                      2026-05-08    22:02:03
+    12       0       0  test_agent_complete_mkdir_quit               2026-05-08    22:02:04
+    26       0       0  test_agent_integration                       2026-05-08    22:02:00
+    15       0       0  test_agent_ls_check                          2026-05-08    22:02:03
+    13       0       0  test_agent_mkdir_extended                    2026-05-08    22:02:36
+    16       0       0  test_agent_mode                              2026-05-08    22:02:00
+     4       0       0  test_agent_mv                                2026-05-08    22:02:38
+    14       0       0  test_agent_query_tree                        2026-05-08    22:02:03
+     7       0       0  test_agent_rmdir                             2026-05-08    22:02:36
+     7       0       0  test_agent_verify                            2026-05-08    22:02:38
+    15       0       0  test_bugs                                    2026-05-08    22:02:20
+    30       0       0  test_cli_edge_cases                          2026-05-08    22:02:33
+    40       0       0  test_cli_parse                               2026-05-08    22:02:00
+    46       0       0  test_cli_parse_extended                      2026-05-08    22:02:08
+     7       0       0  test_common                                  2026-05-08    22:01:45
+    33       0       0  test_common_extended                         2026-05-08    22:02:07
+    22       0       0  test_config                                  2026-05-08    22:01:44
+    45       0       0  test_database                                2026-05-08    22:01:44
+    50       0       0  test_database_extended                       2026-05-08    22:02:16
+    13       0       0  test_db_corruption                           2026-05-08    22:02:19
+    17       0       0  test_history                                 2026-05-08    22:01:44
+    13       0       0  test_integration_extended                    2026-05-08    22:02:09
+    13       0       0  test_ipc                                     2026-05-08    22:02:07
+    19       0       0  test_ipc_extended                            2026-05-08    22:02:30
+    11       0       0  test_key_injection                           2026-05-08    22:03:21
+     7       0       0  test_legacy_service_shutdown                 2026-05-08    22:01:59
+    40       0       0  test_main                                    2026-05-08    22:02:14
+    23       0       0  test_matcher                                 2026-05-08    22:01:44
+    30       0       0  test_matcher_extended                        2026-05-08    22:02:33
+    10       0       0  test_metadata                                2026-05-08    22:07:45
+    30       0       0  test_odd_cases                               2026-05-08    22:02:17
+    12       0       0  test_platform                                2026-05-08    22:01:47
+    33       0       0  test_platform_extended                       2026-05-08    22:02:07
+    20       0       0  test_result_edge_cases                       2026-05-08    22:02:36
+    13       0       0  test_result_output                           2026-05-08    22:02:02
+    11       0       0  test_scanner                                 2026-05-08    22:01:48
+    35       0       0  test_scanner_extended                        2026-05-08    22:02:33
+     9       0       0  test_service_database                        2026-05-08    22:01:53
+     4       0       0  test_service_empty_db                        2026-05-08    22:01:57
+     4       0       0  test_service_init_db                         2026-05-08    22:02:30
+    11       0       0  test_service_integration                     2026-05-08    22:01:51
+    13       0       0  test_service_ipc                             2026-05-08    22:01:57
+    22       0       0  test_service_lazy_load                       2026-05-08    22:01:49
+    13       0       0  test_service_lifecycle                       2026-05-08    22:01:51
+     7       0       0  test_service_logging                         2026-05-08    22:08:12
+     9       0       0  test_service_parity                          2026-05-08    22:01:51
+    20       0       0  test_service_rescan                          2026-05-08    22:02:29
+    25       0       0  test_service_stress                          2026-05-08    22:02:28
+     6       0       0  test_service_version_compat                  2026-05-08    22:01:57
+    10       0       0  test_shared_state                            2026-05-08    22:02:05
+    10       0       0  test_shared_state_extended                   2026-05-08    22:02:05
+    11       0       0  test_shm_platform                            2026-05-08    22:02:05
+    18       0       0  test_shm_stress                              2026-05-08    22:02:30
+    15       0       0  test_strbuilder                              2026-05-08    22:01:45
+    41       0       0  test_strbuilder_extended                     2026-05-08    22:02:06
+    25       0       0  test_stress                                  2026-05-08    22:02:37
+     8       0       0  test_ui_config                               2026-05-08    22:02:11
+    15       0       0  test_ui_exclusions                           2026-05-08    22:02:14
+    45       0       0  test_ui_extended                             2026-05-08    22:02:14
+     9       0       0  test_ui_history                              2026-05-08    22:02:11
+     9       0       0  test_ui_navigator                            2026-05-08    22:02:12
+    10       0       0  test_ui_selector                             2026-05-08    22:02:10
+
+================================================================================
+FAILING/SKIPPED TESTS SUMMARY - WINDOWS
+================================================================================
+
+#     Status     Test Binary                                Test Name
+----- ---------- ------------------------------------------ ----------------------------------------
+1     FAILED     fuzz_ipc.exe                               unknown
+2     FAILED     test_agent_complete_mkdir_quit.exe         agent_complete_json
+3     FAILED     test_agent_ls_check.exe                    agent_ls_basic_json
+4     FAILED     test_agent_ls_check.exe                    agent_check_path_not_found
+5     FAILED     test_agent_ls_check.exe                    agent_check_db_age_json
+6     FAILED     test_agent_ls_check.exe                    agent_check_service_status
+7     FAILED     test_agent_mkdir_extended.exe              mkdir_verify_existing_passes
+8     FAILED     test_agent_mkdir_extended.exe              mkdir_force_recreate_empty
+9     FAILED     test_agent_mkdir_extended.exe              mkdir_mode_0700
+
+================================================================================
+INTEGRATION TEST SUITES
+================================================================================
+
+  Service Tests (Isolated)                           PASS (1/1 passed)
+  NCD Standalone                                     PASS (12/12 passed)
+  NCD with Service                                   PASS (1/1 passed)
+  Windows Feature Tests                              PASS (60/60 passed)
+  Windows Agent Command Tests                        PASS (30/30 passed)
+  Service Race Tester                                PASS (1/1 passed)
+  Latency (us):
+    agent_read       n=   9 min=9152629.50 max=11317881.60 avg=10257204.13 p50=10605772.10 p95=11317881.60 p99=11317881.60
+    agent_write      n=   6 min=4726680.00 max=10123517.40 avg=7679689.20 p50=8779985.20 p95=10123517.40 p99=10123517.40
+    ipc_read         n= 342 min=     17.80 max=  17379.90 avg=  12573.56 p50=  15404.00 p95=  16143.90 p99=  16302.00
+    ipc_write        n= 231 min=     18.00 max=  17264.40 avg=  13332.11 p50=  15326.40 p95=  16102.70 p99=  16308.00
+  WSL Service Tests                                  PASS (10/10 passed)
+  WSL NCD Standalone                                 PASS (15/15 passed)
+  WSL NCD with Service                               PASS (15/15 passed)
+  WSL Feature Tests                                  PASS (118/118 passed)
+  WSL Agent Command Tests                            PASS (30/30 passed)
+  WSL Service Race Tester                            PASS (1/1 passed)
+  Latency (us):
+    agent_read       n=1318 min=  10759.95 max=5287647.42 avg=  62180.69 p50=  23125.77 p95=  42509.05 p99= 306268.62
+    agent_write      n= 398 min=  28211.93 max=5304411.99 avg=  97264.22 p50=  54336.58 p95=  92336.41 p99= 285759.09
+    ipc_read         n=  10 min= 102523.07 max=5088632.18 avg=4567896.03 p50=5065730.97 p95=5088632.18 p99=5088632.18
+    ipc_write        n=   8 min=  10663.81 max=5088742.34 avg=3192271.33 p50=5054554.95 p95=5088742.34 p99=5088742.34
+
+================================================================================
+GRAND TOTALS
+================================================================================
+
+Windows Unit: 1157 run, 1148 passed,    9 failed,    0 skipped
+Windows Int:   105 run,  105 passed,    0 failed,    0 skipped
+Linux Unit:   1199 run, 1199 passed,    0 failed,    0 skipped
+Linux Int:     189 run,  189 passed,    0 failed,    0 skipped
+Overall:      2650 run, 2641 passed,    9 failed,    0 skipped
+
+OVERALL STATUS: FAIL
+REASON: 9 test(s) failed
+
+================================================================================
+END OF REPORT
+================================================================================
