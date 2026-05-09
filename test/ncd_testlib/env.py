@@ -52,6 +52,35 @@ class WindowsTestDrive:
             print(f"[TEST_DRIVE] Error finding free letter: {e}")
         return None
 
+    def _force_cleanup_letter_and_vhd(self):
+        """Aggressively clean up any existing VHD and drive letter assignment."""
+        # 1. Remove drive letter assignment via PowerShell (if any disk has it)
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"Get-Partition -DriveLetter '{self.letter}' -ErrorAction SilentlyContinue | "
+                 f"Remove-PartitionAccessPath -AccessPath '{self.letter}:\\' -ErrorAction SilentlyContinue"],
+                capture_output=True, timeout=15
+            )
+        except Exception:
+            pass
+        # 2. Dismount any disk image at our VHD path
+        if os.path.exists(self.vhd_path):
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"Dismount-DiskImage -ImagePath '{self.vhd_path}' -ErrorAction SilentlyContinue"],
+                    capture_output=True, timeout=15
+                )
+            except Exception:
+                pass
+            # 3. Remove the stale VHD file
+            try:
+                os.remove(self.vhd_path)
+                print(f"[TEST_DRIVE] Removed stale VHD: {self.vhd_path}")
+            except Exception as e:
+                print(f"[TEST_DRIVE] Could not remove stale VHD: {e}")
+
     def setup(self):
         """Create an isolated drive letter. Returns True on success."""
         if platform.system() != "Windows":
@@ -62,10 +91,13 @@ class WindowsTestDrive:
             print("[TEST_DRIVE] No free drive letter available")
             return False
 
-        # Try diskpart VHD first (most reliable isolation)
+        # Clean up any stale VHD at the target path and unmount the letter
         self.vhd_path = os.path.join(
             tempfile.gettempdir(), f"ncd_test_{self.letter}.vhdx"
         )
+        self._force_cleanup_letter_and_vhd()
+
+        # Try diskpart VHD first (most reliable isolation)
         dp_script = os.path.join(tempfile.gettempdir(), "ncd_diskpart_py.txt")
         try:
             with open(dp_script, "w") as f:
@@ -85,8 +117,25 @@ class WindowsTestDrive:
             os.unlink(dp_script)
         except Exception as e:
             print(f"[TEST_DRIVE] diskpart error: {e}")
-            os.unlink(dp_script) if os.path.exists(dp_script) else None
+            if os.path.exists(dp_script):
+                os.unlink(dp_script)
             result = subprocess.CompletedProcess(args=[], returncode=-1)
+
+        if result.returncode == 0 and os.path.exists(f"{self.letter}:\\"):
+            print(f"[TEST_DRIVE] VHD mounted at {self.letter}:\\")
+            os.environ["NCD_TEST_DRIVE"] = self.letter
+            os.environ["NCD_TEST_ROOT"] = f"{self.letter}:\\"
+            return True
+
+        # diskpart failed — try to diagnose
+        print(f"[TEST_DRIVE] diskpart exit={result.returncode}")
+        if result.stderr:
+            print(f"[TEST_DRIVE] diskpart stderr: {result.stderr.strip()}")
+        if result.stdout:
+            # Print last few lines of diskpart output for diagnosis
+            lines = result.stdout.strip().splitlines()
+            for line in lines[-5:]:
+                print(f"[TEST_DRIVE] diskpart: {line}")
 
         if result.returncode == 0 and os.path.exists(f"{self.letter}:\\"):
             print(f"[TEST_DRIVE] VHD mounted at {self.letter}:\\")
