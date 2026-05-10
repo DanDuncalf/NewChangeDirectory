@@ -37,6 +37,11 @@ static BOOL CALLBACK crc64_init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx) {
 }
 static void crc64_init(void) {
     InitOnceExecuteOnce(&g_crc64_init_once, crc64_init_cb, NULL, NULL);
+    /* Read barrier: ensure this core sees the initialized table.
+     * InitOnceExecuteOnce guarantees the callback ran-before-return
+     * but does NOT publish store visibility across cores.
+     * The MemoryBarrier in the callback pairs with this one. */
+    MemoryBarrier();
 }
 #else
 #include <pthread.h>

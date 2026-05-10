@@ -109,6 +109,7 @@ typedef int (*test_func_t)(void);
 
 #define RUN_TEST(name) do { \
     printf("  Running %s...\n", #name); \
+    fflush(stdout); \
     tests_run++; \
     int _ret_##name = test_##name(); \
     if (_ret_##name == 0) { \
@@ -126,12 +127,14 @@ typedef int (*test_func_t)(void);
 /* Suite runner */
 #define RUN_SUITE(suite_name) do { \
     printf("\n=== %s ===\n", #suite_name); \
+    fflush(stdout); \
     suite_##suite_name(); \
 } while(0)
 
 /* Main test runner */
 #define TEST_MAIN(...) int main(void) { \
     printf("Starting test run...\n"); \
+    fflush(stdout); \
     __VA_ARGS__ \
     printf("\n========================================\n"); \
     printf("Tests: %d run, %d passed, %d failed, %d skipped\n", \

@@ -21,7 +21,7 @@ WINDOWS_MAIN_BINARIES = ["NewChangeDirectory.exe", "NCDService.exe"]
 LINUX_MAIN_BINARIES = ["NewChangeDirectory", "NCDService"]
 
 
-def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None):
+def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None, env=None):
     """Run a command and return (returncode, stdout, stderr).
 
     Return codes:
@@ -32,7 +32,7 @@ def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None):
     try:
         proc = subprocess.Popen(
             cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            shell=shell, stdin=stdin
+            shell=shell, stdin=stdin, env=env
         )
     except FileNotFoundError as e:
         return -1, "", str(e)
