@@ -385,9 +385,6 @@ logs/
 # NCD debug dump files (can be very large)
 *_debug.txt
 
-# Test results output
-test.results
-
 # NCD extensionless Linux binaries built by GCC in WSL
 # Root executables
 /NewChangeDirectory
