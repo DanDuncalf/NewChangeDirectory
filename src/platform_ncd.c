@@ -64,6 +64,13 @@ bool ncd_is_system_mode(void)
         if (tm && tm[0] && strcmp(tm, "0") != 0) {
             g_ncd_system_mode = false;
         }
+#if NCD_PLATFORM_LINUX
+        /* Non-root users cannot create system directories (/run/ncd, /var/lib/ncd).
+         * Auto-fallback to user mode so the service/client works without root. */
+        if (g_ncd_system_mode && getuid() != 0) {
+            g_ncd_system_mode = false;
+        }
+#endif
     }
     return g_ncd_system_mode;
 }

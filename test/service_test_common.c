@@ -81,7 +81,7 @@ static int run_command_raw(const char *full_cmd, char *output, size_t output_siz
         return -1;
     }
 
-    /* Read output */
+    /* Read output - always drain the pipe to avoid SIGPIPE in child */
     if (output && output_size > 0) {
         size_t total = 0;
         while (total < output_size - 1 && !feof(pipe)) {
@@ -90,6 +90,11 @@ static int run_command_raw(const char *full_cmd, char *output, size_t output_siz
             total += n;
         }
         output[total] = '\0';
+    } else {
+        /* Drain the pipe even if caller doesn't want output, to prevent
+         * the child process from receiving SIGPIPE when pclose closes the fd. */
+        char drain[256];
+        while (fread(drain, 1, sizeof(drain), pipe) > 0) {}
     }
 
     int status = pclose(pipe);
