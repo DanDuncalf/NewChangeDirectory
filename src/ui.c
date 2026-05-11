@@ -123,6 +123,7 @@ static void names_sort(NameList *list);
 
 /* Forward declaration for key queue (used by con_read_key in all builds) */
 static int key_queue_pop(void);
+static bool g_keys_were_injected = false;  /* true once NCD_UI_KEYS parsed */
 
 /* ======================================================================== */
 #if NCD_PLATFORM_WINDOWS
@@ -291,6 +292,9 @@ static int con_read_key(void)
     /* Check injected key queue first (for testing/automation) */
     int injected = key_queue_pop();
     if (injected != KEY_UNKNOWN) return injected;
+    /* If keys were injected (NCD_UI_KEYS) and queue is now empty,
+     * return ESC so the TUI exits cleanly instead of blocking on console. */
+    if (g_keys_were_injected) return KEY_ESC;
 
     INPUT_RECORD ir;
     DWORD        nread;
@@ -495,6 +499,9 @@ static int con_read_key(void)
     /* Check injected key queue first (for testing/automation) */
     int injected = key_queue_pop();
     if (injected != KEY_UNKNOWN) return injected;
+    /* If keys were injected (NCD_UI_KEYS) and queue is now empty,
+     * return ESC so the TUI exits cleanly instead of blocking on /dev/tty. */
+    if (g_keys_were_injected) return KEY_ESC;
 
     if (g_tty_in < 0) return KEY_ESC;
     PlatformHandle h = (PlatformHandle)(intptr_t)(g_tty_in + 1);
@@ -618,6 +625,7 @@ static void load_keys_from_env(void)
         } else {
             ui_inject_keys(keys);
         }
+        g_keys_were_injected = true;
     }
 }
 
