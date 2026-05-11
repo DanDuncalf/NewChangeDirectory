@@ -1281,9 +1281,7 @@ static UiIoOps g_stdio_ops;
 static UiIoOps *stdio_backend_init(void)
 {
     const char *env = getenv("NCD_TEST_MODE");
-    fprintf(stderr, "STDIO_INIT: NCD_TEST_MODE=%s\n", env ? env : "(null)");
     if (!env || !env[0]) return NULL;
-    fprintf(stderr, "STDIO_INIT: activating stdio backend\n");
 
     g_stdio_ops.open_console  = stdio_open_console;
     g_stdio_ops.close_console = stdio_close_console;

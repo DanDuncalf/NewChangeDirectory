@@ -198,11 +198,18 @@ def build_linux_main(test_build=False):
     """
     print("[BUILD] Checking Linux main binaries...")
     needs_build = False
-    for binary in LINUX_MAIN_BINARIES:
-        needed, reason = binary_needs_rebuild(PROJECT_ROOT / binary, MAIN_SOURCE_PATTERNS)
-        if needed:
-            print(f"[BUILD] {binary} needs rebuild: {reason}")
-            needs_build = True
+    
+    # When test_build=True, always rebuild to ensure -DNCD_TEST_BUILD is active.
+    # A release build could otherwise be cached and used, breaking TUI tests.
+    if test_build:
+        needs_build = True
+        print("[BUILD] Test build requested - forcing rebuild for NCD_TEST_BUILD")
+    else:
+        for binary in LINUX_MAIN_BINARIES:
+            needed, reason = binary_needs_rebuild(PROJECT_ROOT / binary, MAIN_SOURCE_PATTERNS)
+            if needed:
+                print(f"[BUILD] {binary} needs rebuild: {reason}")
+                needs_build = True
     if not needs_build:
         print("[BUILD] Linux main binaries are up-to-date.")
         return True
