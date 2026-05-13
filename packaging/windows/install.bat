@@ -102,6 +102,29 @@ if errorlevel 1 (
     echo   [OK] Already in PATH
 )
 
+:: Optional: Install MCP server
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo Note: Python not found. Skipping MCP server installation.
+    echo   To install later: pip install "%DEST_DIR%\mcp_server"
+) else (
+    echo.
+    echo Python detected. Install MCP server? [Y/N]
+    set /p INSTALL_MCP=
+    if /I "!INSTALL_MCP!"=="Y" (
+        pip install "%DEST_DIR%\mcp_server"
+        if errorlevel 1 (
+            echo   [WARN] MCP server installation failed. Try manually:
+            echo     pip install "%DEST_DIR%\mcp_server"
+        ) else (
+            echo   [OK] MCP server installed. Run 'ncd-mcp-server' to verify.
+            echo   Add this to your MCP client config (e.g., Claude Desktop):
+            echo     { "mcpServers": { "ncd": { "command": "ncd-mcp-server" ^} ^} ^}
+        )
+    )
+)
+
 echo.
 echo ========================================
 echo Installation Complete

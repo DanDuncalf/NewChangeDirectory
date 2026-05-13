@@ -151,6 +151,25 @@ else
 fi
 
 echo ""
+
+# Optional: Install MCP server
+if command -v python3 &> /dev/null && command -v pip3 &> /dev/null; then
+    echo "Python detected. Install MCP server?"
+    echo "  This enables LLM integration (Claude, etc.) with NCD."
+    read -rp "Install ncd-mcp-server? [y/N] " install_mcp
+    if [[ "$install_mcp" =~ ^[Yy]$ ]]; then
+        pip3 install --user "${SCRIPT_DIR}/mcp_server" 2>/dev/null || sudo pip3 install "${SCRIPT_DIR}/mcp_server"
+        echo "  [OK] MCP server installed. Run 'ncd-mcp-server' to verify."
+        echo "  Add this to your MCP client config (e.g., Claude Desktop):"
+        echo '    { "mcpServers": { "ncd": { "command": "ncd-mcp-server" } } }'
+    fi
+else
+    echo ""
+    echo "Note: Python 3 + pip not found. Skipping MCP server installation."
+    echo "  To install later: pip3 install /path/to/this/mcp_server"
+fi
+
+echo ""
 echo "========================================"
 echo "Installation Complete"
 echo "========================================"

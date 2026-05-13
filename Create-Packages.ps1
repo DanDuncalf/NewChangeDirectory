@@ -23,7 +23,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = $PSScriptRoot
 $DistDir = Join-Path $ProjectRoot "dist"
 $PackagingDir = Join-Path $ProjectRoot "packaging"
-$SharedDir = Join-Path $ProjectRoot ".." "shared"
+$SharedDir = Join-Path (Join-Path $ProjectRoot "..") "shared"
 
 # ========================================================================
 # Helper Functions
@@ -128,6 +128,11 @@ if (-not $SkipWindowsBuild) {
         Copy-Item (Join-Path $PackagingDir "windows\install.bat") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
 
+        if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
+            Copy-Item -Recurse -Exclude @("__pycache__","*.pyc","*.pyo") (Join-Path $ProjectRoot "mcp_server") $tempDir
+            Get-ChildItem -Path (Join-Path $tempDir "mcp_server") -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
+        }
+
         if (Test-Path (Join-Path $ProjectRoot "completions")) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
         }
@@ -178,6 +183,11 @@ if (-not $SkipWindowsBuild -and -not $SkipWindowsArm64) {
         Copy-Item (Join-Path $PackagingDir "windows\install.bat") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
 
+        if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
+            Copy-Item -Recurse -Exclude @("__pycache__","*.pyc","*.pyo") (Join-Path $ProjectRoot "mcp_server") $tempDir
+            Get-ChildItem -Path (Join-Path $tempDir "mcp_server") -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
+        }
+
         if (Test-Path (Join-Path $ProjectRoot "completions")) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
         }
@@ -217,6 +227,11 @@ if (-not $SkipLinuxBuild) {
         Copy-Item (Join-Path $ProjectRoot "ncd_service") $tempDir
         Copy-Item (Join-Path $PackagingDir "linux\install.sh") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
+
+        if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
+            Copy-Item -Recurse -Exclude @("__pycache__","*.pyc","*.pyo") (Join-Path $ProjectRoot "mcp_server") $tempDir
+            Get-ChildItem -Path (Join-Path $tempDir "mcp_server") -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
+        }
 
         if (Test-Path (Join-Path $ProjectRoot "completions")) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
@@ -261,6 +276,11 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxArm64) {
         Copy-Item (Join-Path $PackagingDir "linux\install.sh") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
 
+        if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
+            Copy-Item -Recurse -Exclude @("__pycache__","*.pyc","*.pyo") (Join-Path $ProjectRoot "mcp_server") $tempDir
+            Get-ChildItem -Path (Join-Path $tempDir "mcp_server") -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
+        }
+
         if (Test-Path (Join-Path $ProjectRoot "completions")) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
         }
@@ -302,6 +322,11 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxRiscv) {
         Copy-Item (Join-Path $ProjectRoot "ncd_service") $tempDir
         Copy-Item (Join-Path $PackagingDir "linux\install.sh") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
+
+        if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
+            Copy-Item -Recurse -Exclude @("__pycache__","*.pyc","*.pyo") (Join-Path $ProjectRoot "mcp_server") $tempDir
+            Get-ChildItem -Path (Join-Path $tempDir "mcp_server") -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
+        }
 
         if (Test-Path (Join-Path $ProjectRoot "completions")) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
