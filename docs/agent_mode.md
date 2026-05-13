@@ -39,13 +39,13 @@ This document reflects the agent-mode behavior implemented in `src/cli.c` and `s
 - `--json`
 - `--dry-run`
 - `--atomic`
-- `--force`
 - `--verify`
 - `--stop-on-error`
 - `--parents-required`
 - `--mode <octal>`
 
 If neither `--file` nor a positional tree spec is provided, `mkdirs` reads from stdin.
+`mkdirs` creates new directory trees only. If any requested directory already exists, creation fails with `error_exists`. `--force` is intentionally not supported for `mkdirs`; remove an existing tree explicitly with `rmdirs --force` before creating a replacement.
 
 ### `rmdir` and `rmdirs`
 

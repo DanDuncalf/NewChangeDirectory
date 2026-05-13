@@ -151,14 +151,6 @@ static void flush_all_dirty_dbs(void)
             
             if (db && path[0]) {
                 bool saved = db_save_binary_single(db, 0, path);
-                
-                /* Debug */
-                FILE *dbg = fopen("C:\\ncd_mv_debug.txt", "a");
-                if (dbg) {
-                    fprintf(dbg, "flush_debug: drive=%c path=%s saved=%d dir_count=%d\n", g_dirty_dbs[i].drive, path, saved, db->drive_count > 0 ? db->drives[0].dir_count : 0);
-                    fclose(dbg);
-                }
-                
                 if (saved) {
                     db_clear_dirty_standalone(g_dirty_dbs[i].drive);
                 }
@@ -1682,18 +1674,6 @@ static void path_map_init(PathMap *map, int expected_size)
     map->count = 0;
 }
 
-static void path_map_free(PathMap *map)
-{
-    for (int i = 0; i < map->capacity; i++) {
-        if (map->entries[i].path)
-            free(map->entries[i].path);
-    }
-    free(map->entries);
-    map->entries = NULL;
-    map->count = 0;
-    map->capacity = 0;
-}
-
 static void path_map_put(PathMap *map, const char *path, int dir_index)
 {
     uint64_t h = hash_path(path);
@@ -2483,14 +2463,6 @@ static bool add_path_to_database(const char *path)
         /* Add to database */
         db_make_mutable(db);
         drv = db_find_drive(db, target_drive);
-        
-        /* Debug */
-        FILE *dbg2 = fopen("C:\\ncd_mv_debug.txt", "a");
-        if (dbg2) {
-            fprintf(dbg2, "add_path_debug: adding leaf=%s parent_idx=%d to drive %c dir_count before=%d\n", leaf_name, parent_idx, target_drive, drv ? drv->dir_count : -1);
-            fclose(dbg2);
-        }
-        
         db_add_dir(drv, leaf_name, parent_idx, false, false);
         
         /* Mark database as dirty for deferred save */
@@ -3020,8 +2992,8 @@ typedef struct {
  * mkdirs_validate_atomic  —  first pass for --atomic.
  * ------------------------------------------------------------------ */
 static bool mkdirs_validate_atomic(const char *base_path, MkdirsNode *node,
-                                   const NcdOptions *opts,
                                    char *fail_path, size_t fail_path_size,
+                                   const char **fail_result,
                                    const char **fail_msg)
 {
     for (int i = 0; i < node->child_count; i++) {
@@ -3036,23 +3008,22 @@ static bool mkdirs_validate_atomic(const char *base_path, MkdirsNode *node,
 
         if (platform_file_exists(path)) {
             platform_strncpy_s(fail_path, fail_path_size, path);
+            *fail_result = "error_path";
             *fail_msg = "Path exists but is not a directory";
             return false;
         }
 
         if (platform_dir_exists(path)) {
-            if (opts->agent_force) {
-                if (!platform_dir_is_empty(path)) {
-                    platform_strncpy_s(fail_path, fail_path_size, path);
-                    *fail_msg = "Directory exists and is not empty";
-                    return false;
-                }
-            }
+            platform_strncpy_s(fail_path, fail_path_size, path);
+            *fail_result = "error_exists";
+            *fail_msg = "Directory already exists";
+            return false;
         }
 
         if (child->child_count > 0) {
-            if (!mkdirs_validate_atomic(path, child, opts,
-                                        fail_path, fail_path_size, fail_msg)) {
+            if (!mkdirs_validate_atomic(path, child,
+                                        fail_path, fail_path_size,
+                                        fail_result, fail_msg)) {
                 return false;
             }
         }
@@ -3110,20 +3081,13 @@ static bool mkdirs_process(const char *base_path, MkdirsNode *node,
             }
         } else if (opts->agent_dry_run) {
             if (platform_dir_exists(path)) {
-                if (opts->agent_force) {
-                    if (platform_dir_is_empty(path)) {
-                        result_code = "created";
-                        message = "Directory would be recreated";
-                    } else {
-                        result_code = "error_not_empty";
-                        message = "Directory exists and is not empty";
-                        success = false;
-                    }
-                } else {
-                    result_code = "exists";
-                    message = "Directory already exists";
-                    dir_existed = true;
-                }
+                result_code = "error_exists";
+                message = "Directory already exists";
+                success = false;
+            } else if (platform_file_exists(path)) {
+                result_code = "error_path";
+                message = "Path exists but is not a directory";
+                success = false;
             } else {
                 char parent[NCD_MAX_PATH];
                 bool parent_ok = true;
@@ -3144,29 +3108,13 @@ static bool mkdirs_process(const char *base_path, MkdirsNode *node,
         } else {
             /* ---- actual creation ---- */
             if (platform_dir_exists(path)) {
-                if (opts->agent_force) {
-                    if (platform_dir_is_empty(path)) {
-                        if (platform_remove_dir(path) && platform_create_dir(path)) {
-                            result_code = "created";
-                            message = "Directory recreated";
-                            was_created = true;
-                            if (opts->agent_mode_octal >= 0)
-                                platform_set_mode(path, opts->agent_mode_octal);
-                        } else {
-                            result_code = "error";
-                            message = "Failed to recreate directory";
-                            success = false;
-                        }
-                    } else {
-                        result_code = "error_not_empty";
-                        message = "Directory exists and is not empty";
-                        success = false;
-                    }
-                } else {
-                    result_code = "exists";
-                    message = "Directory already exists";
-                    dir_existed = true;
-                }
+                result_code = "error_exists";
+                message = "Directory already exists";
+                success = false;
+            } else if (platform_file_exists(path)) {
+                result_code = "error_path";
+                message = "Path exists but is not a directory";
+                success = false;
             } else {
                 char parent[NCD_MAX_PATH];
                 bool parent_ok = true;
@@ -3239,18 +3187,18 @@ static bool mkdirs_process(const char *base_path, MkdirsNode *node,
             agent_print("\r\n");
         }
 
+        if (!success && opts->agent_stop_on_error) {
+            stats->stopped = true;
+            return false;
+        }
+
         /* recurse */
-        if (child->child_count > 0) {
+        if (success && child->child_count > 0) {
             bool child_ok = mkdirs_process(path, child, opts, json, txn, stats);
             if (!child_ok) {
                 stats->stopped = true;
                 return false;
             }
-        }
-
-        if (!success && opts->agent_stop_on_error) {
-            stats->stopped = true;
-            return false;
         }
     }
     return true;
@@ -3451,6 +3399,20 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     char       *stdin_content = NULL;
     bool        is_json = false;
 
+    if (opts->agent_force) {
+        const char *msg = "--force is not supported for mkdirs; remove existing directories first if that is intentional";
+        if (opts->agent_json) {
+            agent_print("{\"v\":1,\"result\":\"error_unsupported\",\"error\":\"");
+            agent_json_escape(msg);
+            agent_print("\"}\r\n");
+        } else {
+            agent_print("ERROR: ");
+            agent_print(msg);
+            agent_print("\r\n");
+        }
+        return 1;
+    }
+
     /* ---- determine input source ---- */
     if (opts->agent_mkdirs_file[0]) {
         file_content = read_file_contents(opts->agent_mkdirs_file);
@@ -3527,10 +3489,12 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     /* ---- atomic validation pass ---- */
     if (opts->agent_atomic) {
         char fail_path[NCD_MAX_PATH] = {0};
+        const char *fail_result = "error";
         const char *fail_msg = NULL;
-        if (!mkdirs_validate_atomic("", &root, opts,
-                                    fail_path, sizeof(fail_path), &fail_msg)) {
-            mjb_add_dir(&json, fail_path, "error_not_empty", fail_msg);
+        if (!mkdirs_validate_atomic("", &root,
+                                    fail_path, sizeof(fail_path),
+                                    &fail_result, &fail_msg)) {
+            mjb_add_dir(&json, fail_path, fail_result, fail_msg);
             stats.failed++;
             mjb_start_rollback(&json);
             mjb_finish(&json, 0, 0, 1, 0);
@@ -3583,7 +3547,7 @@ static int agent_mode_mkdirs(const NcdOptions *opts)
     if (opts->agent_verify) {
         return (stats.failed == 0) ? 0 : 1;
     }
-    return (stats.failed == 0 || opts->agent_dry_run) ? 0 : 1;
+    return (stats.failed == 0) ? 0 : 1;
 }
 
 /* Agent mode: complete - Shell tab-completion candidates */
@@ -3814,9 +3778,16 @@ static bool rmdirs_collect_dirs(const char *path, RmdirsList *list)
     do {
         if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
             continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            /* Skip reparse points — they are unlinked, not recursed into */
+            continue;
+        }
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             char child[NCD_MAX_PATH];
-            path_join(child, sizeof(child), path, fd.cFileName);
+            if (!path_join(child, sizeof(child), path, fd.cFileName)) {
+                FindClose(h);
+                return false;
+            }
             if (!rmdirs_collect_dirs(child, list)) {
                 FindClose(h);
                 return false;
@@ -3834,10 +3805,13 @@ static bool rmdirs_collect_dirs(const char *path, RmdirsList *list)
             continue;
 
         char child[NCD_MAX_PATH];
-        path_join(child, sizeof(child), path, ent->d_name);
+        if (!path_join(child, sizeof(child), path, ent->d_name)) {
+            closedir(d);
+            return false;
+        }
 
         struct stat st;
-        if (stat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (lstat(child, &st) == 0 && S_ISDIR(st.st_mode) && !S_ISLNK(st.st_mode)) {
             if (!rmdirs_collect_dirs(child, list)) {
                 closedir(d);
                 return false;
@@ -4189,23 +4163,7 @@ static int agent_mode_mv(const NcdOptions *opts)
             db->last_scan = time(NULL);
         }
 
-        bool removed = db_remove_path(db, src);
-
-        /* Debug */
-        FILE *dbg = fopen("C:\\ncd_mv_debug.txt", "a");
-        if (dbg) {
-            fprintf(dbg, "mv_debug: src=%s dst=%s db_path=%s removed=%d drive_count=%d\n", src, dst, db_path, removed, db->drive_count);
-            if (db->drive_count > 0) {
-                DriveData *d = &db->drives[0];
-                fprintf(dbg, "  drive %c label=%s dir_count=%d\n", d->letter, d->label, d->dir_count);
-                char fp[NCD_MAX_PATH];
-                for (int i = 0; i < d->dir_count; i++) {
-                    db_full_path(d, i, fp, sizeof(fp));
-                    fprintf(dbg, "  [%d] parent=%d path=%s\n", i, d->dirs[i].parent, fp);
-                }
-            }
-            fclose(dbg);
-        }
+        (void)db_remove_path(db, src);
 
         /* Ensure db is tracked for saving */
         if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
@@ -4215,30 +4173,8 @@ static int agent_mode_mv(const NcdOptions *opts)
         /* Add new path to database */
         add_path_to_database(dst);
 
-        /* Debug after add */
-        dbg = fopen("C:\\ncd_mv_debug.txt", "a");
-        if (dbg) {
-            if (db && db->drive_count > 0) {
-                DriveData *d = &db->drives[0];
-                fprintf(dbg, "mv_debug: after add dir_count=%d\n", d->dir_count);
-                char fp[NCD_MAX_PATH];
-                for (int i = 0; i < d->dir_count; i++) {
-                    db_full_path(d, i, fp, sizeof(fp));
-                    fprintf(dbg, "  [%d] parent=%d path=%s\n", i, d->dirs[i].parent, fp);
-                }
-            }
-            fclose(dbg);
-        }
-
         /* Flush dirty databases immediately */
         flush_all_dirty_dbs();
-
-        /* Debug after flush */
-        dbg = fopen("C:\\ncd_mv_debug.txt", "a");
-        if (dbg) {
-            fprintf(dbg, "mv_debug: after flush\n");
-            fclose(dbg);
-        }
     }
 
     if (opts->agent_json) {

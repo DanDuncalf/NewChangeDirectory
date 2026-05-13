@@ -354,7 +354,7 @@ NcdMatch *matcher_find(NcdDatabase *db,
     uint32_t leaf_hash = fnv1a_hash(leaf);
 
     /* Use cached name index if available and valid, otherwise build it.
-     * Lock-free double-check with locked build-then-swap to prevent races. */
+     * Lock is held during hash lookup to ensure index lifetime safety. */
     NAME_INDEX_LOCK();
     NameIndex *idx = (NameIndex *)db->name_index;
     int needs_rebuild = (!idx || db->name_index_generation != 0);
@@ -364,18 +364,17 @@ NcdMatch *matcher_find(NcdDatabase *db,
         NameIndex *new_idx = name_index_build(db);
         NAME_INDEX_LOCK();
         idx = (NameIndex *)db->name_index;
-        /* Free old index if nobody raced us to rebuild */
-        if (idx && db->name_index_generation == 0) {
+        /* Free old index only if it's different from what we're installing.
+         * Safe because readers hold the lock during lookup. */
+        if (idx && idx != new_idx) {
             name_index_free(idx);
         }
         db->name_index = (void *)new_idx;
         db->name_index_generation = 0;
         idx = new_idx;
-        NAME_INDEX_UNLOCK();
     } else {
         NAME_INDEX_LOCK();
         idx = (NameIndex *)db->name_index;
-        NAME_INDEX_UNLOCK();
     }
 
     int   cap     = 16;
@@ -415,6 +414,8 @@ NcdMatch *matcher_find(NcdDatabase *db,
         }
     }
     
+    NAME_INDEX_UNLOCK();
+
     /* 
      * Fall back to full scan if:
      * - Index not available (OOM), OR

@@ -303,7 +303,9 @@ project
 ncd --agent:mkdirs '[{"name":"project","children":[{"name":"src"}]}]'
 ```
 
-Result codes: `created`, `exists`, `error_perms`, `error_parent`, `error_path`, `error`.
+`mkdirs` creates new directory trees only. If any requested directory already exists, the command fails with `error_exists`.
+
+Result codes: `created`, `error_exists`, `error_perms`, `error_parent`, `error_path`, `error`.
 
 #### Agent Rmdir / Rmdirs
 

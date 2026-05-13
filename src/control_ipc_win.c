@@ -297,7 +297,10 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
             DWORD err = GetLastError();
             if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
                 IPC_DBG("IPC: Pipe broken, service may have shutdown\n");
-                return NCD_IPC_OK;  /* Service shutdown is expected for REQUEST_SHUTDOWN */
+                if (type == NCD_MSG_REQUEST_SHUTDOWN) {
+                    return NCD_IPC_OK;  /* Service shutdown is expected for REQUEST_SHUTDOWN */
+                }
+                return win_error_to_ipc(err);
             }
         }
         Sleep(10);

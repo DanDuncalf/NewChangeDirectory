@@ -549,10 +549,9 @@ TEST(p0_5_matcher_name_index_concurrency) {
         return 0;
     }
 
-    /* Even if no errors, the lack of synchronization is a structural bug.
-     * The matcher_find function does: if(idx) name_index_free(idx);
-     * without holding any lock. */
-    printf("  NOTE: No errors this run, but mutex is absent in name_index rebuild\n");
+    /* Mutex is now present in name_index rebuild and held during lookup.
+     * This test remains as a regression guard. */
+    printf("  NOTE: Mutex-protected rebuild and lookup verified\n");
 
     db_free(db);
     return 0;

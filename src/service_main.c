@@ -90,6 +90,27 @@ static char g_exe_path[MAX_PATH] = {0};
 /* Debug logging macro */
 #define DBG_LOG(...) do { if (g_debug_mode) printf(__VA_ARGS__); } while(0)
 
+/* --------------------------------------------------------- IPC payload validators */
+
+static bool validate_heuristic_payload(const NcdSubmitHeuristicPayload *payload, size_t payload_len)
+{
+    if (payload_len < sizeof(NcdSubmitHeuristicPayload)) return false;
+    size_t max_var_len = payload_len - sizeof(NcdSubmitHeuristicPayload);
+    if (payload->search_len > max_var_len) return false;
+    if (payload->target_len > max_var_len - payload->search_len) return false;
+    if (payload->search_len > NCD_IPC_MAX_MSG_SIZE) return false;
+    if (payload->target_len > NCD_IPC_MAX_MSG_SIZE) return false;
+    return true;
+}
+
+static bool validate_metadata_payload(const NcdSubmitMetadataPayload *payload, size_t payload_len)
+{
+    if (payload_len < sizeof(NcdSubmitMetadataPayload)) return false;
+    if (payload->data_len > payload_len - sizeof(NcdSubmitMetadataPayload)) return false;
+    if (payload->data_len > NCD_IPC_MAX_MSG_SIZE) return false;
+    return true;
+}
+
 /* --------------------------------------------------------- logging system     */
 
 /*
@@ -783,17 +804,33 @@ static bool apply_metadata_update(ServiceState *state, int update_type,
             break;
         }
         case NCD_META_UPDATE_GROUP_REMOVE:
-            success = service_state_remove_group(state, (const char *)data);
+            if (!data || data_len < 1) {
+                success = false;
+            } else {
+                success = service_state_remove_group(state, (const char *)data);
+            }
             break;
         case NCD_META_UPDATE_EXCLUSION_ADD:
-            success = service_state_add_exclusion(state, (const char *)data);
-            publish_db = success;
+            if (!data || data_len < 1) {
+                success = false;
+            } else {
+                success = service_state_add_exclusion(state, (const char *)data);
+                publish_db = success;
+            }
             break;
         case NCD_META_UPDATE_EXCLUSION_REMOVE:
-            success = service_state_remove_exclusion(state, (const char *)data);
+            if (!data || data_len < 1) {
+                success = false;
+            } else {
+                success = service_state_remove_exclusion(state, (const char *)data);
+            }
             break;
         case NCD_META_UPDATE_CONFIG:
-            success = service_state_update_config(state, (const NcdConfig *)data);
+            if (!data || data_len < sizeof(NcdConfig)) {
+                success = false;
+            } else {
+                success = service_state_update_config(state, (const NcdConfig *)data);
+            }
             break;
         case NCD_META_UPDATE_CLEAR_HISTORY:
             success = service_state_clear_history(state);
@@ -822,8 +859,12 @@ static bool apply_metadata_update(ServiceState *state, int update_type,
             break;
         }
         case NCD_META_UPDATE_DIR_HISTORY_REMOVE: {
-            int idx = *(const int *)data;
-            success = service_state_remove_dir_history(state, idx);
+            if (!data || data_len < sizeof(int)) {
+                success = false;
+            } else {
+                int idx = *(const int *)data;
+                success = service_state_remove_dir_history(state, idx);
+            }
             break;
         }
         case NCD_META_UPDATE_DIR_HISTORY_SWAP: {
@@ -1038,10 +1079,10 @@ static bool try_queue_mutation(ServiceState *state,
 
     switch (msg_type) {
         case NCD_MSG_SUBMIT_HEURISTIC: {
-            if (!payload || payload_len < sizeof(NcdSubmitHeuristicPayload)) {
+            if (!payload || !validate_heuristic_payload((const NcdSubmitHeuristicPayload *)payload, payload_len)) {
                 return false;
             }
-            NcdSubmitHeuristicPayload *hp = (NcdSubmitHeuristicPayload *)payload;
+            const NcdSubmitHeuristicPayload *hp = (const NcdSubmitHeuristicPayload *)payload;
             pending_type = PENDING_HEURISTIC;
             data_len = 8 + hp->search_len + hp->target_len;
             data = malloc(data_len);
@@ -1055,10 +1096,10 @@ static bool try_queue_mutation(ServiceState *state,
         }
 
         case NCD_MSG_SUBMIT_METADATA: {
-            if (!payload || payload_len < sizeof(NcdSubmitMetadataPayload)) {
+            if (!payload || !validate_metadata_payload((const NcdSubmitMetadataPayload *)payload, payload_len)) {
                 return false;
             }
-            NcdSubmitMetadataPayload *mp = (NcdSubmitMetadataPayload *)payload;
+            const NcdSubmitMetadataPayload *mp = (const NcdSubmitMetadataPayload *)payload;
             pending_type = PENDING_METADATA_UPDATE;
             data_len = 8 + mp->data_len;
             data = malloc(data_len);
@@ -1229,7 +1270,7 @@ static int handle_client_connection(NcdIpcConnection *conn,
 
     switch (msg_type) {
         case NCD_MSG_SUBMIT_HEURISTIC:
-            if (payload && payload_len >= sizeof(NcdSubmitHeuristicPayload)) {
+            if (payload && validate_heuristic_payload((const NcdSubmitHeuristicPayload *)payload, payload_len)) {
                 handle_submit_heuristic(conn, sequence, state, pub,
                                         (const NcdSubmitHeuristicPayload *)payload,
                                         (const char *)payload + sizeof(NcdSubmitHeuristicPayload));
@@ -1240,7 +1281,7 @@ static int handle_client_connection(NcdIpcConnection *conn,
             break;
 
         case NCD_MSG_SUBMIT_METADATA:
-            if (payload && payload_len >= sizeof(NcdSubmitMetadataPayload)) {
+            if (payload && validate_metadata_payload((const NcdSubmitMetadataPayload *)payload, payload_len)) {
                 handle_submit_metadata(conn, sequence, state, pub,
                                        (const NcdSubmitMetadataPayload *)payload,
                                        (const char *)payload + sizeof(NcdSubmitMetadataPayload));

@@ -1,8 +1,8 @@
 /* test_agent_mkdir_extended.c -- Extended integration tests for agent mkdir/mkdirs
  *
  * Tests the Agent 1 enhancements from AdditionalAgentFeatures.md:
- *   --dry-run, --parents-required, --force, --mode, --verify,
- *   --atomic, --stop-on-error, stdin input, buffered JSON output.
+ *   --dry-run, --parents-required, mkdir --force, --mode, --verify,
+ *   mkdirs --atomic, --stop-on-error, stdin input, buffered JSON output.
  */
 
 #include "test_framework.h"
@@ -348,40 +348,110 @@ TEST(mkdirs_atomic_all_or_nothing)
     return 0;
 }
 
-TEST(mkdirs_atomic_rollback_on_failure)
+TEST(mkdirs_existing_directory_fails)
 {
-    const char *tree = "ncd_a1_rb_tree";
+    const char *tree = "ncd_a1_exists_tree";
     rm_rf(tree);
 
-    /* Pre-create root and a file that blocks one directory */
     mkdir(tree, 0755);
-    char block_path[NCD_MAX_PATH];
-    snprintf(block_path, sizeof(block_path), "%s/block_file", tree);
-    FILE *f = fopen(block_path, "w");
-    if (f) fclose(f);
 
     const char *tmp = getenv("TEMP");
     if (!tmp) tmp = "/tmp";
     char input_file[NCD_MAX_PATH];
-    snprintf(input_file, sizeof(input_file), "%s/ncd_a1_rb.txt", tmp);
+    snprintf(input_file, sizeof(input_file), "%s/ncd_a1_exists.txt", tmp);
     make_input_file(input_file,
-        "ncd_a1_rb_tree\n"
-        "  ok_dir\n"
-        "  block_file\n"
-        "    child\n");
+        "ncd_a1_exists_tree\n"
+        "  child\n");
+
+    char out[4096] = {0};
+    int ret = run_agent_mkdirs("--json", input_file, out, sizeof(out));
+    ASSERT_TRUE(ret != 0);
+    ASSERT_TRUE(dir_exists(tree));
+
+    char child_path[NCD_MAX_PATH];
+    snprintf(child_path, sizeof(child_path), "%s/child", tree);
+    ASSERT_FALSE(dir_exists(child_path));
+
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_exists\"");
+    ASSERT_STR_CONTAINS(out, "Directory already exists");
+
+    rm_rf(tree);
+    return 0;
+}
+
+TEST(mkdirs_dry_run_existing_directory_fails)
+{
+    const char *tree = "ncd_a1_dryrun_exists";
+    rm_rf(tree);
+    mkdir(tree, 0755);
+
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = "/tmp";
+    char input_file[NCD_MAX_PATH];
+    snprintf(input_file, sizeof(input_file), "%s/ncd_a1_dryrun_exists.txt", tmp);
+    make_input_file(input_file,
+        "ncd_a1_dryrun_exists\n"
+        "  child\n");
+
+    char out[4096] = {0};
+    int ret = run_agent_mkdirs("--dry-run --json", input_file, out, sizeof(out));
+    ASSERT_TRUE(ret != 0);
+    ASSERT_TRUE(dir_exists(tree));
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_exists\"");
+
+    rm_rf(tree);
+    return 0;
+}
+
+TEST(mkdirs_atomic_existing_directory_fails_before_creation)
+{
+    const char *tree = "ncd_a1_atomic_exists";
+    rm_rf(tree);
+    mkdir(tree, 0755);
+
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = "/tmp";
+    char input_file[NCD_MAX_PATH];
+    snprintf(input_file, sizeof(input_file), "%s/ncd_a1_atomic_exists.txt", tmp);
+    make_input_file(input_file,
+        "ncd_a1_atomic_exists\n"
+        "  child\n");
 
     char out[4096] = {0};
     int ret = run_agent_mkdirs("--atomic --json", input_file, out, sizeof(out));
     ASSERT_TRUE(ret != 0);
+    ASSERT_TRUE(dir_exists(tree));
 
-    /* ok_dir should have been rolled back */
-    char ok_path[NCD_MAX_PATH];
-    snprintf(ok_path, sizeof(ok_path), "%s/ok_dir", tree);
-    ASSERT_FALSE(dir_exists(ok_path));
+    char child_path[NCD_MAX_PATH];
+    snprintf(child_path, sizeof(child_path), "%s/child", tree);
+    ASSERT_FALSE(dir_exists(child_path));
 
-    /* output must contain rollback array (empty since validation failed before creation) */
-    ASSERT_STR_CONTAINS(out, "\"rollback\"");
-    ASSERT_STR_CONTAINS(out, "\"result\":\"error_not_empty\"");
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_exists\"");
+    ASSERT_STR_CONTAINS(out, "\"rollback\":[]");
+
+    rm_rf(tree);
+    return 0;
+}
+
+TEST(mkdirs_force_is_unsupported)
+{
+    const char *tree = "ncd_a1_force_unsupported";
+    rm_rf(tree);
+
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = "/tmp";
+    char input_file[NCD_MAX_PATH];
+    snprintf(input_file, sizeof(input_file), "%s/ncd_a1_force_unsupported.txt", tmp);
+    make_input_file(input_file,
+        "ncd_a1_force_unsupported\n"
+        "  child\n");
+
+    char out[4096] = {0};
+    int ret = run_agent_mkdirs("--force --json", input_file, out, sizeof(out));
+    ASSERT_TRUE(ret != 0);
+    ASSERT_FALSE(dir_exists(tree));
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_unsupported\"");
+    ASSERT_STR_CONTAINS(out, "--force is not supported for mkdirs");
 
     rm_rf(tree);
     return 0;
@@ -473,6 +543,7 @@ TEST(mkdirs_json_is_valid_on_failure)
     /* basic JSON structural checks */
     ASSERT_STR_CONTAINS(out, "{\"v\":1");
     ASSERT_STR_CONTAINS(out, "\"dirs\":");
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_exists\"");
     ASSERT_STR_CONTAINS(out, "\"summary\":");
     ASSERT_STR_CONTAINS(out, "}");
 
@@ -506,7 +577,7 @@ TEST(mkdirs_json_contains_rollback_array)
     ASSERT_TRUE(ret != 0);
 
     ASSERT_STR_CONTAINS(out, "\"rollback\"");
-    ASSERT_STR_CONTAINS(out, "\"result\":\"error_not_empty\"");
+    ASSERT_STR_CONTAINS(out, "\"result\":\"error_exists\"");
 
     rm_rf(tree);
     return 0;
@@ -534,7 +605,10 @@ void suite_agent_mkdir_extended(void)
     RUN_TEST(mkdir_mode_0700);
     RUN_TEST(mkdirs_dry_run_lists_all_paths);
     RUN_TEST(mkdirs_atomic_all_or_nothing);
-    RUN_TEST(mkdirs_atomic_rollback_on_failure);
+    RUN_TEST(mkdirs_existing_directory_fails);
+    RUN_TEST(mkdirs_dry_run_existing_directory_fails);
+    RUN_TEST(mkdirs_atomic_existing_directory_fails_before_creation);
+    RUN_TEST(mkdirs_force_is_unsupported);
     RUN_TEST(mkdirs_verify_tree_mismatch_fails);
     RUN_TEST(mkdirs_reads_from_stdin);
     RUN_TEST(mkdirs_json_is_valid_on_failure);

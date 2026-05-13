@@ -307,7 +307,11 @@ static bool load_database_from_snapshot(NcdStateView *view) {
         drv->volume_label[63] = 0;
         
         /* Legacy fields */
-        drv->letter = (char)(drv->mount_point[0]);  /* First char of mount point */
+#if NCD_PLATFORM_WINDOWS
+        drv->letter = (char)(drv->mount_point[0]);
+#else
+        drv->letter = platform_get_drive_letter(drv->mount_point);
+#endif
 #if NCD_PLATFORM_WINDOWS
         /* mount_point is wchar_t on Windows, label is char */
         int lbl_i;
@@ -501,16 +505,9 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     
     /* Open and map metadata shared memory */
     SVC_DBG("Opening metadata shared memory...\n");
-    char meta_name[256];
-    if (!shm_make_meta_name(meta_name, sizeof(meta_name))) {
-        ipc_client_disconnect(SERVICE(view).ipc_client);
-        free(view);
-        shm_platform_cleanup();
-        ipc_client_cleanup();
-        set_error("Failed to generate metadata SHM name");
-        SVC_DBG("Failed to generate metadata SHM name\n");
-        return -1;
-    }
+    /* Trust the advertised name from the service rather than recomputing locally */
+    state_info.meta_name[sizeof(state_info.meta_name) - 1] = '\0';
+    const char *meta_name = state_info.meta_name;
     
     SVC_DBG("Metadata SHM name: %s\n", meta_name);
     ShmResult shm_result = shm_open_existing(meta_name, SHM_ACCESS_READ, (ShmHandle **)&SERVICE(view).meta_shm);
@@ -538,18 +535,9 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     
     /* Open and map database shared memory */
     SVC_DBG("Opening database shared memory...\n");
-    char db_name[256];
-    if (!shm_make_db_name(db_name, sizeof(db_name))) {
-        shm_unmap(SERVICE(view).meta_addr, SERVICE(view).meta_size);
-        shm_close(SERVICE(view).meta_shm);
-        ipc_client_disconnect(SERVICE(view).ipc_client);
-        free(view);
-        shm_platform_cleanup();
-        ipc_client_cleanup();
-        set_error("Failed to generate database SHM name");
-        SVC_DBG("Failed to generate database SHM name\n");
-        return -1;
-    }
+    /* Trust the advertised name from the service rather than recomputing locally */
+    state_info.db_name[sizeof(state_info.db_name) - 1] = '\0';
+    const char *db_name = state_info.db_name;
     
     SVC_DBG("Database SHM name: %s\n", db_name);
     shm_result = shm_open_existing(db_name, SHM_ACCESS_READ, (ShmHandle **)&SERVICE(view).db_shm);

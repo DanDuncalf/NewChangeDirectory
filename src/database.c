@@ -1816,22 +1816,6 @@ NcdDatabase *db_load_binary(const char *path)
         dp += padded;
     }
     
-    /* Debug */
-    FILE *dbg = fopen("C:\\ncd_load_debug.txt", "a");
-    if (dbg) {
-        fprintf(dbg, "db_load_binary: path=%s drive_count=%d\n", path, db->drive_count);
-        for (int i = 0; i < db->drive_count; i++) {
-            DriveData *drv = &db->drives[i];
-            fprintf(dbg, "  drive %c label=%s dir_count=%d\n", drv->letter, drv->label, drv->dir_count);
-            char fp[NCD_MAX_PATH];
-            for (int j = 0; j < drv->dir_count; j++) {
-                db_full_path(drv, j, fp, sizeof(fp));
-                fprintf(dbg, "    [%d] parent=%d path=%s\n", j, drv->dirs[j].parent, fp);
-            }
-        }
-        fclose(dbg);
-    }
-    
     return db;
 }
 
