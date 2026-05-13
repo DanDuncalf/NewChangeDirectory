@@ -152,20 +152,33 @@ if (-not $SkipWindowsBuild -and -not $SkipWindowsArm64) {
     Write-Header "Building Windows ARM64"
 
     $vcvarsArm64 = $null
+    $vcvarsall = $null
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
         $installPath = & $vswhere -latest -products * -property installationPath 2>$null
         if ($installPath) {
             $vcvarsArm64 = Join-Path $installPath "VC\Auxiliary\Build\vcvarsarm64.bat"
+            $vcvarsall = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
         }
     }
 
-    if (-not $vcvarsArm64 -or -not (Test-Path $vcvarsArm64)) {
+    $arm64Env = $null
+    if ($vcvarsArm64 -and (Test-Path $vcvarsArm64)) {
+        $arm64Env = $vcvarsArm64
+    } elseif ($vcvarsall -and (Test-Path $vcvarsall)) {
+        $arm64Env = $vcvarsall
+    }
+
+    if (-not $arm64Env) {
         Write-Warning "ARM64 build tools not found. Skipping Windows ARM64 build."
         Write-Warning "Install with: vs_installer modify --add Microsoft.VisualStudio.Component.VC.ARM64"
     } else {
-        # Build ARM64 using vcvarsarm64
-        cmd /c "`"$vcvarsArm64`" && `"$ProjectRoot\build.bat`" arm64"
+        # Build ARM64 using vcvarsarm64 or vcvarsall.bat arm64
+        if ($arm64Env -match "vcvarsall\.bat") {
+            cmd /c "`"$arm64Env`" arm64 && `"$ProjectRoot\build.bat`" arm64"
+        } else {
+            cmd /c "`"$arm64Env`" && `"$ProjectRoot\build.bat`" arm64"
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Windows ARM64 build failed"
             exit 1
@@ -210,7 +223,8 @@ if (-not $SkipLinuxBuild) {
     if (-not $wslCheck) {
         Write-Warning "WSL gcc not found. Skipping Linux x64 build."
     } else {
-        wsl bash -c "cd '$($ProjectRoot -replace '\\','/')' && ./build.sh x64"
+        $wslProjectRoot = wsl bash -c "wslpath -u '$ProjectRoot'"
+        wsl bash -c "cd '$wslProjectRoot' && ./build.sh x64"
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Linux x64 build failed"
             exit 1
@@ -238,8 +252,9 @@ if (-not $SkipLinuxBuild) {
         }
 
         # Create tar.gz via WSL
-        $wslTemp = wsl wslpath -u "$tempDir"
-        wsl bash -c "cd '$wslTemp' && tar -czf '$($tarPath -replace '\\','/')' ."
+        $wslTemp = wsl bash -c "wslpath -u '$tempDir'"
+        $wslTarPath = wsl bash -c "wslpath -u '$tarPath'"
+        wsl bash -c "cd '$wslTemp' && tar -czf '$wslTarPath' ."
 
         Remove-Item -Recurse -Force $tempDir
         Write-Host "Created: $tarPath" -ForegroundColor Green
@@ -258,7 +273,8 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxArm64) {
         Write-Warning "aarch64-linux-gnu-gcc not found in WSL. Skipping Linux ARM64 build."
         Write-Warning "Install with: wsl sudo apt-get install gcc-aarch64-linux-gnu"
     } else {
-        wsl bash -c "cd '$($ProjectRoot -replace '\\','/')' && CC_ARM64=aarch64-linux-gnu-gcc ./build.sh arm64"
+        $wslProjectRoot = wsl bash -c "wslpath -u '$ProjectRoot'"
+        wsl bash -c "cd '$wslProjectRoot' && CC_ARM64=aarch64-linux-gnu-gcc ./build.sh arm64"
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Linux ARM64 build failed"
             exit 1
@@ -285,8 +301,9 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxArm64) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
         }
 
-        $wslTemp = wsl wslpath -u "$tempDir"
-        wsl bash -c "cd '$wslTemp' && tar -czf '$($tarPath -replace '\\','/')' ."
+        $wslTemp = wsl bash -c "wslpath -u '$tempDir'"
+        $wslTarPath = wsl bash -c "wslpath -u '$tarPath'"
+        wsl bash -c "cd '$wslTemp' && tar -czf '$wslTarPath' ."
 
         Remove-Item -Recurse -Force $tempDir
         Write-Host "Created: $tarPath" -ForegroundColor Green
@@ -305,7 +322,8 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxRiscv) {
         Write-Warning "riscv64-linux-gnu-gcc not found in WSL. Skipping Linux RISC-V build."
         Write-Warning "Install with: wsl sudo apt-get install gcc-riscv64-linux-gnu"
     } else {
-        wsl bash -c "cd '$($ProjectRoot -replace '\\','/')' && CC_RISCV=riscv64-linux-gnu-gcc ./build.sh riscv64"
+        $wslProjectRoot = wsl bash -c "wslpath -u '$ProjectRoot'"
+        wsl bash -c "cd '$wslProjectRoot' && CC_RISCV=riscv64-linux-gnu-gcc ./build.sh riscv64"
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Linux RISC-V build failed"
             exit 1
@@ -332,8 +350,9 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxRiscv) {
             Copy-Item -Recurse (Join-Path $ProjectRoot "completions") $tempDir
         }
 
-        $wslTemp = wsl wslpath -u "$tempDir"
-        wsl bash -c "cd '$wslTemp' && tar -czf '$($tarPath -replace '\\','/')' ."
+        $wslTemp = wsl bash -c "wslpath -u '$tempDir'"
+        $wslTarPath = wsl bash -c "wslpath -u '$tarPath'"
+        wsl bash -c "cd '$wslTemp' && tar -czf '$wslTarPath' ."
 
         Remove-Item -Recurse -Force $tempDir
         Write-Host "Created: $tarPath" -ForegroundColor Green
