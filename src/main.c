@@ -68,7 +68,7 @@ int g_agdb_mode = 0;
 
 typedef struct {
     char drive;                       /* Drive letter (e.g., 'C') */
-    char path[NCD_MAX_PATH];          /* Path to database file */
+    char *path;                       /* Path to database file (heap-allocated) */
     NcdDatabase *db;                  /* Pointer to database (NULL if not loaded) */
     bool dirty;                       /* true if has unsaved changes */
     time_t dirty_since;               /* When it became dirty */
@@ -116,7 +116,7 @@ static void db_mark_dirty_standalone(char drive, const char *path, NcdDatabase *
     if (g_dirty_db_count < MAX_DIRTY_DBS) {
         DirtyDbEntry *entry = &g_dirty_dbs[g_dirty_db_count++];
         entry->drive = drive;
-        platform_strncpy_s(entry->path, sizeof(entry->path), path);
+        entry->path = ncd_strdup(path);
         entry->db = db;
         entry->dirty = true;
         entry->dirty_since = time(NULL);
@@ -149,7 +149,7 @@ static void flush_all_dirty_dbs(void)
             NcdDatabase *db = g_dirty_dbs[i].db;
             const char *path = g_dirty_dbs[i].path;
             
-            if (db && path[0]) {
+            if (db && path && path[0]) {
                 bool saved = db_save_binary_single(db, 0, path);
                 if (saved) {
                     db_clear_dirty_standalone(g_dirty_dbs[i].drive);
@@ -162,6 +162,9 @@ static void flush_all_dirty_dbs(void)
             db_free(g_dirty_dbs[i].db);
             g_dirty_dbs[i].db = NULL;
         }
+        
+        free(g_dirty_dbs[i].path);
+        g_dirty_dbs[i].path = NULL;
     }
     g_dirty_db_count = 0;
 }

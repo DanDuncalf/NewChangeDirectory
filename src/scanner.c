@@ -491,9 +491,9 @@ int scan_mounts(NcdDatabase *db,
     /* Convert timeout to milliseconds, ensure reasonable minimum */
     unsigned long timeout_ms = timeout_seconds > 0 ? (unsigned long)timeout_seconds * 1000UL : 60000UL;
 
-    /* Buffers for auto-enumerated mounts - must persist for the whole function */
-    static char mount_bufs[26][MAX_PATH];
-    static const char *mount_ptrs[26];
+    /* Buffers for auto-enumerated mounts - allocated on stack for the function lifetime */
+    char mount_bufs[26][MAX_PATH];
+    const char *mount_ptrs[26];
 
     /* Prevent full system scans in test mode */
     if (!mounts) {
