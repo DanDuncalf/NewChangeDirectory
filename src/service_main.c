@@ -655,6 +655,12 @@ static void handle_get_detailed_status(NcdIpcConnection *conn,
     payload->log_path_len = log_path_len;
     strncpy(payload->app_version, SERVICE_VERSION, sizeof(payload->app_version));
     strncpy(payload->build_stamp, SERVICE_BUILD_STAMP, sizeof(payload->build_stamp));
+#if NCD_PLATFORM_WINDOWS
+    strncpy(payload->platform, "Windows", sizeof(payload->platform));
+#else
+    strncpy(payload->platform, "Linux", sizeof(payload->platform));
+#endif
+    strncpy(payload->arch, platform_get_arch_name(), sizeof(payload->arch));
 
     uint8_t *data = response + sizeof(NcdDetailedStatusPayload);
 
@@ -1877,6 +1883,12 @@ static void print_detailed_status(void) {
     if (info.build_stamp[0]) {
         printf("Build: %s\n", info.build_stamp);
     }
+    if (info.platform[0]) {
+        printf("Platform: %s\n", info.platform);
+    }
+    if (info.arch[0]) {
+        printf("Architecture: %s\n", info.arch);
+    }
     printf("Protocol: %u\n", info.protocol_version);
     printf("Log level: %d\n", info.log_level);
     if (info.pending_count > 0) {
@@ -1914,9 +1926,19 @@ static void print_detailed_status(void) {
     }
 }
 
-/* Parse -log<n> option from argument */
+/* Parse -log<n> option from argument.
+ * Returns:
+ *   -1         Not a -log option
+ *   -2         Bare "-log" or "/log" — next argv token is the level
+ *   0..5       Valid log level from attached form (-log3)
+ */
 static int parse_log_option(const char *arg) {
     if (!arg) return -1;
+    /* Space-separated form: exactly "-log" or "/log" */
+    if (strcmp(arg, "-log") == 0 || strcmp(arg, "/log") == 0) {
+        return -2;  /* Caller must consume next token as level */
+    }
+    /* Attached form: "-log3" or "/log3" */
     if (strncmp(arg, "-log", 4) == 0 || strncmp(arg, "/log", 4) == 0) {
         const char *level_str = arg + 4;
         if (*level_str >= '0' && *level_str <= '5' && level_str[1] == '\0') {
@@ -2083,6 +2105,13 @@ int main(int argc, char *argv[]) {
         int log_level = parse_log_option(argv[i]);
         if (log_level >= 0) {
             g_log_level = log_level;
+        } else if (log_level == -2 && i + 1 < argc) {
+            /* Space-separated form: -log 3 */
+            const char *next = argv[i + 1];
+            if (next[0] >= '0' && next[0] <= '5' && next[1] == '\0') {
+                g_log_level = next[0] - '0';
+                i++;  /* Consume the level token */
+            }
         }
         if (strcmp(argv[i], "-init") == 0 || strcmp(argv[i], "--init-db") == 0) {
             g_init_db = true;
@@ -2123,7 +2152,15 @@ int main(int argc, char *argv[]) {
     if (argc > 1 + arg_offset) {
         int log_opt = parse_log_option(argv[1 + arg_offset]);
         if (log_opt >= 0) {
+            g_log_level = log_opt;
             arg_offset++;  /* Skip the -log<n> argument */
+        } else if (log_opt == -2 && argc > 2 + arg_offset) {
+            /* Space-separated form: -log 3 */
+            const char *next = argv[2 + arg_offset];
+            if (next[0] >= '0' && next[0] <= '5' && next[1] == '\0') {
+                g_log_level = next[0] - '0';
+                arg_offset += 2;  /* Skip both -log and the level */
+            }
         }
     }
 
