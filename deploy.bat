@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "SRC_DIR=%~dp0"
-set "DEST_DIR=%USERPROFILE%\Tools\bin"
+set "DEST_DIR=%USERPROFILE%\Tools"
 
 if not "%~1"=="" set "DEST_DIR=%~1"
 
@@ -37,6 +37,21 @@ for /f "tokens=*" %%a in ('"%SRC_DIR%NewChangeDirectory.exe" /v 2^>^&1') do (
 )
 echo New version: %NEW_VERSION%
 echo.
+
+:: Check for leftover Application Verifier IFEO (agents enable this during debugging)
+:: If present, it adds ~6s overhead to every launch of NewChangeDirectory.exe
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\NewChangeDirectory.exe" >nul 2>&1
+if "%ERRORLEVEL%"=="0" (
+    echo WARNING: Application Verifier IFEO key detected for NewChangeDirectory.exe.
+    echo This adds ~6 seconds to every launch. Removing it now...
+    reg delete "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\NewChangeDirectory.exe" /f >nul 2>&1
+    if "%ERRORLEVEL%"=="0" (
+        echo   [OK] IFEO key removed.
+    ) else (
+        echo   [ERROR] Failed to remove IFEO key. Run as Administrator.
+    )
+    echo.
+)
 
 :: Check if service is running
 tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul

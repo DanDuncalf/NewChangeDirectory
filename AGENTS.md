@@ -201,6 +201,26 @@ python test\generate_report.py
 > - When `test_agent_mv.exe` or other agent tests fail after database-related edits
 > - As the first step of any CI/CD build pipeline
 
+### Deploy Checklist — MANDATORY
+
+**Before every deploy of `NewChangeDirectory.exe`, check and clean up Image File Execution Options (IFEO).** Agents may enable the Application Verifier during debugging (injecting `vrfcore.dll` + `vfbasics.dll`), which adds ~6 seconds of overhead to every launch. This is keyed by filename, so it silently persists across rebuilds and reboots.
+
+```powershell
+# Check for IFEO key (returns nothing if clean)
+Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\NewChangeDirectory.exe" -ErrorAction SilentlyContinue
+
+# If present, remove it immediately
+Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\NewChangeDirectory.exe" -Recurse -Force
+```
+
+**Symptoms that IFEO is active:**
+- `ncd --version` takes 5-7 seconds instead of <300 ms
+- Renaming the binary to anything else makes it fast
+- Issue is specific to the filename, not the path or binary content
+- Persists after Windows Defender is disabled and exclusions are added
+
+> **History:** On 2026-05-27, a 6-second launch delay was traced to a leftover IFEO key with `VerifierDlls=vrfcore.dll vfbasics.dll`. An agent had enabled Application Verifier during debugging and never removed it. The previous investigation misattributed this to Codex sandbox because renaming the binary bypassed the IFEO name match.
+
 ## Testing
 
 > **📋 Full docs:** [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md)
