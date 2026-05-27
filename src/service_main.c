@@ -32,6 +32,7 @@
 #include <signal.h>
 #include <time.h>
 #include <stdarg.h>
+#include <errno.h>
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
@@ -208,6 +209,7 @@ static void log_init(void) {
 
     char log_path[MAX_PATH];
     char logs_dir[MAX_PATH];
+    int fopen_errno = 0;
 
     /* Get the logs directory (creates it if needed) */
     if (!db_logs_path(logs_dir, sizeof(logs_dir))) {
@@ -225,7 +227,13 @@ static void log_init(void) {
 
     log_lock_acquire();
     g_log_file = fopen(log_path, "a");
+    if (!g_log_file) {
+        fopen_errno = errno;
+    }
+    log_lock_release();
+
     if (g_log_file) {
+        log_lock_acquire();
         time_t now = time(NULL);
         char timebuf[64];
         strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", localtime(&now));
@@ -240,8 +248,61 @@ static void log_init(void) {
                 g_log_level >= 2 ? "+ detailed operations" : "unknown");
         fprintf(g_log_file, "============================================================\n");
         fflush(g_log_file);
+        log_lock_release();
+    } else {
+        /* Primary log failed -- write diagnostic to temp fallback */
+        char fallback_path[MAX_PATH];
+        char temp_dir[MAX_PATH];
+        if (platform_get_temp_path(temp_dir, sizeof(temp_dir))) {
+            snprintf(fallback_path, sizeof(fallback_path),
+                     "%s%sncd_service_init_diag.log", temp_dir, NCD_PATH_SEP);
+        } else {
+#if NCD_PLATFORM_WINDOWS
+            snprintf(fallback_path, sizeof(fallback_path),
+                     "C:\\Windows\\Temp\\ncd_service_init_diag.log");
+#else
+            snprintf(fallback_path, sizeof(fallback_path),
+                     "/tmp/ncd_service_init_diag.log");
+#endif
+        }
+
+        FILE *diag = fopen(fallback_path, "a");
+        if (diag) {
+            time_t now = time(NULL);
+            char timebuf[64];
+            strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+            fprintf(diag, "\n");
+            fprintf(diag, "=== NCD Service log_init DIAGNOSTIC at %s ===\n", timebuf);
+            fprintf(diag, "Primary log path: %s\n", log_path);
+            fprintf(diag, "fopen() failed with errno=%d\n", fopen_errno);
+#if NCD_PLATFORM_WINDOWS
+            fprintf(diag, "GetLastError()=%lu\n", (unsigned long)GetLastError());
+#endif
+            fprintf(diag, "Log level requested: %d\n", g_log_level);
+            fprintf(diag, "Logs dir from db_logs_path: %s\n", logs_dir);
+            fprintf(diag, "System mode: %d\n", ncd_is_system_mode() ? 1 : 0);
+            fflush(diag);
+            fclose(diag);
+
+            /* Re-try opening the primary log after diagnostic is written */
+            log_lock_acquire();
+            g_log_file = fopen(log_path, "a");
+            if (g_log_file) {
+                time_t now2 = time(NULL);
+                char timebuf2[64];
+                strftime(timebuf2, sizeof(timebuf2), "%Y-%m-%d %H:%M:%S", localtime(&now2));
+                fprintf(g_log_file, "\n");
+                fprintf(g_log_file, "============================================================\n");
+                fprintf(g_log_file, "NCD Service Starting at %s (retry after diag)\n", timebuf2);
+                fprintf(g_log_file, "Version: %s (Build: %s)\n", SERVICE_VERSION, SERVICE_BUILD_STAMP);
+                fprintf(g_log_file, "Log File: %s\n", log_path);
+                fprintf(g_log_file, "Log Level: %d\n", g_log_level);
+                fprintf(g_log_file, "============================================================\n");
+                fflush(g_log_file);
+            }
+            log_lock_release();
+        }
     }
-    log_lock_release();
 }
 
 /* Write a log message (thread-safe) */

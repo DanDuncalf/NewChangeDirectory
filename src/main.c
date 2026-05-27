@@ -595,7 +595,11 @@ static void con_close(void)
 
 static void print_version(void)
 {
-    printf("NCD v%s  [built %s]\n", NCD_BUILD_VER, NCD_BUILD_STAMP);
+#if NCD_PLATFORM_WINDOWS
+    printf("NCD v%s  [built %s]  [Windows %s]\n", NCD_BUILD_VER, NCD_BUILD_STAMP, platform_get_arch_name());
+#else
+    printf("NCD v%s  [built %s]  [Linux %s]\n", NCD_BUILD_VER, NCD_BUILD_STAMP, platform_get_arch_name());
+#endif
     fflush(stdout);
 }
 
@@ -2312,6 +2316,8 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
                          info.pending_count, info.dirty_flags);
             agent_printf("\"version\":\"%s\",\"build\":\"%s\",",
                          info.app_version, info.build_stamp);
+            agent_printf("\"platform\":\"%s\",\"arch\":\"%s\",",
+                         info.platform, info.arch);
             agent_printf("\"meta_generation\":%llu,\"db_generation\":%llu,",
                          (unsigned long long)info.meta_generation,
                          (unsigned long long)info.db_generation);
@@ -2336,6 +2342,12 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             }
             if (info.build_stamp[0]) {
                 agent_printf("Build: %s\r\n", info.build_stamp);
+            }
+            if (info.platform[0]) {
+                agent_printf("Platform: %s\r\n", info.platform);
+            }
+            if (info.arch[0]) {
+                agent_printf("Architecture: %s\r\n", info.arch);
             }
             agent_printf("Log level: %d\r\n", info.log_level);
             if (info.pending_count > 0) {
@@ -5641,6 +5653,39 @@ int main(int argc, char *argv[])
     }
     /* ------------------------------------------- forced rescan shortcut  */
     if (opts.force_rescan && !opts.has_search) {
+        /* If the service is running, delegate the rescan to it.
+         * The service handles persistence and avoids permission issues
+         * with system-mode database paths (C:\ProgramData\NCD\). */
+        if (!opts.scan_subdirectory[0] && !opts.db_override[0]) {
+            /* Try to connect to the service */
+            if (ensure_state_initialized() && g_state_info.from_service) {
+                /* Build drive mask from requested drives */
+                bool drive_mask[26] = {false};
+                if (opts.scan_drive_count > 0) {
+                    /* Use the already-parsed scan_drive_mask from options */
+                    for (int di = 0; di < 26; di++) {
+                        if (opts.scan_drive_mask[di]) {
+                            drive_mask[di] = true;
+                        }
+                    }
+                } else {
+                    /* No specific drives requested -- rescan all */
+                    for (int di = 0; di < 26; di++) drive_mask[di] = true;
+                }
+                ncd_printf("NCD: Requesting service to rescan...\r\n");
+                int rc = state_backend_request_rescan(g_state_view, drive_mask, false);
+                if (rc == 0) {
+                    ncd_printf("  Rescan request sent to service.\r\n");
+                    ncd_printf("  The service will scan drives in the background.\r\n");
+                    ncd_printf("  Use 'ncdservice status' to monitor progress.\r\n");
+                    return 0;
+                }
+                /* Service request failed -- fall through to local scan */
+                ncd_printf("NCD: Service rescan unavailable (%s), falling back to local scan.\r\n",
+                           state_backend_error_string());
+            }
+        }
+
         /* Load metadata and set exclusion list for scanning */
         NcdMetadata *meta = db_metadata_load();
         if (!meta) {
@@ -5705,9 +5750,11 @@ int main(int argc, char *argv[])
                            db->drives[i].letter);
                 continue;
             }
-            if (!db_save_binary_single(db, i, drv_path))
-                ncd_printf("NCD: Warning -- could not save %c: database.\r\n",
-                           db->drives[i].letter);
+            if (!db_save_binary_single(db, i, drv_path)) {
+                const char *err = db_get_last_error();
+                ncd_printf("NCD: Warning -- could not save %c: database: %s\r\n",
+                           db->drives[i].letter, err ? err : "unknown error");
+            }
             else
                 ncd_printf("  Saved %c: -> %s\r\n", db->drives[i].letter, drv_path);
         }
