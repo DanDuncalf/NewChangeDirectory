@@ -336,7 +336,7 @@ echo   Created test directory tree
 
 :: Create isolated metadata (never touch the user's real metadata file)
 mkdir "%TEST_DATA%\NCD" 2>nul
-powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%TEST_DATA%\NCD\ncd.metadata', [byte[]]@(0x4E,0x43,0x4D,0x44,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00))"
+powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%TEST_DATA%\NCD\ncd.metadata', [byte[]]@(0x4E,0x43,0x4D,0x44,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00))"
 echo   Created isolated metadata
 
 :: Set CONF_OVERRIDE to use -conf for all NCD invocations
@@ -665,8 +665,8 @@ set "NCD_UI_KEYS=SPACE,ENTER"
 "%NCD%" %CONF_OVERRIDE% /c >nul 2>&1
 call :test_ncd_finds K3 "Flag overrides config" ".hidden_config" /i .hidden_config
 
-:: Restore default TUI behavior for the rest of the suite
-set "NCD_UI_KEYS=ENTER"
+:: Clear injected keys - no TUI automation needed for subsequent tests
+set "NCD_UI_KEYS="
 
 :: ==========================================================================
 :: CATEGORY L: Database Override /d (3 tests)
@@ -957,6 +957,9 @@ if not errorlevel 2 (call :pass U12 "Empty history bare NCD") else (call :fail U
 :: Restore database
 call :rescan_testroot
 
+:: Kill any stray service that could contaminate tree tests with wrong DB
+taskkill /F /IM NCDService.exe >nul 2>&1
+
 :: ==========================================================================
 :: CATEGORY V: Agent Tree (10 tests)
 :: ==========================================================================
@@ -964,32 +967,32 @@ call :rescan_testroot
 echo --- Category V: Agent Tree ---
 
 :: V1: Tree with JSON output
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --json --depth 2 > "%TEMP%\v1_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --json --depth 2 > "%TEMP%\v1_out.txt" 2>&1
 findstr /C:"\"v\"" "%TEMP%\v1_out.txt" >nul && findstr /C:"\"tree\"" "%TEMP%\v1_out.txt" >nul
 if not errorlevel 1 (call :pass V1 "Agent tree --json returns valid JSON") else (call :fail V1 "Agent tree --json returns valid JSON")
 del "%TEMP%\v1_out.txt" 2>nul
 
 :: V2: Tree flat format shows relative paths with separators
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --flat --depth 2 > "%TEMP%\v2_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --flat --depth 2 > "%TEMP%\v2_out.txt" 2>&1
 findstr "\\" "%TEMP%\v2_out.txt" >nul
 if not errorlevel 1 (call :pass V2 "Agent tree --flat shows relative paths") else (call :fail V2 "Agent tree --flat shows relative paths")
 del "%TEMP%\v2_out.txt" 2>nul
 
 :: V3: Tree indented format (default) shows names only with indentation
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 2 > "%TEMP%\v3_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 2 > "%TEMP%\v3_out.txt" 2>&1
 findstr "docs" "%TEMP%\v3_out.txt" >nul
 if not errorlevel 1 (call :pass V3 "Agent tree default shows indented names") else (call :fail V3 "Agent tree default shows indented names")
 del "%TEMP%\v3_out.txt" 2>nul
 
 :: V4: Tree flat format with JSON
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --json --flat --depth 2 > "%TEMP%\v4_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --json --flat --depth 2 > "%TEMP%\v4_out.txt" 2>&1
 findstr /C:"\"v\"" "%TEMP%\v4_out.txt" >nul && findstr /C:"\"d\"" "%TEMP%\v4_out.txt" >nul
 if not errorlevel 1 (call :pass V4 "Agent tree --json --flat returns flat JSON") else (call :fail V4 "Agent tree --json --flat returns flat JSON")
 del "%TEMP%\v4_out.txt" 2>nul
 
 :: V5: Tree depth limits entries
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 1 > "%TEMP%\v5_d1.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Projects" --depth 2 > "%TEMP%\v5_d2.txt" 2>&1
 for /f %%a in ('type "%TEMP%\v5_d1.txt" ^| find /c /v ""') do set V5_D1=%%a
 for /f %%a in ('type "%TEMP%\v5_d2.txt" ^| find /c /v ""') do set V5_D2=%%a
 if %V5_D2% gtr %V5_D1% (call :pass V5 "Agent tree --depth limits depth") else (call :fail V5 "Agent tree --depth limits depth")
@@ -1000,22 +1003,23 @@ del "%TEMP%\v5_d1.txt" "%TEMP%\v5_d2.txt" 2>nul
 if errorlevel 1 (call :pass V6 "Agent tree fails on non-existent path") else (call :fail V6 "Agent tree fails on non-existent path")
 
 :: V7: Tree flat format shows full relative paths
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Users" --flat --depth 2 > "%TEMP%\v7_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Users" --flat --depth 2 > "%TEMP%\v7_out.txt" 2>&1
 findstr /I /C:"scott\Downloads" "%TEMP%\v7_out.txt" >nul
 if not errorlevel 1 (call :pass V7 "Agent tree --flat shows correct relative paths") else (findstr /I /C:"admin\Downloads" "%TEMP%\v7_out.txt" >nul && (call :pass V7 "Agent tree --flat shows correct relative paths") || (call :fail V7 "Agent tree --flat shows correct relative paths"))
 del "%TEMP%\v7_out.txt" 2>nul
 
 :: V8: Tree JSON format has name and depth fields
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Media" --json --depth 1 > "%TEMP%\v8_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\Media" --json --depth 1 > "%TEMP%\v8_out.txt" 2>&1
 findstr /C:"\"n\"" "%TEMP%\v8_out.txt" >nul && findstr /C:"\"d\":0" "%TEMP%\v8_out.txt" >nul
 if not errorlevel 1 (call :pass V8 "Agent tree JSON has name and depth fields") else (call :fail V8 "Agent tree JSON has name and depth fields")
 del "%TEMP%\v8_out.txt" 2>nul
 
 :: V9: Tree default format doesn't have path separators (just names)
-"%NCD%" /d %DB_OVERRIDE% /agent tree "%TESTROOT%\WinSys" --depth 2 > "%TEMP%\v9_out.txt" 2>&1
+"%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\WinSys" --depth 2 > "%TEMP%\v9_out.txt" 2>&1
 set /p V9_FIRST= < "%TEMP%\v9_out.txt"
 set "V9_FIRST=!V9_FIRST: =!"
-set "V9_FIRST=!V9_FIRST:=!"
+set "V9_FIRST=!V9_FIRST:
+=!"
 if "!V9_FIRST!"=="System32" (call :pass V9 "Agent tree default shows only names") else (call :fail V9 "Agent tree default shows only names")
 del "%TEMP%\v9_out.txt" 2>nul
 
