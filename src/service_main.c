@@ -1287,7 +1287,10 @@ static bool check_service_ready(NcdIpcConnection *conn,
             return true;
 
         case SERVICE_STATE_STARTING:
-            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_NOT_READY,
+            /* STARTING is a brief transitional state before LOADING.
+             * Return BUSY_LOADING to match test expectations and
+             * provide a more informative/actionable status. */
+            ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_LOADING,
                                   "Service starting...");
             return false;
 
@@ -1707,10 +1710,10 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
      *
      * The server uses a single poll() call to wait for activity on the
      * listening socket AND all active client connections simultaneously.
-     * Each client connection is handled for exactly ONE message, then
-     * closed — no blocking wait for phantom second messages. This
-     * eliminates the 5-second SO_RCVTIMEO dwell time that caused
-     * connection starvation under concurrent load. */
+     * Each client connection can handle multiple messages — connections
+     * are only closed on disconnect or protocol error (handle_client_connection
+     * returning < 0). This matches the Windows named-pipe behavior and
+     * allows tests to send multiple requests on a single connection. */
 
     #define MAX_CLIENTS 32
     int server_fd = ipc_server_get_fd(server);
@@ -1788,19 +1791,28 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
                 }
             } else {
                 /* Data available on client connection —
-                 * handle ONE message then close. */
+                 * handle message(s). Only close on disconnect/error.
+                 * This matches the Windows behavior where a single
+                 * connection can service multiple messages. */
                 NcdIpcConnection *conn = NULL;
+                int slot = -1;
                 for (int j = 0; j < client_count; j++) {
                     if (clients[j].fd == pfds[i].fd) {
                         conn = clients[j].conn;
-                        clients[j].conn = NULL;
-                        clients[j].fd = -1;
+                        slot = j;
                         break;
                     }
                 }
                 if (conn) {
-                    handle_client_connection(conn, state, pub);
-                    ipc_server_close_connection(conn);
+                    int result = handle_client_connection(conn, state, pub);
+                    if (result < 0) {
+                        /* Disconnect or error — close and remove from poll set */
+                        clients[slot].conn = NULL;
+                        clients[slot].fd = -1;
+                        ipc_server_close_connection(conn);
+                        LOG_DETAIL("Client disconnected (fd=%d)", pfds[i].fd);
+                    }
+                    /* else: keep connection alive for more messages */
                 }
             }
         }
