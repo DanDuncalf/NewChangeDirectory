@@ -536,28 +536,41 @@ bool ipc_service_exists(void) {
         }
     }
     
-    /* Try to connect with short timeout */
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return false;
-    }
-    
-    /* Set non-blocking and short timeout */
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, g_sock_path, sizeof(addr.sun_path) - 1);
     
-    int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    close(fd);
+    /* Retry loop: the poll-based server may have a brief window between
+     * accepting a probe connection and detecting EOF on it, during which
+     * the listen backlog can fill up. A few retries with a small delay
+     * ride out this window reliably. */
+    for (int attempt = 0; attempt < 3; attempt++) {
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return false;
+        }
+        
+        /* Set non-blocking */
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        
+        int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+        close(fd);
+        
+        if (result == 0) {
+            return true;
+        }
+        
+        if (attempt < 2) {
+            platform_sleep_ms(20);
+        }
+    }
     
-    return (result == 0);
+    return false;
 }
