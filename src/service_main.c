@@ -41,6 +41,7 @@
 #else
 #include <unistd.h>
 #include <pthread.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -201,6 +202,44 @@ static void log_lock_release(void) {
 #endif
 }
 
+/* Check if a file contains null bytes (sign of corruption/UTF-16 injection) */
+static int log_file_has_corruption(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;  /* Can't open, assume no corruption */
+
+    int corrupted = 0;
+    unsigned char buf[4096];
+    size_t bytes_read;
+    while ((bytes_read = fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (size_t i = 0; i < bytes_read; i++) {
+            if (buf[i] == 0) {
+                corrupted = 1;
+                break;
+            }
+        }
+        if (corrupted) break;
+    }
+    fclose(f);
+    return corrupted;
+}
+
+/* Rotate corrupted log file to a .bak backup, preserving history */
+static void log_rotate_corrupted(const char *log_path) {
+    char bak_path[MAX_PATH];
+    time_t now = time(NULL);
+    char timebuf[32];
+    strftime(timebuf, sizeof(timebuf), "%Y%m%d_%H%M%S", localtime(&now));
+    snprintf(bak_path, sizeof(bak_path), "%s.%s.bak", log_path, timebuf);
+
+    if (rename(log_path, bak_path) == 0) {
+        fprintf(stderr, "NCD Service: Corrupted log file detected, backed up to: %s\n", bak_path);
+    } else {
+        /* If rename fails (e.g. permissions), try to remove so we can start fresh */
+        fprintf(stderr, "NCD Service: Corrupted log file detected, could not backup (removing)...\n");
+        remove(log_path);
+    }
+}
+
 /* Initialize logging system */
 static void log_init(void) {
     if (g_log_level == NCD_LOG_DISABLED) {
@@ -225,8 +264,17 @@ static void log_init(void) {
 
     snprintf(log_path, sizeof(log_path), "%s%sncd_service.log", logs_dir, NCD_PATH_SEP);
 
+    /* Detect and rotate corrupted log files (e.g. UTF-16 injection from external tools).
+     * Null bytes in a text log file indicate corruption that breaks most readers.
+     * We backup the corrupted file so history is preserved, then start a fresh log. */
+    if (log_file_has_corruption(log_path)) {
+        log_rotate_corrupted(log_path);
+    }
+
+    /* Use binary append mode ("ab") on Windows to avoid text-mode side effects
+     * (CRLF translation, Ctrl-Z EOF handling). On POSIX, "a" and "ab" are equivalent. */
     log_lock_acquire();
-    g_log_file = fopen(log_path, "a");
+    g_log_file = fopen(log_path, NCD_FILE_APPEND_BINARY);
     if (!g_log_file) {
         fopen_errno = errno;
     }
@@ -286,7 +334,7 @@ static void log_init(void) {
 
             /* Re-try opening the primary log after diagnostic is written */
             log_lock_acquire();
-            g_log_file = fopen(log_path, "a");
+            g_log_file = fopen(log_path, NCD_FILE_APPEND_BINARY);
             if (g_log_file) {
                 time_t now2 = time(NULL);
                 char timebuf2[64];
@@ -1592,68 +1640,51 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
     LOG_EVENT("Service main loop started");
 
     time_t last_flush_check = time(NULL);
-    const int FLUSH_INTERVAL_SEC = 15;  /* Flush every 15 seconds if dirty */
-    const int DEFERRED_FLUSH_SEC = 10;  /* Deferred flush after 10 seconds of no activity */
+    const int FLUSH_INTERVAL_SEC = 15;
+    const int DEFERRED_FLUSH_SEC = 10;
     int client_connection_count = 0;
 
+#if NCD_PLATFORM_WINDOWS
+    /* Windows: keep existing single-connection blocking loop.
+     * Named pipes use OVERLAPPED I/O and handle concurrent connects
+     * through the pipe instance pool, so the 5-second dwell issue
+     * seen on POSIX doesn't apply. */
     while (ATOMIC_LOAD(g_running)) {
-        /* Accept client connections (non-blocking with timeout) */
-        NcdIpcConnection *conn = ipc_server_accept(server, 100);  /* 100ms timeout */
+        NcdIpcConnection *conn = ipc_server_accept(server, 100);
 
         if (conn) {
             client_connection_count++;
-            /* Handle multiple messages on this connection */
             DBG_LOG("NCD Service: Client connected, handling messages...\n");
             LOG_DETAIL("Client #%d connected", client_connection_count);
             int msg_count = 0;
             while (ATOMIC_LOAD(g_running)) {
                 int result = handle_client_connection(conn, state, pub);
-                if (result < 0) {
-                    /* Client disconnected or error */
-                    break;
-                }
+                if (result < 0) break;
                 msg_count++;
-                /* Brief pause to prevent busy-waiting */
                 platform_sleep_ms(1);
             }
             DBG_LOG("NCD Service: Client disconnected after %d messages\n", msg_count);
-            LOG_DETAIL("Client #%d disconnected after %d messages", client_connection_count, msg_count);
+            LOG_DETAIL("Client #%d disconnected after %d messages",
+                       client_connection_count, msg_count);
             ipc_server_close_connection(conn);
         }
 
-        /* Check for rescan request */
         if (ATOMIC_CLEAR(g_rescan_requested)) {
             perform_rescan(state, pub);
         }
-
-        /* Check for shutdown request */
         if (ATOMIC_LOAD(g_shutdown_requested)) {
             LOG_EVENT("Shutdown requested, exiting main loop");
             ATOMIC_STORE(g_running, 0);
             break;
         }
 
-        /* Check for flush:
-         * 1. Explicit flush request from client (immediate only)
-         * 2. Deferred flush: ALL database changes (DIRTY_DATABASE and DIRTY_DATABASE_PARTIAL)
-         *    are flushed 10 seconds after the last mutation (timer resets on new mutations)
-         * 3. Periodic flush for metadata-only changes (15s interval)
-         */
         time_t now = time(NULL);
-
-        /* Only explicit flush requests are immediate - all database changes use deferred flush */
         bool needs_immediate = ATOMIC_LOAD(g_flush_requested);
-
-        /* Deferred flush: ALL database changes use deferred flush with reset timer.
-         * Both full rescans (DIRTY_DATABASE) and partial updates (DIRTY_DATABASE_PARTIAL)
-         * wait 10 seconds after the last mutation before flushing. */
         time_t mutation_age = service_state_get_db_mutation_age(state);
         uint32_t dirty_flags = service_state_get_dirty_flags(state);
         bool needs_deferred = service_state_needs_flush(state) &&
                               (dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
                               mutation_age >= DEFERRED_FLUSH_SEC;
-
-        /* Periodic flush for metadata-only changes (not database changes) */
         bool needs_periodic = service_state_needs_flush(state) &&
                               !(dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
                               (now - last_flush_check) > FLUSH_INTERVAL_SEC;
@@ -1669,15 +1700,159 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
                 LOG_DETAIL("ERROR - Failed to flush state");
             }
         }
-
-        /* Small sleep to prevent busy-waiting */
         platform_sleep_ms(10);
     }
+#else
+    /* POSIX: poll()-based multiplexed I/O loop.
+     *
+     * The server uses a single poll() call to wait for activity on the
+     * listening socket AND all active client connections simultaneously.
+     * Each client connection is handled for exactly ONE message, then
+     * closed — no blocking wait for phantom second messages. This
+     * eliminates the 5-second SO_RCVTIMEO dwell time that caused
+     * connection starvation under concurrent load. */
+
+    #define MAX_CLIENTS 32
+    int server_fd = ipc_server_get_fd(server);
+    if (server_fd < 0) {
+        LOG_DETAIL("ERROR - Server fd not available for poll");
+        LOG_EVENT("Service fatal error: no server fd");
+        return;
+    }
+
+    struct {
+        NcdIpcConnection *conn;
+        int fd;
+    } clients[MAX_CLIENTS];
+    int client_count = 0;
+    memset(clients, 0, sizeof(clients));
+
+    while (ATOMIC_LOAD(g_running)) {
+        /* Build poll fd set: server + all active clients */
+        struct pollfd pfds[MAX_CLIENTS + 1];
+        int pfd_count = 0;
+
+        pfds[pfd_count].fd = server_fd;
+        pfds[pfd_count].events = POLLIN;
+        pfd_count++;
+
+        for (int i = 0; i < client_count; i++) {
+            if (clients[i].fd >= 0) {
+                pfds[pfd_count].fd = clients[i].fd;
+                pfds[pfd_count].events = POLLIN;
+                pfd_count++;
+            }
+        }
+
+        /* Wait for activity (100ms timeout for periodic flag checks) */
+        int pr = poll(pfds, pfd_count, 100);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            LOG_DETAIL("ERROR - poll() failed: %s", strerror(errno));
+            break;
+        }
+
+        /* Process ready fds */
+        for (int i = 0; i < pfd_count && pr > 0; i++) {
+            if (!(pfds[i].revents & POLLIN)) continue;
+            pr--;
+
+            if (pfds[i].fd == server_fd) {
+                /* New connection on listening socket */
+                NcdIpcConnection *conn = ipc_server_accept(server, 0);
+                if (!conn) continue;
+
+                int cfd = ipc_connection_get_fd(conn);
+                if (cfd < 0) {
+                    ipc_server_close_connection(conn);
+                    continue;
+                }
+
+                /* Add to client array (reuse empty slots) */
+                int slot = -1;
+                for (int j = 0; j < client_count; j++) {
+                    if (clients[j].fd < 0) { slot = j; break; }
+                }
+                if (slot < 0 && client_count < MAX_CLIENTS) {
+                    slot = client_count++;
+                }
+                if (slot >= 0) {
+                    clients[slot].conn = conn;
+                    clients[slot].fd = cfd;
+                    client_connection_count++;
+                    LOG_DETAIL("Client #%d connected (fd=%d)",
+                               client_connection_count, cfd);
+                } else {
+                    /* Too many clients — drop */
+                    ipc_server_close_connection(conn);
+                }
+            } else {
+                /* Data available on client connection —
+                 * handle ONE message then close. */
+                NcdIpcConnection *conn = NULL;
+                for (int j = 0; j < client_count; j++) {
+                    if (clients[j].fd == pfds[i].fd) {
+                        conn = clients[j].conn;
+                        clients[j].conn = NULL;
+                        clients[j].fd = -1;
+                        break;
+                    }
+                }
+                if (conn) {
+                    handle_client_connection(conn, state, pub);
+                    ipc_server_close_connection(conn);
+                }
+            }
+        }
+
+        /* Compact client array: remove closed entries from the end */
+        while (client_count > 0 && clients[client_count - 1].fd < 0) {
+            client_count--;
+        }
+
+        /* Periodic housekeeping */
+        if (ATOMIC_CLEAR(g_rescan_requested)) {
+            perform_rescan(state, pub);
+        }
+        if (ATOMIC_LOAD(g_shutdown_requested)) {
+            LOG_EVENT("Shutdown requested, exiting main loop");
+            ATOMIC_STORE(g_running, 0);
+            break;
+        }
+
+        time_t now = time(NULL);
+        bool needs_immediate = ATOMIC_LOAD(g_flush_requested);
+        time_t mutation_age = service_state_get_db_mutation_age(state);
+        uint32_t dirty_flags = service_state_get_dirty_flags(state);
+        bool needs_deferred = service_state_needs_flush(state) &&
+                              (dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
+                              mutation_age >= DEFERRED_FLUSH_SEC;
+        bool needs_periodic = service_state_needs_flush(state) &&
+                              !(dirty_flags & (DIRTY_DATABASE | DIRTY_DATABASE_PARTIAL)) &&
+                              (now - last_flush_check) > FLUSH_INTERVAL_SEC;
+
+        if (needs_immediate || needs_deferred || needs_periodic) {
+            LOG_DETAIL("Flushing state to disk (immediate=%d, deferred=%d, periodic=%d)",
+                       needs_immediate, needs_deferred, needs_periodic);
+            ATOMIC_STORE(g_flush_requested, 0);
+            last_flush_check = now;
+            if (service_state_flush(state)) {
+                LOG_DETAIL("State flushed successfully");
+            } else {
+                LOG_DETAIL("ERROR - Failed to flush state");
+            }
+        }
+    }
+
+    /* Close any remaining client connections */
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i].conn) {
+            ipc_server_close_connection(clients[i].conn);
+        }
+    }
+#endif
 
     LOG_DETAIL("Cleaning up IPC server (total clients handled: %d)", client_connection_count);
-    /* Note: ipc_server_cleanup is deferred to run_service so the pipe
-     * stays open until after the mutex is closed, preventing races
-     * where ipc_service_exists() sees a live mutex but no pipe. */
     LOG_EVENT("Service main loop ended");
     LOG_DETAIL("Exiting service_loop");
 }

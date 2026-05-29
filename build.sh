@@ -190,23 +190,53 @@ build_arch() {
         return 1
     fi
     
+    # Use intermediate object files to reduce memory pressure
+    local build_dir="build_${arch}"
+    mkdir -p "${build_dir}"
+    
+    local objs=()
+    local src_files=(
+        "${SRC_DIR}/main.c"
+        "${SRC_DIR}/service_main.c"
+        "${SRC_DIR}/ui.c"
+        "${COMMON_SOURCES[@]}"
+    )
+    
+    # Compile each source file to an object file
+    for src in "${src_files[@]}"; do
+        local obj_name
+        obj_name=$(basename "$src" .c).o
+        local obj_path="${build_dir}/${obj_name}"
+        
+        # Skip if object is newer than source
+        if [ -f "$obj_path" ] && [ "$obj_path" -nt "$src" ]; then
+            continue
+        fi
+        
+        echo "  CC $src"
+        "$cc" $cflags -I"${SRC_DIR}" -I"${SHARED_DIR}" -c "$src" -o "$obj_path"
+        objs+=("$obj_path")
+    done
+    
+    # Collect all object files (including cached ones)
+    local main_objs=("${build_dir}/main.o" "${build_dir}/ui.o")
+    local service_objs=("${build_dir}/service_main.o" "${build_dir}/ui.o")
+    for src in "${COMMON_SOURCES[@]}"; do
+        local obj_name
+        obj_name=$(basename "$src" .c).o
+        main_objs+=("${build_dir}/${obj_name}")
+        service_objs+=("${build_dir}/${obj_name}")
+    done
+    
     # Build main executable
     echo "Building ${out}..."
-    "$cc" $cflags -I"${SRC_DIR}" -I"${SHARED_DIR}" \
-        "${SRC_DIR}/main.c" \
-        "${SRC_DIR}/ui.c" \
-        "${COMMON_SOURCES[@]}" \
-        -o "${out}" -lpthread
+    "$cc" $cflags "${main_objs[@]}" -o "${out}" -lpthread
     echo "Build successful: ${out}"
     
     # Build service executable
     echo ""
     echo "Building ${service_out}..."
-    "$cc" $cflags -I"${SRC_DIR}" -I"${SHARED_DIR}" \
-        "${SRC_DIR}/service_main.c" \
-        "${SRC_DIR}/ui.c" \
-        "${COMMON_SOURCES[@]}" \
-        -o "${service_out}" -lpthread
+    "$cc" $cflags "${service_objs[@]}" -o "${service_out}" -lpthread
     echo "Build successful: ${service_out}"
 }
 

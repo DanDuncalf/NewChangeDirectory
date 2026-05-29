@@ -27,7 +27,7 @@ extern "C" {
 #define NCD_IPC_MAGIC       0x434E4950U  /* 'N' 'C' 'I' 'P' = NCD IPC */
 
 /* Protocol version */
-#define NCD_IPC_VERSION     3   /* Added encoding mode support */
+#define NCD_IPC_VERSION     4   /* Added platform/arch to detailed status */
 
 /* Application version - must match between client and service */
 #define NCD_APP_VERSION     "1.3"
@@ -183,6 +183,8 @@ typedef struct {
     uint32_t log_path_len;          /* Length of log file path */
     char     app_version[16];       /* Application version string */
     char     build_stamp[32];       /* Build timestamp */
+    char     platform[16];          /* Platform name (e.g., "Windows", "Linux") */
+    char     arch[16];              /* Architecture name (e.g., "x64", "arm64") */
     /* Followed by: status_msg \0 meta_path \0 log_path \0 drive_entries... */
 } NcdDetailedStatusPayload;
 
@@ -305,6 +307,8 @@ typedef struct {
     char     log_path[NCD_IPC_MAX_PATH];
     char     app_version[16];
     char     build_stamp[32];
+    char     platform[16];
+    char     arch[16];
     struct {
         char     letter;
         uint32_t dir_count;
@@ -408,6 +412,20 @@ void ipc_server_cleanup(NcdIpcServer *server);
 typedef struct NcdIpcConnection NcdIpcConnection;
 
 NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms);
+
+/*
+ * ipc_server_get_fd  --  Get the server's listening file descriptor
+ *
+ * Returns -1 if not available (e.g., on Windows named pipes).
+ */
+int ipc_server_get_fd(NcdIpcServer *server);
+
+/*
+ * ipc_connection_get_fd  --  Get a connection's file descriptor
+ *
+ * Returns -1 if not available.
+ */
+int ipc_connection_get_fd(NcdIpcConnection *conn);
 
 /*
  * ipc_server_close_connection  --  Close a client connection

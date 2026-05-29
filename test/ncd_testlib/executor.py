@@ -16,8 +16,11 @@ def _cleanup_linux_service_state(path):
     cleanup_cmd = (
         f'cd "{wsl_dir}" && '
         'pkill -9 -x NCDService 2>/dev/null; '
+        'pkill -9 -x ncd_service 2>/dev/null; '
         'killall -9 NCDService 2>/dev/null; '
+        'killall -9 ncd_service 2>/dev/null; '
         'rm -f "${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid" 2>/dev/null; '
+        'rm -f "${XDG_RUNTIME_DIR:-/tmp}/NCDService.pid" 2>/dev/null; '
         'rm -f "${XDG_RUNTIME_DIR:-/tmp}"/ncd_*_control.sock 2>/dev/null'
     )
     run_cmd(["wsl", "bash", "-lc", cleanup_cmd], timeout=15)

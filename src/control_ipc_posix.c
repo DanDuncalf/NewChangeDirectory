@@ -19,6 +19,7 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <poll.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -405,17 +406,29 @@ void ipc_server_cleanup(NcdIpcServer *server) {
     free(server);
 }
 
+int ipc_server_get_fd(NcdIpcServer *server) {
+    if (!server || server->fd < 0) return -1;
+    return server->fd;
+}
+
+int ipc_connection_get_fd(NcdIpcConnection *conn) {
+    if (!conn || conn->fd < 0) return -1;
+    return conn->fd;
+}
+
 NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
     if (!server || server->fd < 0) {
         return NULL;
     }
     
-    /* Set timeout if specified */
+    /* Use poll() for timeout instead of SO_RCVTIMEO to avoid corrupting
+     * the server socket's timeout for subsequent poll()-based operations. */
     if (timeout_ms > 0) {
-        struct timeval tv;
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
-        setsockopt(server->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        struct pollfd pfd;
+        pfd.fd = server->fd;
+        pfd.events = POLLIN;
+        int pr = poll(&pfd, 1, timeout_ms);
+        if (pr <= 0) return NULL;
     }
     
     /* Accept connection */
@@ -427,10 +440,13 @@ NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
         return NULL;
     }
     
-    /* Set socket timeout */
+    /* Set a short receive timeout so we don't block indefinitely if the
+     * client connects but never sends data. The service loop handles one
+     * message per connection and closes immediately, so a 200ms timeout
+     * is more than enough for a local Unix socket. */
     struct timeval tv;
-    tv.tv_sec = NCD_SOCKET_TIMEOUT_SEC;
-    tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = 200000;  /* 200ms */
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     

@@ -47,7 +47,9 @@ static const char *get_service_executable_path(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
+    if (access("NCDService", X_OK) == 0) return "./NCDService";
     if (access("ncd_service", X_OK) == 0) return "./ncd_service";
+    if (access("../NCDService", X_OK) == 0) return "../NCDService";
     return "../ncd_service";
 #endif
 }
@@ -92,7 +94,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
-    snprintf(full_cmd, sizeof(full_cmd), "../ncd_service %s", cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_executable_path(), cmd);
     FILE *pipe = popen(full_cmd, "r");
     if (!pipe) return -1;
     if (output && output_size > 0) {
@@ -137,8 +139,8 @@ static void force_terminate_service(void) {
         CloseHandle(hSnap);
     }
 #else
-    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
-    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null; pkill -9 -x ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null; killall -9 ncd_service 2>/dev/null");
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null; rm -f ${XDG_RUNTIME_DIR:-/tmp}/NCDService.pid 2>/dev/null");
 #endif
     for (int i = 0; i < 20; i++) {
         if (!ipc_service_exists()) break;
@@ -189,7 +191,7 @@ static bool is_live_ncd_service_process(pid_t pid) {
             char state = '\0';
             bool live = true;
             if (fscanf(f, "%d (%255[^)]) %c", &parsed_pid, comm, &state) == 3) {
-                if (strcmp(comm, "NCDService") != 0 || state == 'Z') {
+                if ((strcmp(comm, "NCDService") != 0 && strcmp(comm, "ncd_service") != 0) || state == 'Z') {
                     live = false;
                 }
             }
@@ -267,7 +269,7 @@ static bool find_live_ncd_service_process(pid_t *out_pid) {
                     name[len - 1] = '\0';
                 }
 
-                if (strcmp(name, "NCDService") == 0 && is_live_ncd_service_process(pid)) {
+                if ((strcmp(name, "NCDService") == 0 || strcmp(name, "ncd_service") == 0) && is_live_ncd_service_process(pid)) {
                     if (out_pid) {
                         *out_pid = pid;
                     }

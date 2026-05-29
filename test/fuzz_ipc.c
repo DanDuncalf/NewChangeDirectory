@@ -39,7 +39,13 @@ static bool service_executable_exists(void) {
     attribs = GetFileAttributesA("..\\NCDService.exe");
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access("../ncd_service", X_OK) == 0);
+    if (access("NCDService", X_OK) == 0) return true;
+    if (access("./NCDService", X_OK) == 0) return true;
+    if (access("ncd_service", X_OK) == 0) return true;
+    if (access("./ncd_service", X_OK) == 0) return true;
+    if (access("../NCDService", X_OK) == 0) return true;
+    if (access("../ncd_service", X_OK) == 0) return true;
+    return false;
 #endif
 }
 
@@ -89,7 +95,7 @@ static bool ensure_service_running(void) {
 #if NCD_PLATFORM_WINDOWS
     const char *start_cmd = "NCDService.exe start";
 #else
-    const char *start_cmd = "../ncd_service start";
+    const char *start_cmd = "../NCDService start";
 #endif
 
     for (int attempt = 0; attempt < 3; attempt++) {

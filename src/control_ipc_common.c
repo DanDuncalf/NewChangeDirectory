@@ -162,6 +162,10 @@ NcdIpcResult ipc_client_get_detailed_status(NcdIpcClient *client, NcdIpcDetailed
     info->app_version[sizeof(info->app_version) - 1] = '\0';
     memcpy(info->build_stamp, payload->build_stamp, sizeof(info->build_stamp));
     info->build_stamp[sizeof(info->build_stamp) - 1] = '\0';
+    memcpy(info->platform, payload->platform, sizeof(info->platform));
+    info->platform[sizeof(info->platform) - 1] = '\0';
+    memcpy(info->arch, payload->arch, sizeof(info->arch));
+    info->arch[sizeof(info->arch) - 1] = '\0';
     
     info->status_message[0] = '\0';
     info->meta_path[0] = '\0';

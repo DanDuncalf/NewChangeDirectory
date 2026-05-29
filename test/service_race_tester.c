@@ -221,7 +221,13 @@ static bool service_executable_exists(void) {
     attribs = GetFileAttributesA("..\\NCDService.exe");
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access("../ncd_service", X_OK) == 0);
+    if (access("./NCDService", X_OK) == 0) return true;
+    if (access("NCDService", X_OK) == 0) return true;
+    if (access("./ncd_service", X_OK) == 0) return true;
+    if (access("ncd_service", X_OK) == 0) return true;
+    if (access("../NCDService", X_OK) == 0) return true;
+    if (access("../ncd_service", X_OK) == 0) return true;
+    return false;
 #endif
 }
 
@@ -260,7 +266,14 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
-    snprintf(full_cmd, sizeof(full_cmd), "../ncd_service %s", cmd);
+    /* Use explicit ./ prefix to avoid PATH picking up stale system binary */
+    const char *svc = "./NCDService";
+    if (access(svc, X_OK) != 0) svc = "NCDService";
+    if (access(svc, X_OK) != 0) svc = "./ncd_service";
+    if (access(svc, X_OK) != 0) svc = "ncd_service";
+    if (access(svc, X_OK) != 0) svc = "../NCDService";
+    if (access(svc, X_OK) != 0) svc = "../ncd_service";
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", svc, cmd);
     FILE *pipe = POPEN(full_cmd, "r");
     if (!pipe) return -1;
     if (output && output_size > 0) {
@@ -305,8 +318,8 @@ static void force_terminate_service(void) {
         CloseHandle(hSnap);
     }
 #else
-    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
-    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null; pkill -9 -x ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null; killall -9 ncd_service 2>/dev/null");
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null; rm -f ${XDG_RUNTIME_DIR:-/tmp}/NCDService.pid 2>/dev/null");
 #endif
     for (int i = 0; i < 20; i++) {
         if (!ipc_service_exists()) break;
@@ -345,7 +358,7 @@ static bool service_process_still_running(void) {
         if (fgets(name, sizeof(name), fcomm)) {
             size_t len = strlen(name);
             if (len > 0 && name[len - 1] == '\n') name[len - 1] = '\0';
-            if (strcmp(name, "NCDService") == 0) {
+            if (strcmp(name, "NCDService") == 0 || strcmp(name, "ncd_service") == 0) {
                 if (kill(pid, 0) == 0) { found = true; }
             }
         }

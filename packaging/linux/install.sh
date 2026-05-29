@@ -169,6 +169,27 @@ else
     echo "  To install later: pip3 install /path/to/this/mcp_server"
 fi
 
+# Optional: Install systemd service
+if [[ -d "${SCRIPT_DIR}" && -f "${SCRIPT_DIR}/ncd.service" ]]; then
+    if command -v systemctl &> /dev/null; then
+        echo ""
+        read -rp "Install NCD as a systemd system service? [y/N] " install_systemd
+        if [[ "$install_systemd" =~ ^[Yy]$ ]]; then
+            $SUDO cp -f "${SCRIPT_DIR}/ncd.service" /etc/systemd/system/ncd.service
+            $SUDO sed -i "s|/usr/local/bin|${DEST_DIR}|g" /etc/systemd/system/ncd.service
+            $SUDO systemctl daemon-reload
+            $SUDO systemctl enable ncd.service
+            $SUDO systemctl start ncd.service
+            echo "  [OK] systemd service installed and started"
+            echo "  Check status: sudo systemctl status ncd"
+        fi
+    else
+        echo ""
+        echo "Note: systemd not found. Skipping service installation."
+        echo "  To start the service manually: ncd_service start"
+    fi
+fi
+
 echo ""
 echo "========================================"
 echo "Installation Complete"
@@ -183,4 +204,9 @@ echo "  ncd -?               - Show help"
 echo ""
 echo "To uninstall:"
 echo "  sudo rm -f ${DEST_DIR}/ncd ${DEST_DIR}/NewChangeDirectory ${DEST_DIR}/NCDService ${DEST_DIR}/ncd_service"
+if command -v systemctl &> /dev/null && [[ -f /etc/systemd/system/ncd.service ]]; then
+    echo "  sudo systemctl stop ncd"
+    echo "  sudo systemctl disable ncd"
+    echo "  sudo rm -f /etc/systemd/system/ncd.service"
+fi
 echo ""

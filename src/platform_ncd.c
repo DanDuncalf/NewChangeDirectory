@@ -233,12 +233,35 @@ int ncd_platform_enumerate_mounts(char mount_bufs[][MAX_PATH],
 
 /* ================================================================ NCD-specific platform abstractions */
 
+const char *platform_get_arch_name(void)
+{
+#if NCD_ARCH_ARM64
+    return "arm64";
+#elif NCD_ARCH_RISCV64
+    return "riscv64";
+#elif NCD_ARCH_X64
+    return "x64";
+#else
+    return "unknown";
+#endif
+}
+
 const char *platform_get_app_title(void)
 {
 #if NCD_PLATFORM_WINDOWS
-    return "NewChangeDirectory (NCD) -- Nifty CD for Windows 64-bit";
+#   if NCD_ARCH_ARM64
+    return "NewChangeDirectory (NCD) -- Nifty CD for Windows ARM64";
+#   else
+    return "NewChangeDirectory (NCD) -- Nifty CD for Windows x64";
+#   endif
 #else
-    return "NewChangeDirectory (NCD) -- Nifty CD for Linux 64-bit";
+#   if NCD_ARCH_ARM64
+    return "NewChangeDirectory (NCD) -- Nifty CD for Linux ARM64";
+#   elif NCD_ARCH_RISCV64
+    return "NewChangeDirectory (NCD) -- Nifty CD for Linux RISC-V 64-bit";
+#   else
+    return "NewChangeDirectory (NCD) -- Nifty CD for Linux x64";
+#   endif
 #endif
 }
 

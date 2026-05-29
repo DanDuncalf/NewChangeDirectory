@@ -53,7 +53,9 @@ static const char *get_service_executable_path(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
+    if (access("NCDService", X_OK) == 0) return "./NCDService";
     if (access("ncd_service", X_OK) == 0) return "./ncd_service";
+    if (access("../NCDService", X_OK) == 0) return "../NCDService";
     return "../ncd_service";
 #endif
 }
@@ -63,7 +65,7 @@ static bool service_executable_exists(void) {
     DWORD attribs = GetFileAttributesA(get_service_executable_path());
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access("../ncd_service", X_OK) == 0);
+    return (access(get_service_executable_path(), X_OK) == 0);
 #endif
 }
 
@@ -98,7 +100,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
-    snprintf(full_cmd, sizeof(full_cmd), "../ncd_service %s", cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_executable_path(), cmd);
     FILE *pipe = popen(full_cmd, "r");
     if (!pipe) return -1;
     if (output && output_size > 0) {
@@ -143,8 +145,8 @@ static void force_terminate_service(void) {
         CloseHandle(hSnap);
     }
 #else
-    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
-    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null; pkill -9 -x ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null; killall -9 ncd_service 2>/dev/null");
+    system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null; rm -f ${XDG_RUNTIME_DIR:-/tmp}/NCDService.pid 2>/dev/null");
 #endif
     for (int i = 0; i < 20; i++) {
         if (!ipc_service_exists()) break;

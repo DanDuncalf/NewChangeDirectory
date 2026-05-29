@@ -227,8 +227,8 @@ TEST(protocol_version_matches_expected) {
     NcdIpcResult ipc_result = ipc_client_get_version(client, &info);
     
     ASSERT_EQ_INT(NCD_IPC_OK, ipc_result);
-    /* Protocol version should be 3 (current version) */
-    ASSERT_EQ_INT(3, info.protocol_version);
+    /* Protocol version should be 4 (current version) */
+    ASSERT_EQ_INT(4, info.protocol_version);
     
     ipc_client_disconnect(client);
     ensure_service_stopped();

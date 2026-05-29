@@ -203,6 +203,14 @@ typedef struct {
 #define NCD_PATH_SEP      NCD_PATH_SEP_STR   /* backward compatible alias    */
 #endif
 
+/* File open modes — use binary on Windows to avoid text-mode side effects
+ * (CRLF translation, Ctrl-Z EOF handling). On POSIX, "a" and "ab" are equivalent. */
+#if NCD_PLATFORM_WINDOWS
+#define NCD_FILE_APPEND_BINARY  "ab"
+#else
+#define NCD_FILE_APPEND_BINARY  "a"
+#endif
+
 #define NCD_VERSION       1
 
 /* Rescan interval configuration */

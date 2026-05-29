@@ -1,0 +1,14 @@
+[Unit]
+Description=NCD State Service
+Documentation=https://github.com/your-org/ncd
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/NCDService start
+ExecStop=/usr/local/bin/NCDService stop
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

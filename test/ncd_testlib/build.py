@@ -265,7 +265,7 @@ def build_linux_tests():
         print(f"[BUILD] Building Linux test binaries via WSL ({wsl_test})...")
         rc, out, err = run_cmd(
             ["wsl", "bash", "-c", f'cd "{wsl_test}" && make all'],
-            timeout=300
+            timeout=600
         )
     else:
         print("[BUILD] Building Linux test binaries natively...")
@@ -282,16 +282,19 @@ def build_linux_tests():
 
 def ensure_ncd_service_for_tests():
     """Ensure Linux service launcher scripts exist where tests expect them."""
-    required_paths = [
-        PROJECT_ROOT / "ncd_service",
-        UNIT_TEST_DIR / "ncd_service",
-    ]
-    missing = [str(path) for path in required_paths if not path.exists()]
-    if missing:
-        print("[BUILD] Missing Linux service launcher(s):")
-        for path in missing:
-            print(f"[BUILD]   {path}")
+    proj_binary = PROJECT_ROOT / "NCDService"
+    if not proj_binary.exists():
+        print("[BUILD] Missing Linux service binary:")
+        print(f"[BUILD]   {proj_binary}")
         return False
+    test_binary = UNIT_TEST_DIR / "NCDService"
+    if not test_binary.exists():
+        import shutil
+        try:
+            shutil.copy2(str(proj_binary), str(test_binary))
+            print(f"[BUILD] Copied NCDService to test directory")
+        except Exception as e:
+            print(f"[BUILD] Warning: Could not copy NCDService to test dir: {e}")
     return True
 
 

@@ -77,6 +77,11 @@ int platform_filter_available_drives(const char *in_drives, int in_count,
                                       char *out_drives, int max_out);
 
 /*
+ * Get the architecture name string (e.g., "x64", "arm64", "riscv64").
+ */
+const char *platform_get_arch_name(void);
+
+/*
  * Get the application title string for help/version display.
  */
 const char *platform_get_app_title(void);

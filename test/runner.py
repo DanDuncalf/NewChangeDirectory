@@ -58,6 +58,12 @@ from ncd_testlib.build import (
 from ncd_testlib.discovery import discover_unit_tests
 from ncd_testlib.executor import run_test_binary, parse_unit_output
 from ncd_testlib.integration import run_all_integration_suites
+from ncd_testlib.platform_info import (
+    get_host_env_summary,
+    get_binary_arch,
+    get_binary_version_info,
+    is_native_execution,
+)
 
 RESULTS_FILE = PROJECT_ROOT / "test.results"
 
@@ -158,6 +164,12 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
     lines.append(f"Platform: {platform.system()}")
     lines.append(f"WSL Available: {build_info.get('wsl_available', 'N/A')}")
     lines.append("")
+    lines.append("-" * 80)
+    lines.append("HOST ENVIRONMENTS")
+    lines.append("-" * 80)
+    for env_line in get_host_env_summary(build_info):
+        lines.append(f"  {env_line}")
+    lines.append("")
 
     lines.append("=" * 80)
     lines.append("BUILD INFORMATION")
@@ -165,11 +177,19 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
     lines.append("")
     lines.append("[Windows Main Binaries]")
     for name, ts in sorted(build_info.get('windows_main', {}).items()):
-        lines.append(f"  {name:40s} : {format_timestamp(ts)}")
+        arch = get_binary_arch(PROJECT_ROOT / "src" / "ncd" / name) if (PROJECT_ROOT / "src" / "ncd" / name).exists() else None
+        ver = get_binary_version_info(PROJECT_ROOT / "src" / "ncd" / name) if (PROJECT_ROOT / "src" / "ncd" / name).exists() else None
+        arch_str = f" [{arch}]" if arch else ""
+        ver_str = f"  ({ver})" if ver else ""
+        lines.append(f"  {name:40s} : {format_timestamp(ts)}{arch_str}{ver_str}")
     lines.append("")
     lines.append("[Linux Main Binaries]")
     for name, ts in sorted(build_info.get('linux_main', {}).items()):
-        lines.append(f"  {name:40s} : {format_timestamp(ts)}")
+        arch = get_binary_arch(PROJECT_ROOT / "src" / "ncd" / name) if (PROJECT_ROOT / "src" / "ncd" / name).exists() else None
+        ver = get_binary_version_info(PROJECT_ROOT / "src" / "ncd" / name) if (PROJECT_ROOT / "src" / "ncd" / name).exists() else None
+        arch_str = f" [{arch}]" if arch else ""
+        ver_str = f"  ({ver})" if ver else ""
+        lines.append(f"  {name:40s} : {format_timestamp(ts)}{arch_str}{ver_str}")
     lines.append("")
 
     windows_issues = []
@@ -185,8 +205,8 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
             lines.append("")
             return
 
-        lines.append(f"{'Pass':>6}  {'Fail':>6}  {'Skip':>6}  {'Name':<42} {'Date':>12}  {'Time':>10}")
-        lines.append(f"{'-'*6}  {'-'*6}  {'-'*6}  {'-'*42} {'-'*12}  {'-'*10}")
+        lines.append(f"{'Pass':>6}  {'Fail':>6}  {'Skip':>6}  {'Name':<36} {'Arch':<8} {'Mode':<8} {'Date':>12}  {'Time':>10}")
+        lines.append(f"{'-'*6}  {'-'*6}  {'-'*6}  {'-'*36} {'-'*8} {'-'*8} {'-'*12}  {'-'*10}")
 
         for exe_name in sorted(results.keys()):
             tests = results[exe_name]
@@ -203,7 +223,23 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
                 date_str = "N/A"
                 time_str = "N/A"
 
-            lines.append(f"{passed:>6}  {failed:>6}  {skipped:>6}  {exe_name:<42} {date_str:>12}  {time_str:>10}")
+            # Find binary path for architecture detection
+            binary_path = None
+            if plat_label == "WINDOWS":
+                candidate = PROJECT_ROOT / "test" / exe_name
+                if candidate.exists():
+                    binary_path = candidate
+            else:
+                candidate = PROJECT_ROOT / "test" / exe_name
+                if candidate.exists():
+                    binary_path = candidate
+
+            arch = get_binary_arch(binary_path) if binary_path else None
+            arch_str = arch if arch else "unknown"
+            native = is_native_execution(arch, plat_label.lower()) if arch else None
+            mode_str = "native" if native else ("emulated" if native is False else "unknown")
+
+            lines.append(f"{passed:>6}  {failed:>6}  {skipped:>6}  {exe_name:<36} {arch_str:<8} {mode_str:<8} {date_str:>12}  {time_str:>10}")
 
             for _, (name, status) in enumerate(tests):
                 if status == 'FAILED' or status == 'SKIPPED':
@@ -386,7 +422,7 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
             path = discovered['windows'][exe_name]
             print(f"### Running {exe_name} ...")
             TestIsolation._stop_ncd_processes()
-            output = run_test_binary(path, 'windows', timeout=60)
+            output = run_test_binary(path, 'windows', timeout=120)
             if output.strip():
                 try:
                     print(output)

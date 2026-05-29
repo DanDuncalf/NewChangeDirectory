@@ -121,7 +121,7 @@ void agent_kill_any_service(void) {
 #if NCD_PLATFORM_WINDOWS
     system("taskkill /F /IM NCDService.exe >nul 2>nul");
 #else
-    system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
+    system("pkill -9 -x NCDService 2>/dev/null; pkill -9 -x ncd_service 2>/dev/null; killall -9 NCDService 2>/dev/null; killall -9 ncd_service 2>/dev/null");
 #endif
 }
 

@@ -39,7 +39,9 @@ static const char *get_service_executable_path(void) {
         return "NCDService.exe";
     return "..\\NCDService.exe";
 #else
+    if (access("NCDService", X_OK) == 0) return "./NCDService";
     if (access("ncd_service", X_OK) == 0) return "./ncd_service";
+    if (access("../NCDService", X_OK) == 0) return "../NCDService";
     return "../ncd_service";
 #endif
 }
@@ -84,7 +86,7 @@ static int run_service_command(const char *cmd, char *output, size_t output_size
     CloseHandle(pi.hThread);
     return (int)exitCode;
 #else
-    snprintf(full_cmd, sizeof(full_cmd), "../ncd_service %s", cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s %s", get_service_executable_path(), cmd);
     FILE *pipe = popen(full_cmd, "r");
     if (!pipe) return -1;
     if (output && output_size > 0) {

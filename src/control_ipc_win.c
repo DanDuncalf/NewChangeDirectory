@@ -439,6 +439,16 @@ NcdIpcServer *ipc_server_init(void) {
     return server;
 }
 
+int ipc_server_get_fd(NcdIpcServer *server) {
+    (void)server;
+    return -1;  /* Windows uses HANDLEs, not file descriptors */
+}
+
+int ipc_connection_get_fd(NcdIpcConnection *conn) {
+    (void)conn;
+    return -1;  /* Windows uses HANDLEs, not file descriptors */
+}
+
 void ipc_server_cleanup(NcdIpcServer *server) {
     if (!server) {
         return;
