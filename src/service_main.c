@@ -827,7 +827,10 @@ static void handle_submit_heuristic(NcdIpcConnection *conn,
         ipc_server_send_response(conn, sequence, NULL, 0);
         LOG_RESPONSE("SUBMIT_HEURISTIC response sent (seq=%u, success)", sequence);
     } else {
-        ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_GENERIC,
+        /* Heuristic recording can fail if metadata is not yet loaded
+         * or if shutdown was requested. Report as a busy/loading state
+         * so clients retry rather than treating it as a fatal error. */
+        ipc_server_send_error(conn, sequence, NCD_IPC_ERROR_BUSY_LOADING,
                               "Failed to record heuristic");
         LOG_RESPONSE("SUBMIT_HEURISTIC error sent (seq=%u, failed to record)", sequence);
     }
