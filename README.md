@@ -19,24 +19,105 @@ A cross-platform command-line directory navigation tool inspired by the classic 
 - **Shell Tab Completion** - Bash, Zsh, and PowerShell completion support
 - **Optional Service** - Resident state service for faster startup (shared memory)
 
-## Installation
+## Download & Install (No Build Required)
+
+Pre-built packages for all platforms are available on the [GitHub Releases](https://github.com/DanDuncalf/NewChangeDirectory/releases) page. Each package includes the NCD binary, service binary, wrapper scripts, install scripts, shell completions, and the optional MCP server.
 
 ### Windows
 
-Download the latest release or build from source:
+1. Download `NCD-<version>-windows-x64.zip` from the latest release
+2. Extract the ZIP to a folder of your choice (e.g. `C:\NCD`)
+3. Run `install.bat` to add NCD to your PATH (or [install manually](#manual-installation))
+
+```batch
+# Extract and install
+C:\NCD> install.bat
+```
+
+Or install manually:
+```batch
+set DEST=C:\NCD\bin
+mkdir %DEST%
+copy NewChangeDirectory.exe %DEST%
+copy NCDService.exe %DEST%
+copy ncd.bat %DEST%
+copy ncd_service.bat %DEST%
+:: Add %DEST% to your PATH environment variable
+```
+
+### Windows ARM64
+
+Same steps, download `NCD-<version>-windows-arm64.zip` instead.
+
+### Linux (x64, ARM64, RISC-V)
+
+1. Download the appropriate archive for your architecture:
+   - `NCD-<version>-linux-x64.tar.gz` — Intel/AMD 64-bit
+   - `NCD-<version>-linux-arm64.tar.gz` — ARM 64-bit (e.g. Raspberry Pi)
+   - `NCD-<version>-linux-riscv64.tar.gz` — RISC-V 64-bit
+2. Extract and run the install script:
+
+```bash
+tar -xzf NCD-<version>-linux-x64.tar.gz
+cd NCD-<version>-linux-x64
+sudo ./install.sh      # Installs to /usr/local/bin
+```
+
+Or install to a custom location:
+```bash
+./install.sh ~/.local/bin
+```
+
+After installation, add the ncd shell function to your `~/.bashrc`:
+```bash
+echo 'ncd() { source /usr/local/bin/ncd "$@"; }' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Verify It Works
+
+```bash
+ncd --version
+ncd --help
+```
+
+### What's in a Package?
+
+| File | Purpose |
+|------|---------|
+| `NewChangeDirectory` / `.exe` | The main NCD binary |
+| `NCDService` / `.exe` | Optional resident service (shared memory cache) |
+| `ncd` / `ncd.bat` | Shell wrapper (needed for `cd` to work from your shell) |
+| `ncd_service` / `ncd_service.bat` | Service launcher script |
+| `install.bat` / `install.sh` | One-command installer (PATH setup, startup, etc.) |
+| `completions/` | Tab-completion scripts for Bash, Zsh, PowerShell |
+| `mcp_server/` | Optional MCP server for LLM integration (Claude, etc.) |
+| `README.md` | This file |
+
+## Building from Source
+
+If you prefer to build from source instead of downloading a pre-built package:
+
+### Windows (MSVC)
 
 ```batch
 build.bat
 ```
 
-Copy `NewChangeDirectory.exe` and `ncd.bat` to a directory in your PATH.
+Requires Visual Studio 2019/2022 with C11 support.
 
-### Linux/WSL
+### Windows (MinGW)
+
+```batch
+make
+```
+
+### Linux (GCC/Clang)
 
 ```bash
-chmod +x build.sh
 ./build.sh
-sudo ./deploy.sh  # Installs to /usr/local/bin
+# Or with Clang:
+CC=clang ./build.sh
 ```
 
 ## Usage
@@ -180,17 +261,11 @@ Pushes to `master` are protected by the CI workflow (`.github/workflows/ci.yml`)
 
 ### Quick Start - Run All Tests
 
-**Windows (complete test suite):**
-```batch
-:: Build everything first
-build.bat
-
-:: Run all tests (unit + integration)
-Run-All-Tests-Complete.bat --windows-only
-
-:: Or run just unit tests
-cd test
-Run-All-Unit-Tests.bat
+**Windows (complete test suite) — use the Python runner:**
+```bash
+python test/runner.py          # All tests
+python test/runner.py unit     # Unit tests only
+python test/runner.py --quick  # Skip fuzz/benchmarks
 ```
 
 **Linux/WSL (complete test suite):**
@@ -199,8 +274,10 @@ Run-All-Unit-Tests.bat
 ./build.sh
 
 # Run all tests
-cd test
-make test
+python test/runner.py
+
+# Or use the Makefile
+cd test && make test
 
 # Additional test targets
 make fuzz       # Fuzz testing
@@ -208,13 +285,9 @@ make bench      # Performance benchmarks
 make corruption # Corruption handling tests
 ```
 
-### Compatibility Wrappers
-
-`Run-Tests-Safe.bat` and `Run-NcdTests.ps1` still exist, but they are compatibility wrappers around the same workflow rather than the primary source of truth.
-
 ### test.results File
 
-`generate_report.py` produces a `test.results` file in the project root.  
+`python test/generate_report.py` produces a `test.results` file in the project root.  
 **This file must be checked in with every commit.** It contains:
 - Build timestamps for all Windows and Linux binaries
 - Per-executable pass/fail/skip counts
@@ -222,14 +295,14 @@ make corruption # Corruption handling tests
 
 ### Test Runners Reference
 
-| Script | Purpose | Platform |
-|--------|---------|----------|
-| `Run-All-Tests-Complete.bat` | Master runner - builds and runs ALL tests | Windows |
-| `test\Run-All-Unit-Tests.bat` | Runs all unit test executables | Windows |
-| `test\Test-Service-Windows.bat` | Service tests (isolated) | Windows |
-| `test\Test-NCD-Windows-Standalone.bat` | NCD without service | Windows |
-| `test\Test-NCD-Windows-With-Service.bat` | NCD with service | Windows |
-| `test\generate_report.py` | Unified cross-platform report generator | Windows + WSL |
+| Command | Purpose |
+|---------|---------|
+| `python test/runner.py` | Run all tests (builds if needed) |
+| `python test/runner.py unit` | Run only unit tests |
+| `python test/runner.py integration` | Run only integration tests |
+| `python test/runner.py --quick` | Skip fuzz/benchmarks |
+| `python test/runner.py --repair` | Fix corrupted test environment |
+| `python test/generate_report.py` | Alias for `python test/runner.py` |
 
 See `AGENTS.md` and `AGENT_TESTING_GUIDE.md` for complete testing documentation.
 

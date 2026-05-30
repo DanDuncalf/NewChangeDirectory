@@ -283,14 +283,15 @@ python test/runner.py unit --quick   :: Skip fuzz tests (faster)
 
 > ⚠️ **WARNING:** Integration tests create VHD (virtual hard disk) for complete isolation. Running them directly will work but won't have the harness's guaranteed cleanup. Use the Python runner when possible.
 
-Integration tests are batch files in the `test\` directory that test end-to-end functionality:
+Integration tests are orchestrated by the Python runner in `test/runner.py`. They test end-to-end functionality including service lifecycle, NCD standalone operation, and NCD with service:
 
-#### Windows Integration Test Files
-| Test File | Description | Typical Duration |
+#### Windows Integration Tests
+| Test Suite | Description | Typical Duration |
 |-----------|-------------|------------------|
-| `Test-Service-Windows.bat` | Service isolation tests (start/stop/status) | ~5s |
-| `Test-NCD-Windows-Standalone.bat` | NCD client without service (12 tests) | ~15s |
-| `Test-NCD-Windows-With-Service.bat` | NCD client with service running | ~15s |
+| `python test/runner.py service` | Service isolation tests (start/stop/status) | ~5s |
+| `python test/runner.py ncd` | NCD client without service | ~15s |
+| `python test/runner.py ncd-service` | NCD client with service running | ~15s |
+| `python test/runner.py integration` | All integration tests | ~40s |
 
 #### Running Windows Integration Tests (Via Harness - Recommended)
 ```batch
@@ -507,13 +508,13 @@ wsl bash -c "cd /mnt/e/llama/NewChangeDirectory/test && make all"
 ```
 ========================================
 Tests: XX run, XX passed, 0 failed
-Assertions: XXX total, 0 failed
+Assertions: N total, 0 failed
 ```
 
 ### Failure Output
 ```
 Tests: XX run, XX passed, X failed
-Assertions: XXX total, X failed
+Assertions: N total, X failed
 ```
 
 ### Service Test Output
@@ -610,11 +611,12 @@ python test/generate_report.py
 This single command verifies **build health** and **test results** for both platforms.
 
 ### Required Checks
-- [ ] `generate_report.py` exits with code 0 (no failures, no skips)
-- [ ] `test.results` shows `OVERALL STATUS: PASS`
-- [ ] `test.results` shows `FAILED: 0` for both Windows and Linux
-- [ ] `test.results` shows `SKIPPED: 0` for both Windows and Linux
-- [ ] `test.results` file is committed with the changes
+
+```bash
+python test/generate_report.py
+```
+
+Must exit with code 0, and `test.results` must show `OVERALL STATUS: PASS`, `FAILED: 0`, and `SKIPPED: 0` for both platforms. The `test.results` file must be committed with every change.
 
 ### Manual Verification (if generate_report.py fails)
 - [ ] Windows build succeeds: `build.bat`
@@ -624,14 +626,18 @@ This single command verifies **build health** and **test results** for both plat
 - [ ] Windows unit tests pass: `python test/runner.py --windows-only`
 - [ ] WSL core tests pass: `python test/runner.py wsl`
 
-### Integration Tests (Via Harness)
-- [ ] Windows Integration: `python test/runner.py integration`
-- [ ] Windows All: `python test/runner.py windows`
-- [ ] WSL Integration: `python test/runner.py wsl`
+### Integration Tests
+
+```bash
+python test/runner.py integration
+python test/runner.py windows   # All Windows tests
+python test/runner.py wsl       # All WSL tests
+```
 
 ### Final Verification
-- [ ] No memory leaks (run under Valgrind in WSL if available)
-- [ ] Service starts/stops correctly in both platforms
+
+- No memory leaks (run under Valgrind in WSL if available)
+- Service starts/stops correctly on both platforms
 
 ---
 

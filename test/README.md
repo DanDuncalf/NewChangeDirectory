@@ -69,33 +69,16 @@ python test\runner.py --check
 python test\runner.py --repair
 ```
 
-### Compatibility Wrappers
+### Python Runner (Recommended)
 
-```powershell
-:: PowerShell wrapper
-.\Run-NcdTests.ps1
+The primary test runner is `python test/runner.py` — it handles builds, isolation, cleanup, and cross-platform orchestration:
 
-:: Batch wrapper
-Run-Tests-Safe.bat
-
-:: Wrapper examples
-.\Run-NcdTests.ps1 -TestSuite Unit -Quick
-Run-Tests-Safe.bat windows
-```
-
-### Legacy Batch Runners (Not Ctrl+C Safe)
-
-**⚠️ Warning:** Batch files cannot trap Ctrl+C. If interrupted, environment may not be cleaned up.
-
-```batch
-:: Run all tests (Windows)
-build_and_run_alltests.bat
-
-:: Run only Windows tests
-build_and_run_alltests.bat --windows-only
-
-:: Skip tests requiring service
-build_and_run_alltests.bat --no-service
+```bash
+python test/runner.py              # Run all tests (builds if needed)
+python test/runner.py unit          # Unit tests only
+python test/runner.py integration   # Integration tests only
+python test/runner.py --quick       # Skip fuzz/benchmarks
+python test/runner.py --repair      # Fix corrupted environment
 ```
 
 ### Linux/WSL
@@ -190,14 +173,16 @@ finally {
 
 ### The 6 Core Test Suites
 
-| # | Script | Platform | Service | Description |
-|---|--------|----------|---------|-------------|
-| 1 | `Test-Service-Windows.bat` | Windows | N/A | Service isolation tests |
-| 2 | `test_service_wsl.sh` | WSL | N/A | Service isolation tests |
-| 3 | `Test-NCD-Windows-Standalone.bat` | Windows | No | NCD without service |
-| 4 | `Test-NCD-Windows-With-Service.bat` | Windows | Yes | NCD with service |
-| 5 | `test_ncd_wsl_standalone.sh` | WSL | No | NCD without service |
-| 6 | `test_ncd_wsl_with_service.sh` | WSL | Yes | NCD with service |
+The test runner (`python test/runner.py`) dispatches these suites:
+
+| # | Suite Name | Platform | Service | Description |
+|---|-----------|----------|---------|-------------|
+| 1 | `python test/runner.py service` | Windows + WSL | N/A | Service isolation tests |
+| 2 | `python test/runner.py ncd` | Windows + WSL | No | NCD without service |
+| 3 | `python test/runner.py ncd-service` | Windows + WSL | Yes | NCD with service |
+| 4 | `python test/runner.py windows` | Windows | Both | All Windows tests |
+| 5 | `python test/runner.py wsl` | WSL | Both | All WSL tests |
+| 6 | `python test/runner.py integration` | Both | Both | All integration suites |
 
 ### Parallel Expansion Test Tracks (430+ New Tests)
 
@@ -253,12 +238,6 @@ test/
 ├── PowerShell/                :: PowerShell utilities
 │   ├── NcdTestUtils.psm1      :: Test utilities module
 │   └── README.md              :: Module documentation
-├── Test-Service-Windows.bat   :: Windows service tests
-├── Test-NCD-Windows-Standalone.bat     :: NCD standalone tests
-├── Test-NCD-Windows-With-Service.bat   :: NCD with service tests
-├── build-and-run-tests.bat    :: Build runner
-├── Run-All-Unit-Tests.bat     :: Unit test runner (includes parallel tests)
-├── Check-Environment.bat      :: Environment checker
 ├── Makefile                   :: Linux build system
 ├── COVERAGE_REPORT.md                  :: Coverage summary for the expanded suite
 └── README.md                           :: This guide
@@ -595,11 +574,12 @@ rm -rf $TEST_DATA
 **Cause:** Previous test was interrupted with Ctrl+C
 
 **Fix:**
-```batch
-:: Quick fix
-Run-Tests-Safe.bat --repair
+```bash
+python test/runner.py --repair
+```
 
-:: Or manually
+Or manually:
+```batch
 set LOCALAPPDATA=%USERPROFILE%\AppData\Local
 ```
 
@@ -608,12 +588,10 @@ set LOCALAPPDATA=%USERPROFILE%\AppData\Local
 **Cause:** Tests modified LOCALAPPDATA and it's still pointing to temp
 
 **Fix:**
-```batch
-:: Check environment
-Run-Tests-Safe.bat --check
-
-:: Repair
-Run-Tests-Safe.bat --repair
+```bash
+:: Check and repair environment
+python test/runner.py --check
+python test/runner.py --repair
 
 :: Then rescan your real drives
 ncd -r
@@ -647,17 +625,13 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 Run-Tests-Safe.bat
 ```
 
-### Batch file cleanup didn't run
+### Python runner cleanup didn't run
 
-**Cause:** Ctrl+C interrupted batch file
+**Cause:** Ctrl+C interrupted the test runner
 
 **Fix:**
-```batch
-:: Use PowerShell runner instead (Ctrl+C safe)
-Run-Tests-Safe.bat
-
-:: Or repair environment
-Run-Tests-Safe.bat --repair
+```bash
+python test/runner.py --repair
 ```
 
 ### Agent Command JSON Output Differences

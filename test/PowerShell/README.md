@@ -15,9 +15,8 @@ PowerShell's `try/finally` blocks **CAN** trap Ctrl+C, ensuring cleanup always r
 
 ### Run Tests Safely
 
-```batch
-:: From project root
-Run-Tests-Safe.bat
+```bash
+python test/runner.py
 ```
 
 ### Check Environment
@@ -58,6 +57,6 @@ Register-NcdCleanupAction -Description "Remove temp files" -Action {
 ## See Also
 
 - `docs/POWERHSHELL_TEST_RUNNER.md` - Full documentation
-- `..\..\Run-Tests-Safe.bat` - Safe test runner
+- `python test/runner.py` - Main test runner
 - `..\..\Run-NcdTests.ps1` - PowerShell test runner
 - `..\..\Check-Environment.ps1` - Environment diagnostics

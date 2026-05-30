@@ -5,8 +5,8 @@ and automatic stall detection.  If no new output appears for <stall_timeout>
 seconds the process is considered hung and is killed.
 
 Usage:
-    python tools/run_with_monitor.py cmd /c "Run-Tests-Safe.bat"
-    python tools/run_with_monitor.py --stall-timeout 240 cmd /c "Run-Tests-Safe.bat integration"
+    python tools/run_with_monitor.py python test/runner.py
+    python tools/run_with_monitor.py --stall-timeout 240 python test/runner.py integration
     python tools/run_with_monitor.py --tail-lines 50 python test/generate_report.py
 
 The script streams stdout/stderr live so you can watch progress instead of

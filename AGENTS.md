@@ -109,10 +109,7 @@ NewChangeDirectory/
 │   ├── _ncd                  # Zsh completion
 │   └── ncd.ps1               # PowerShell completion
 ├── test/                     # Test suite
-│   ├── Test-Service-Windows.bat   # Windows Service tests (isolated)
-│   ├── test_service_wsl.sh        # [NEW] WSL Service tests (isolated)
-│   ├── Test-NCD-Windows-Standalone.bat # NCD Windows - standalone
-│   ├── Test-NCD-Windows-With-Service.bat # NCD Windows - with service
+│   │   ├── test_service_wsl.sh        # WSL Service tests (isolated)
 │   ├── test_ncd_wsl_standalone.sh    # [NEW] NCD WSL - standalone
 │   ├── test_ncd_wsl_with_service.sh  # [NEW] NCD WSL - with service
 │   ├── test_framework.h/.c   # Minimal unit testing framework

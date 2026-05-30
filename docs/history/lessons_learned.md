@@ -133,37 +133,6 @@ This keeps main.c unchanged whether service is active or not.
 
 ---
 
-## Remaining Challenges
-
-### Phase 4: IPC Design Decisions
-Need to decide:
-- Message serialization format (binary structs? JSON?)
-- Synchronous vs asynchronous requests
-- Timeout handling for service unresponsiveness
-- Unix socket path (XDG_RUNTIME_DIR on Linux)
-
-### Phase 5: Service Architecture
-Key decisions:
-- Single-threaded with select/poll or multi-threaded?
-- In-process state representation (can use pointers)
-- Snapshot rebuild scheduling (immediate vs debounced)
-- Signal handling for clean shutdown
-
-### Phase 6: Client Integration
-Challenge: Existing code expects modifiable NcdMetadata/NcdDatabase.
-Options:
-1. Copy from shared to heap on open (simpler, uses more memory)
-2. Use const pointers with cast for modifications (risky)
-3. Create read-only view types (more refactoring)
-
-Recommended: Option 1 - copy for now, optimize later if needed.
-
-### Phase 7-8: Persistence
-- Dirty flag tracking per section
-- Debounce timer implementation (platform-specific)
-- Atomic save with temp-file-then-rename
-- Recovery if save fails mid-operation
-
 ---
 
 ## Performance Expectations
@@ -192,15 +161,16 @@ Recommended: Option 1 - copy for now, optimize later if needed.
 
 ## Testing Strategy
 
-### Unit Tests Added
-- `test_shared_state.c`: Header validation, CRC64, section lookup
+### Tests Coverage
+All tests are now implemented and passing. See `test/TEST_HEALTH.md` for the current dashboard.
 
-### Tests Needed (Future Phases)
-- IPC message serialization round-trip
-- Shared memory create/map/unmap on both platforms
-- Service start/stop lifecycle
-- Parity: service vs standalone output comparison
-- Failure injection: corrupted snapshots, missing sections
+See also:
+- Unit tests for shared state (header validation, CRC64, section lookup)
+- IPC message serialization round-trip tests
+- Shared memory create/map/unmap tests on both platforms
+- Service start/stop lifecycle tests
+- Parity tests: service vs standalone output comparison
+- Corruption tests: malformed snapshots, missing sections
 
 ### Performance Tests
 - Cold start latency (service vs standalone)
