@@ -50,6 +50,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
+
       - name: Cache MSVC build objects
         uses: actions/cache@v4
         with:
@@ -123,6 +129,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
 
       - name: Install build dependencies
         run: |
@@ -199,6 +211,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
 
       - name: Install cross-compilers
         run: |

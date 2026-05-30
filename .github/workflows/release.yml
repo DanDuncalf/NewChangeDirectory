@@ -38,6 +38,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
+
       - name: Build Windows ${{ matrix.arch }}
         run: cmd /c build.bat ${{ matrix.arch }}
         timeout-minutes: 15
@@ -85,6 +91,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
+
       - name: Install cross-compiler (${{ matrix.arch }})
         if: matrix.arch != 'x64'
         run: |
@@ -119,6 +131,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: DanDuncalf/nshared
+          path: ../shared
 
       - name: Download Linux x64 binaries
         uses: actions/download-artifact@v4
