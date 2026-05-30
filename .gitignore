@@ -385,6 +385,11 @@ logs/
 # NCD debug dump files (can be very large)
 *_debug.txt
 
+# Graphify knowledge graph output (generated artifacts, keep GRAPH_REPORT.md)
+graphify-out/graph.html
+graphify-out/graph.json
+graphify-out/cache/
+
 # NCD extensionless Linux binaries built by GCC in WSL
 # Root executables
 /NewChangeDirectory
