@@ -21,6 +21,7 @@
 #include <sys/time.h>
 #include <poll.h>
 #include <unistd.h>
+#include <time.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
@@ -568,7 +569,8 @@ bool ipc_service_exists(void) {
         }
         
         if (attempt < 2) {
-            platform_sleep_ms(20);
+            struct timespec ts = {0, 20000000};  /* 20 ms */
+            nanosleep(&ts, NULL);
         }
     }
     
