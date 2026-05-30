@@ -1,0 +1,318 @@
+# ============================================================================
+# Release — Build, package & publish NCD releases on GitHub
+# ============================================================================
+# Triggered by tags matching v* (e.g. v1.3.0, v1.4.0-beta1).
+# Builds for all architectures, creates distribution packages, and
+# publishes a GitHub Release with the packages attached.
+# ============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# ──────────────────────────────────────────────────────────────────────
+# Environment
+# ──────────────────────────────────────────────────────────────────────
+env:
+  NCD_VERSION: "1.3.0"
+
+jobs:
+
+  # ====================================================================
+  # JOB: build-windows — Build Windows x64 + ARM64
+  # ====================================================================
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Windows ${{ matrix.arch }}
+        run: cmd /c build.bat ${{ matrix.arch }}
+        timeout-minutes: 15
+        continue-on-error: ${{ matrix.arch == 'arm64' }}
+
+      - name: Upload Windows ${{ matrix.arch }} binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows-${{ matrix.arch }}
+          path: |
+            NewChangeDirectory*.exe
+            NCDService*.exe
+            ncd.bat
+            ncd_service.bat
+          retention-days: 1
+          if-no-files-found: ${{ matrix.arch == 'x64' && 'error' || 'ignore' }}
+
+  # ====================================================================
+  # JOB: build-linux — Build Linux x64, ARM64, RISC-V
+  # ====================================================================
+  build-linux:
+    name: Build Linux ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64, riscv64]
+        include:
+          - arch: x64
+            compiler: gcc
+            cc_var: ""
+            out_suffix: ""
+            install_pkg: ""
+          - arch: arm64
+            compiler: aarch64-linux-gnu-gcc
+            cc_var: "CC_ARM64=aarch64-linux-gnu-gcc"
+            out_suffix: "_arm64"
+            install_pkg: "gcc-aarch64-linux-gnu"
+          - arch: riscv64
+            compiler: riscv64-linux-gnu-gcc
+            cc_var: "CC_RISCV=riscv64-linux-gnu-gcc"
+            out_suffix: "_riscv64"
+            install_pkg: "gcc-riscv64-linux-gnu"
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cross-compiler (${{ matrix.arch }})
+        if: matrix.arch != 'x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.install_pkg }}
+
+      - name: Build Linux ${{ matrix.arch }}
+        run: |
+          ${{ matrix.cc_var }} ./build.sh ${{ matrix.arch }}
+        timeout-minutes: 15
+        continue-on-error: ${{ matrix.arch != 'x64' }}
+
+      - name: Upload Linux ${{ matrix.arch }} binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-${{ matrix.arch }}
+          path: |
+            NewChangeDirectory${{ matrix.out_suffix }}
+            NCDService${{ matrix.out_suffix }}
+            ncd
+            ncd_service
+          retention-days: 1
+          if-no-files-found: ${{ matrix.arch == 'x64' && 'error' || 'ignore' }}
+
+  # ====================================================================
+  # JOB: test-linux — Run tests on the host build (x64 only)
+  # ====================================================================
+  test-linux:
+    name: Test Linux x64
+    runs-on: ubuntu-latest
+    needs: build-linux
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Linux x64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-linux-x64
+
+      - name: Make binaries executable
+        run: chmod +x NewChangeDirectory NCDService ncd ncd_service
+
+      - name: Build test binaries
+        run: make -C test all
+
+      - name: Ensure ncd_service exists for tests
+        run: |
+          if [ -f NCDService ] && [ ! -f ncd_service ]; then
+            cp NCDService ncd_service
+          fi
+          if [ -f ncd_service ] && [ ! -x test/ncd_service ]; then
+            cp ncd_service test/ncd_service
+          fi
+
+      - name: Run unified test report
+        run: python test/generate_report.py
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
+
+      - name: Verify test.results
+        run: |
+          grep -q "OVERALL STATUS: PASS" test.results || { echo "FAIL: test.results does not show PASS"; exit 1; }
+          grep -q "FAILED: 0" test.results || { echo "FAIL: test.results shows failures"; exit 1; }
+          grep -q "SKIPPED: 0" test.results || { echo "FAIL: test.results shows skipped tests"; exit 1; }
+          echo "All Linux tests passed"
+
+  # ====================================================================
+  # JOB: package — Create distribution packages for all architectures
+  # ====================================================================
+  package:
+    name: Package distributions
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (for scripts, docs, completions)
+        uses: actions/checkout@v4
+
+      - name: Download all built binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: _binaries
+          merge-multiple: true
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Organize and package
+        run: |
+          echo "=== Downloaded binaries ==="
+          find _binaries -type f | sort
+
+          mkdir -p dist
+
+          # ---------- Windows x64 ----------
+          if [ -f _binaries/NewChangeDirectory.exe ]; then
+            mkdir -p pkg/win-x64
+            cp _binaries/NewChangeDirectory.exe  pkg/win-x64/
+            cp _binaries/NCDService.exe          pkg/win-x64/
+            cp _binaries/ncd.bat                 pkg/win-x64/
+            cp _binaries/ncd_service.bat         pkg/win-x64/
+            cp packaging/windows/install.bat     pkg/win-x64/
+            [ -d completions ] && cp -r completions pkg/win-x64/
+            [ -d mcp_server ] && rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ pkg/win-x64/mcp_server/
+            cp README.md                         pkg/win-x64/
+            (cd pkg/win-x64 && zip -r ../../dist/NCD-${{ steps.version.outputs.version }}-windows-x64.zip .)
+            echo "Created: dist/NCD-${{ steps.version.outputs.version }}-windows-x64.zip"
+          fi
+
+          # ---------- Windows ARM64 ----------
+          if [ -f _binaries/NewChangeDirectory_arm64.exe ]; then
+            mkdir -p pkg/win-arm64
+            cp _binaries/NewChangeDirectory_arm64.exe  pkg/win-arm64/
+            cp _binaries/NCDService_arm64.exe          pkg/win-arm64/
+            cp _binaries/ncd.bat                       pkg/win-arm64/
+            cp _binaries/ncd_service.bat               pkg/win-arm64/
+            cp packaging/windows/install.bat           pkg/win-arm64/
+            [ -d completions ] && cp -r completions    pkg/win-arm64/
+            [ -d mcp_server ] && rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ pkg/win-arm64/mcp_server/
+            cp README.md                               pkg/win-arm64/
+            (cd pkg/win-arm64 && zip -r ../../dist/NCD-${{ steps.version.outputs.version }}-windows-arm64.zip .)
+            echo "Created: dist/NCD-${{ steps.version.outputs.version }}-windows-arm64.zip"
+          fi
+
+          # ---------- Linux x64 ----------
+          if [ -f _binaries/NewChangeDirectory ]; then
+            mkdir -p pkg/linux-x64
+            cp _binaries/NewChangeDirectory  pkg/linux-x64/
+            cp _binaries/NCDService          pkg/linux-x64/
+            cp _binaries/ncd                 pkg/linux-x64/
+            cp _binaries/ncd_service         pkg/linux-x64/
+            cp packaging/linux/install.sh    pkg/linux-x64/
+            [ -d completions ] && cp -r completions pkg/linux-x64/
+            [ -d mcp_server ] && rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ pkg/linux-x64/mcp_server/
+            cp README.md                     pkg/linux-x64/
+            (cd pkg/linux-x64 && tar -czf ../../dist/NCD-${{ steps.version.outputs.version }}-linux-x64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.version.outputs.version }}-linux-x64.tar.gz"
+          fi
+
+          # ---------- Linux ARM64 ----------
+          if [ -f _binaries/NewChangeDirectory_arm64 ]; then
+            mkdir -p pkg/linux-arm64
+            cp _binaries/NewChangeDirectory_arm64  pkg/linux-arm64/
+            cp _binaries/NCDService_arm64          pkg/linux-arm64/
+            cp _binaries/ncd                       pkg/linux-arm64/
+            cp _binaries/ncd_service               pkg/linux-arm64/
+            cp packaging/linux/install.sh          pkg/linux-arm64/
+            [ -d completions ] && cp -r completions pkg/linux-arm64/
+            [ -d mcp_server ] && rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ pkg/linux-arm64/mcp_server/
+            cp README.md                           pkg/linux-arm64/
+            (cd pkg/linux-arm64 && tar -czf ../../dist/NCD-${{ steps.version.outputs.version }}-linux-arm64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.version.outputs.version }}-linux-arm64.tar.gz"
+          fi
+
+          # ---------- Linux RISC-V ----------
+          if [ -f _binaries/NewChangeDirectory_riscv64 ]; then
+            mkdir -p pkg/linux-riscv64
+            cp _binaries/NewChangeDirectory_riscv64  pkg/linux-riscv64/
+            cp _binaries/NCDService_riscv64          pkg/linux-riscv64/
+            cp _binaries/ncd                         pkg/linux-riscv64/
+            cp _binaries/ncd_service                 pkg/linux-riscv64/
+            cp packaging/linux/install.sh            pkg/linux-riscv64/
+            [ -d completions ] && cp -r completions  pkg/linux-riscv64/
+            [ -d mcp_server ] && rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ pkg/linux-riscv64/mcp_server/
+            cp README.md                             pkg/linux-riscv64/
+            (cd pkg/linux-riscv64 && tar -czf ../../dist/NCD-${{ steps.version.outputs.version }}-linux-riscv64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.version.outputs.version }}-linux-riscv64.tar.gz"
+          fi
+
+      - name: List distribution packages
+        run: ls -lh dist/
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          # NewChangeDirectory (NCD) ${{ steps.version.outputs.version }}
+
+          ## Downloads
+
+          | Package | Architecture |
+          |---------|-------------|
+          EOF
+
+          for f in dist/*.zip dist/*.tar.gz; do
+            name=$(basename "$f")
+            size=$(du -h "$f" | cut -f1)
+
+            # Derive arch description from filename
+            case "$name" in
+              *windows-x64*)    arch="Windows x64" ;;
+              *windows-arm64*)  arch="Windows ARM64" ;;
+              *linux-x64*)      arch="Linux x64" ;;
+              *linux-arm64*)    arch="Linux ARM64" ;;
+              *linux-riscv64*)  arch="Linux RISC-V" ;;
+              *)                arch="unknown" ;;
+            esac
+
+            echo "| \`$name\` ($size) | $arch |" >> release-notes.md
+          done
+
+          cat release-notes.md
+
+      - name: Upload distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-packages
+          path: dist/*.zip dist/*.tar.gz
+          retention-days: 7
+
+      - name: Get the version tag
+        id: get_version
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      # ====================================================================
+      # Publish to GitHub Releases
+      # ====================================================================
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.get_version.outputs.tag }}" \
+            --title "NCD ${{ steps.version.outputs.version }}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            dist/*.zip dist/*.tar.gz

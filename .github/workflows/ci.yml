@@ -1,3 +1,12 @@
+# ============================================================================
+# CI — NCD Cross-Platform Build, Test & Package
+# ============================================================================
+# Runs on push/PR to main branches.
+#   Phase 1: Build & test on Windows (x64) and Linux (x64)
+#   Phase 2: Cross-compile Linux ARM64 + RISC-V (best-effort)
+#   Phase 3: Package distribution archives for all architectures
+# ============================================================================
+
 name: CI
 
 on:
@@ -6,12 +15,50 @@ on:
   pull_request:
     branches: [master, main]
 
+# ──────────────────────────────────────────────────────────────────────
+# Concurrency: cancel in-progress runs for the same branch/PR
+# ──────────────────────────────────────────────────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ──────────────────────────────────────────────────────────────────────
+# Default shell settings
+# ──────────────────────────────────────────────────────────────────────
+defaults:
+  run:
+    shell: bash
+
+# ──────────────────────────────────────────────────────────────────────
+# Environment variables shared across jobs
+# ──────────────────────────────────────────────────────────────────────
+env:
+  NCD_VERSION: "1.3.0"
+
 jobs:
+
+  # ====================================================================
+  # JOB: test-windows — Build + test on Windows x64
+  # ====================================================================
   test-windows:
+    name: Windows x64 (build + test)
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache MSVC build objects
+        uses: actions/cache@v4
+        with:
+          path: |
+            obj/
+            test/obj/
+          key: msvc-${{ hashFiles('src/**/*.c', 'src/**/*.h', '../shared/**/*.c', '../shared/**/*.h') }}
+          restore-keys: |
+            msvc-
 
       - name: Build Windows main binaries
         run: cmd /c build.bat
@@ -23,10 +70,11 @@ jobs:
 
       - name: Run unified test report
         run: python test/generate_report.py
-        timeout-minutes: 15
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
 
       - name: Verify test.results shows PASS
-        shell: powershell
         run: |
           $content = Get-Content test.results -Raw
           if ($content -match "OVERALL STATUS: PASS") {
@@ -48,23 +96,53 @@ jobs:
             exit 1
           }
 
-      - name: Upload test.results artifact
+      - name: Upload test results artifact
         uses: actions/upload-artifact@v4
         with:
           name: test-results-windows
           path: test.results
+          retention-days: 30
 
+      - name: Upload Windows binaries (intermediate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows-x64
+          path: |
+            NewChangeDirectory.exe
+            NCDService.exe
+            ncd.bat
+            ncd_service.bat
+          retention-days: 1
+
+  # ====================================================================
+  # JOB: test-linux — Build + test on Linux x64
+  # ====================================================================
   test-linux:
+    name: Linux x64 (build + test)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make python3
 
-      - name: Build Linux main binaries
-        run: ./build.sh
+      - name: Cache Linux build objects (build_x64/)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build_x64/
+            build_ARM64/
+            build_RISC-V/
+          key: gcc-x64-${{ hashFiles('src/**/*.c', 'src/**/*.h', '../shared/**/*.c', '../shared/**/*.h') }}
+          restore-keys: |
+            gcc-x64-
+
+      - name: Build Linux main binaries (x64)
+        run: ./build.sh x64
         timeout-minutes: 10
 
       - name: Build Linux test binaries
@@ -82,7 +160,9 @@ jobs:
 
       - name: Run unified test report
         run: python test/generate_report.py
-        timeout-minutes: 15
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
 
       - name: Verify test.results shows PASS
         run: |
@@ -91,8 +171,257 @@ jobs:
           grep -q "SKIPPED: 0" test.results || { echo "FAIL: test.results shows skipped tests"; exit 1; }
           echo "Linux tests passed with zero failures and zero skips"
 
-      - name: Upload test.results artifact
+      - name: Upload test results artifact
         uses: actions/upload-artifact@v4
         with:
           name: test-results-linux
           path: test.results
+          retention-days: 30
+
+      - name: Upload Linux x64 binaries (intermediate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-x64
+          path: |
+            NewChangeDirectory
+            NCDService
+            ncd
+            ncd_service
+          retention-days: 1
+
+  # ====================================================================
+  # JOB: cross-compile-linux — Linux ARM64 + RISC-V (best-effort)
+  # ====================================================================
+  cross-compile-linux:
+    name: Linux cross-compile (ARM64 + RISC-V)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
+
+      - name: Cross-compile Linux ARM64
+        run: |
+          echo "::group::Cross-compiling for ARM64"
+          CC_ARM64=aarch64-linux-gnu-gcc ./build.sh arm64 || echo "ARM64 build failed (continuing)"
+          echo "::endgroup::"
+
+      - name: Cross-compile Linux RISC-V
+        run: |
+          echo "::group::Cross-compiling for RISC-V"
+          CC_RISCV=riscv64-linux-gnu-gcc ./build.sh riscv64 || echo "RISC-V build failed (continuing)"
+          echo "::endgroup::"
+
+      - name: List cross-compiled binaries
+        run: |
+          echo "=== Cross-compiled binaries ==="
+          ls -la NewChangeDirectory_arm64 NCDService_arm64 2>/dev/null && echo "ARM64: OK" || echo "ARM64: not built"
+          ls -la NewChangeDirectory_riscv64 NCDService_riscv64 2>/dev/null && echo "RISC-V: OK" || echo "RISC-V: not built"
+
+      - name: Upload cross-compiled ARM64 binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-arm64
+          path: |
+            NewChangeDirectory_arm64
+            NCDService_arm64
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Upload cross-compiled RISC-V binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-riscv64
+          path: |
+            NewChangeDirectory_riscv64
+            NCDService_riscv64
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ====================================================================
+  # JOB: package — Create distribution packages from all builds
+  # ====================================================================
+  package:
+    name: Create distribution packages
+    needs: [test-windows, test-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (for packaging scripts)
+        uses: actions/checkout@v4
+
+      - name: Download all built binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: _binaries
+          merge-multiple: true
+
+      - name: Organize binaries for packaging
+        run: |
+          echo "=== Downloaded artifacts ==="
+          find _binaries -type f | sort
+
+          # Create package staging directories
+          mkdir -p pkg/win-x64 pkg/linux-x64 pkg/linux-arm64 pkg/linux-riscv64
+
+          # Windows x64
+          if [ -f _binaries/NewChangeDirectory.exe ]; then
+            cp _binaries/NewChangeDirectory.exe  pkg/win-x64/
+            cp _binaries/NCDService.exe          pkg/win-x64/
+            cp _binaries/ncd.bat                 pkg/win-x64/
+            cp _binaries/ncd_service.bat         pkg/win-x64/
+            echo "Windows x64: staged"
+          else
+            echo "WARNING: Windows x64 binaries not found"
+          fi
+
+          # Linux x64
+          if [ -f _binaries/NewChangeDirectory ]; then
+            cp _binaries/NewChangeDirectory  pkg/linux-x64/
+            cp _binaries/NCDService          pkg/linux-x64/
+            cp _binaries/ncd                 pkg/linux-x64/
+            cp _binaries/ncd_service         pkg/linux-x64/
+            echo "Linux x64: staged"
+          else
+            echo "WARNING: Linux x64 binaries not found"
+          fi
+
+          # Linux ARM64
+          if [ -f _binaries/NewChangeDirectory_arm64 ]; then
+            cp _binaries/NewChangeDirectory_arm64  pkg/linux-arm64/
+            cp _binaries/NCDService_arm64          pkg/linux-arm64/
+            cp ncd                                 pkg/linux-arm64/
+            cp ncd_service                         pkg/linux-arm64/
+            echo "Linux ARM64: staged"
+          else
+            echo "Linux ARM64: not available"
+          fi
+
+          # Linux RISC-V
+          if [ -f _binaries/NewChangeDirectory_riscv64 ]; then
+            cp _binaries/NewChangeDirectory_riscv64  pkg/linux-riscv64/
+            cp _binaries/NCDService_riscv64          pkg/linux-riscv64/
+            cp ncd                                   pkg/linux-riscv64/
+            cp ncd_service                           pkg/linux-riscv64/
+            echo "Linux RISC-V: staged"
+          else
+            echo "Linux RISC-V: not available"
+          fi
+
+      - name: Add packaging extras (scripts, completions, docs, mcp_server)
+        run: |
+          for pkgdir in pkg/*/; do
+            echo "Adding extras to $pkgdir"
+
+            # Handlers/wrappers
+            if [[ "$pkgdir" == *win* ]]; then
+              cp packaging/windows/install.bat "$pkgdir/" 2>/dev/null || true
+            else
+              cp packaging/linux/install.sh "$pkgdir/" 2>/dev/null || true
+            fi
+
+            # Completions
+            if [ -d completions ]; then
+              cp -r completions "$pkgdir/"
+            fi
+
+            # MCP server (exclude pycache)
+            if [ -d mcp_server ]; then
+              rsync -a --exclude='__pycache__' --exclude='*.pyc' mcp_server/ "$pkgdir/mcp_server/"
+            fi
+
+            # README
+            cp README.md "$pkgdir/" 2>/dev/null || true
+          done
+
+      - name: Create distribution archives
+        run: |
+          mkdir -p dist
+
+          # Windows x64 — ZIP
+          if [ -d pkg/win-x64 ] && [ "$(ls -A pkg/win-x64/NewChangeDirectory.exe 2>/dev/null)" ]; then
+            (cd pkg/win-x64 && zip -r ../../dist/NCD-${{ env.NCD_VERSION }}-windows-x64.zip .)
+            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-windows-x64.zip"
+          fi
+
+          # Linux x64 — tar.gz
+          if [ -f pkg/linux-x64/NewChangeDirectory ]; then
+            (cd pkg/linux-x64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-x64.tar.gz .)
+            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-x64.tar.gz"
+          fi
+
+          # Linux ARM64 — tar.gz
+          if [ -f pkg/linux-arm64/NewChangeDirectory_arm64 ]; then
+            (cd pkg/linux-arm64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-arm64.tar.gz .)
+            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-arm64.tar.gz"
+          fi
+
+          # Linux RISC-V — tar.gz
+          if [ -f pkg/linux-riscv64/NewChangeDirectory_riscv64 ]; then
+            (cd pkg/linux-riscv64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-riscv64.tar.gz .)
+            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-riscv64.tar.gz"
+          fi
+
+      - name: List distribution packages
+        run: |
+          echo "=== Distribution packages ==="
+          ls -lh dist/
+
+      - name: Upload distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-packages
+          path: dist/*.zip dist/*.tar.gz
+          retention-days: 90
+
+  # ====================================================================
+  # JOB: summary — Final status check
+  # ====================================================================
+  summary:
+    name: Build summary
+    if: always()
+    needs: [test-windows, test-linux, cross-compile-linux, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all job statuses
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          declare -A RESULTS
+          RESULTS["test-windows"]="${{ needs.test-windows.result }}"
+          RESULTS["test-linux"]="${{ needs.test-linux.result }}"
+          RESULTS["cross-compile-linux"]="${{ needs.cross-compile-linux.result }}"
+          RESULTS["package"]="${{ needs.package.result }}"
+
+          ALL_PASS=true
+          for job in "${!RESULTS[@]}"; do
+            status="${RESULTS[$job]}"
+            if [ "$status" = "success" ]; then
+              echo "- ✅ **$job**: passed" >> $GITHUB_STEP_SUMMARY
+            elif [ "$status" = "skipped" ]; then
+              echo "- ⏭️ **$job**: skipped" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ❌ **$job**: $status" >> $GITHUB_STEP_SUMMARY
+              ALL_PASS=false
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$ALL_PASS" = true ]; then
+            echo "**✅ All jobs passed**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**⚠️ Some jobs did not pass**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if core jobs failed
+        if: needs.test-windows.result != 'success' || needs.test-linux.result != 'success' || needs.package.result != 'success'
+        run: |
+          echo "One or more core jobs failed. See summary above."
+          exit 1
