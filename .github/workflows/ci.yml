@@ -113,8 +113,6 @@ jobs:
           path: |
             NewChangeDirectory.exe
             NCDService.exe
-            ncd.bat
-            ncd_service.bat
           retention-days: 1
 
   # ====================================================================
@@ -191,8 +189,6 @@ jobs:
           path: |
             NewChangeDirectory
             NCDService
-            ncd
-            ncd_service
           retention-days: 1
 
   # ====================================================================
@@ -283,8 +279,8 @@ jobs:
           if [ -f _binaries/NewChangeDirectory.exe ]; then
             cp _binaries/NewChangeDirectory.exe  pkg/win-x64/
             cp _binaries/NCDService.exe          pkg/win-x64/
-            cp _binaries/ncd.bat                 pkg/win-x64/
-            cp _binaries/ncd_service.bat         pkg/win-x64/
+            cp ncd.bat                           pkg/win-x64/
+            cp ncd_service.bat                   pkg/win-x64/
             echo "Windows x64: staged"
           else
             echo "WARNING: Windows x64 binaries not found"
@@ -294,8 +290,8 @@ jobs:
           if [ -f _binaries/NewChangeDirectory ]; then
             cp _binaries/NewChangeDirectory  pkg/linux-x64/
             cp _binaries/NCDService          pkg/linux-x64/
-            cp _binaries/ncd                 pkg/linux-x64/
-            cp _binaries/ncd_service         pkg/linux-x64/
+            cp ncd                             pkg/linux-x64/
+            cp ncd_service                     pkg/linux-x64/
             echo "Linux x64: staged"
           else
             echo "WARNING: Linux x64 binaries not found"

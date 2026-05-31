@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#
+# ncd_service  --  NCD State Service launcher for Linux
+#
+# Usage:
+#   ncd_service start [-logN] [-init [drives]]   - Start the service
+#   ncd_service stop                              - Stop the service
+#   ncd_service status                            - Check if service is running
+#   ncd_service restart [-logN] [-init [drives]]  - Restart the service
+#
+# All extra arguments after the command are forwarded to NCDService.
+# Examples:
+#   ncd_service start -log2
+#   ncd_service start -init /,/home
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_BIN="${SCRIPT_DIR}/NCDService"
+
+# If NCDService is not next to this script, try PATH
+if [[ ! -x "${SERVICE_BIN}" ]]; then
+    if command -v NCDService &>/dev/null; then
+        SERVICE_BIN="NCDService"
+    else
+        echo "ncd_service: NCDService binary not found." >&2
+        exit 1
+    fi
+fi
+
+ACTION="${1:-status}"
+shift || true
+
+case "${ACTION}" in
+    start)
+        "${SERVICE_BIN}" start "$@"
+        ;;
+    stop)
+        "${SERVICE_BIN}" stop "$@"
+        ;;
+    status)
+        "${SERVICE_BIN}" status
+        ;;
+    restart)
+        "${SERVICE_BIN}" stop 2>/dev/null || true
+        sleep 1
+        "${SERVICE_BIN}" start "$@"
+        ;;
+    help|--help|-?)
+        echo "NCD State Service Launcher"
+        echo ""
+        echo "Usage: ncd_service [command] [options...]"
+        echo ""
+        echo "Commands:"
+        echo "  start    - Start the NCD State Service"
+        echo "  stop     - Stop the NCD State Service"
+        echo "  restart  - Restart the NCD State Service"
+        echo "  status   - Check if service is running"
+        echo "  help     - Show this help message"
+        echo ""
+        echo "Options (forwarded to NCDService):"
+        echo "  -log0..-log5  - Enable service logging (recommended: -log2)"
+        echo "  -init [paths] - Initialize database on startup"
+        echo "  --user-mode   - Run in per-user mode"
+        echo "  -conf <path>  - Custom metadata file path"
+        echo ""
+        echo "Examples:"
+        echo "  ncd_service start -log2"
+        echo "  ncd_service start -log2 -init /home"
+        echo ""
+        echo "The NCD State Service keeps directory databases hot in memory"
+        echo "for faster navigation. It is optional - NCD works without it."
+        ;;
+    *)
+        echo "ncd_service: unknown action '${ACTION}'" >&2
+        echo "Usage: ncd_service {start|stop|status|restart|help}" >&2
+        exit 1
+        ;;
+esac
