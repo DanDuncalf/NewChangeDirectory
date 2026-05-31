@@ -72,7 +72,7 @@ jobs:
             compiler: gcc
             cc_var: ""
             out_suffix: ""
-            install_pkg: ""
+            install_pkg: "gcc make"
           - arch: arm64
             compiler: aarch64-linux-gnu-gcc
             cc_var: "CC_ARM64=aarch64-linux-gnu-gcc"
@@ -91,8 +91,7 @@ jobs:
       - name: Checkout shared library
         run: git clone https://github.com/DanDuncalf/nshared.git ../shared
 
-      - name: Install cross-compiler (${{ matrix.arch }})
-        if: matrix.arch != 'x64'
+      - name: Install build dependencies (${{ matrix.arch }})
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ${{ matrix.install_pkg }}
