@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 # ──────────────────────────────────────────────────────────────────────
 # Environment
@@ -333,3 +334,29 @@ jobs:
               --verify-tag \
               dist/*.zip dist/*.tar.gz
           fi
+
+      - name: Publish GitHub Package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER}/newchangedirectory"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          cat > Dockerfile.release-package <<EOF
+          FROM scratch
+          LABEL org.opencontainers.image.title="NewChangeDirectory"
+          LABEL org.opencontainers.image.description="NCD release archives for Windows and Linux"
+          LABEL org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}"
+          LABEL org.opencontainers.image.version="${VERSION}"
+          COPY dist/ /dist/
+          EOF
+
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker build \
+            -f Dockerfile.release-package \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:latest" \
+            .
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:latest"
