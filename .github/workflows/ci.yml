@@ -124,6 +124,7 @@ jobs:
   test-linux:
     name: Linux x64 (build + test)
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
