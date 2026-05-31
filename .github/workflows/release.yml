@@ -98,7 +98,8 @@ jobs:
 
       - name: Build Linux ${{ matrix.arch }}
         run: |
-          ${{ matrix.cc_var }} ./build.sh ${{ matrix.arch }}
+          chmod +x build.sh
+          ${{ matrix.cc_var }} bash build.sh ${{ matrix.arch }}
         timeout-minutes: 15
         continue-on-error: ${{ matrix.arch != 'x64' }}
 

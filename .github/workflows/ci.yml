@@ -148,7 +148,7 @@ jobs:
             gcc-x64-
 
       - name: Build Linux main binaries (x64)
-        run: ./build.sh x64
+        run: chmod +x build.sh && bash build.sh x64
         timeout-minutes: 10
 
       - name: Build Linux test binaries
@@ -218,13 +218,13 @@ jobs:
       - name: Cross-compile Linux ARM64
         run: |
           echo "::group::Cross-compiling for ARM64"
-          CC_ARM64=aarch64-linux-gnu-gcc ./build.sh arm64 || echo "ARM64 build failed (continuing)"
+          chmod +x build.sh && CC_ARM64=aarch64-linux-gnu-gcc bash build.sh arm64 || echo "ARM64 build failed (continuing)"
           echo "::endgroup::"
 
       - name: Cross-compile Linux RISC-V
         run: |
           echo "::group::Cross-compiling for RISC-V"
-          CC_RISCV=riscv64-linux-gnu-gcc ./build.sh riscv64 || echo "RISC-V build failed (continuing)"
+          chmod +x build.sh && CC_RISCV=riscv64-linux-gnu-gcc bash build.sh riscv64 || echo "RISC-V build failed (continuing)"
           echo "::endgroup::"
 
       - name: List cross-compiled binaries
