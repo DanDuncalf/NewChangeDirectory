@@ -88,9 +88,14 @@ def suite_requires_wsl(args):
     return args.suite in ("all", "unit", "wsl")
 
 
+def suite_requires_elevation(args):
+    """Return True when the selected suite needs privileged test fixtures."""
+    return args.suite != "unit"
+
+
 def get_preflight_error(args):
     """Return a fatal preflight error string, or None when the suite can proceed."""
-    if not is_shell_elevated():
+    if suite_requires_elevation(args) and not is_shell_elevated():
         return "Test runner must be launched from an elevated shell. Aborting before build and test execution."
 
     if platform.system() == "Windows" and suite_requires_wsl(args) and not is_wsl_available():

@@ -149,7 +149,7 @@ jobs:
           fi
 
       - name: Run unified test report
-        run: sudo -E python test/generate_report.py
+        run: sudo -E python3 test/runner.py unit --skip-build
         timeout-minutes: 30
         env:
           NCD_TEST_MODE: "1"
@@ -319,8 +319,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.get_version.outputs.tag }}" \
-            --title "NCD ${{ steps.version.outputs.version }}" \
-            --notes-file release-notes.md \
-            --verify-tag \
-            dist/*.zip dist/*.tar.gz
+          TAG="${{ steps.get_version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "NCD ${{ steps.version.outputs.version }}" \
+              --notes-file release-notes.md
+            gh release upload "$TAG" dist/*.zip dist/*.tar.gz --clobber
+          else
+            gh release create "$TAG" \
+              --title "NCD ${{ steps.version.outputs.version }}" \
+              --notes-file release-notes.md \
+              --verify-tag \
+              dist/*.zip dist/*.tar.gz
+          fi
