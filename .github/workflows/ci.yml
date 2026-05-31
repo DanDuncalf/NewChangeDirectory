@@ -59,7 +59,7 @@ jobs:
           path: |
             obj/
             test/obj/
-          key: msvc-${{ hashFiles('src/**/*.c', 'src/**/*.h', '../shared/**/*.c', '../shared/**/*.h') }}
+          key: msvc-${{ hashFiles('src/**/*.c', 'src/**/*.h', 'test/**/*.c', 'test/**/*.h', 'test/**/*.py', 'build.bat', 'Makefile') }}
           restore-keys: |
             msvc-
 
@@ -141,7 +141,7 @@ jobs:
             build_x64/
             build_ARM64/
             build_RISC-V/
-          key: gcc-x64-${{ hashFiles('src/**/*.c', 'src/**/*.h', '../shared/**/*.c', '../shared/**/*.h') }}
+          key: gcc-x64-${{ hashFiles('src/**/*.c', 'src/**/*.h', 'test/**/*.c', 'test/**/*.h', 'test/**/*.py', 'build.sh', 'Makefile') }}
           restore-keys: |
             gcc-x64-
 
