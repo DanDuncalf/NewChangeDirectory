@@ -259,6 +259,12 @@ Pushes to `master` are protected by the CI workflow (`.github/workflows/ci.yml`)
 - All Linux tests pass with zero failures and zero skips
 - `test.results` is present and shows `OVERALL STATUS: PASS`
 
+### Releases
+
+**No release tag may be pushed until all CI jobs pass with zero failures and zero skips.**
+The Release workflow (`.github/workflows/release.yml`) builds, tests, and publishes packages.
+Every release must also bump the version number across all files (see version references below).
+
 ### Quick Start - Run All Tests
 
 **Windows (complete test suite) — use the Python runner:**

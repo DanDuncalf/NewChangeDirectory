@@ -248,6 +248,20 @@ python test\runner.py --repair       # Fix corrupted test environment
 - **Always show the test runner output** — do not suppress or truncate
 - **Act on background task notifications immediately**
 
+### Release Policy
+
+**No release tag may be pushed until ALL tests pass with zero failures and zero skips.**
+Every release must bump the version number in all of these files:
+- `.github/workflows/ci.yml` — `NCD_VERSION`
+- `.github/workflows/release.yml` — `NCD_VERSION`
+- `Create-Packages.ps1` — `$Version` parameter default
+- `packaging/windows/NCD.iss` — `MyAppVersion`
+- `mcp_server/pyproject.toml` — `version`
+- `AGENTS.md` — compatibility matrix table
+- Winget manifests under `packaging/winget/`
+
+After bumping, run `python test/runner.py --quick` to confirm tests pass before pushing.
+
 ### Keystroke Injection for TUI Testing
 
 | Variable | Purpose |
@@ -592,7 +606,7 @@ NCD maintains version compatibility between the client (`NewChangeDirectory.exe`
 
 | Client Version | Min Service Version | Compatible Service Versions |
 |----------------|---------------------|----------------------------|
-| 1.3.x | 1.3.0 | 1.3.0 - 1.3.x |
+| 1.3.x | 1.3.1 | 1.3.0 - 1.3.x |
 | 1.2.x | 1.2.0 | 1.2.0 - 1.3.x (forward compatible) |
 
 **Upgrade/Downgrade Procedures:**

@@ -15,7 +15,7 @@ param(
     [switch]$SkipWindowsArm64,
     [switch]$SkipLinuxArm64,
     [switch]$SkipLinuxRiscv,
-    [string]$Version = "1.3.0"
+    [string]$Version = "1.3.1"
 )
 
 $ErrorActionPreference = "Stop"
