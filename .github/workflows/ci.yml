@@ -254,6 +254,61 @@ jobs:
           if-no-files-found: ignore
 
   # ====================================================================
+  # JOB: test-linux-arm64 — Build + test natively on ARM64
+  # ====================================================================
+  test-linux-arm64:
+    name: Linux ARM64 (native build + test)
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        run: git clone https://github.com/DanDuncalf/nshared.git ../shared
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3
+
+      - name: Build Linux ARM64 binaries
+        run: chmod +x build.sh && bash build.sh
+        timeout-minutes: 15
+
+      - name: Rename for packaging compatibility
+        run: |
+          mv NewChangeDirectory NewChangeDirectory_arm64 2>/dev/null || true
+          mv NCDService NCDService_arm64 2>/dev/null || true
+
+      - name: Upload native ARM64 binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-arm64-native
+          path: |
+            NewChangeDirectory_arm64
+            NCDService_arm64
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Build test binaries
+        run: make -C test all
+        timeout-minutes: 10
+
+      - name: Run unit tests
+        run: python3 test/runner.py unit --quick --wsl-only --skip-build
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
+
+      - name: Verify test.results
+        run: |
+          grep -q "OVERALL STATUS: PASS" test.results || { echo "FAIL"; exit 1; }
+          grep -q "FAILED: 0" test.results || { echo "FAIL: failures"; exit 1; }
+          grep -q "SKIPPED: 0" test.results || { echo "FAIL: skips"; exit 1; }
+          echo "All Linux ARM64 tests passed"
+
+  # ====================================================================
   # JOB: package — Create distribution packages from all builds
   # ====================================================================
   package:

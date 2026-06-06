@@ -116,6 +116,117 @@ jobs:
           if-no-files-found: ${{ matrix.arch == 'x64' && 'error' || 'ignore' }}
 
   # ====================================================================
+  # JOB: test-windows — Run tests on Windows x64
+  # ====================================================================
+  test-windows:
+    name: Test Windows x64
+    runs-on: windows-latest
+    needs: build-windows
+    defaults:
+      run:
+        shell: pwsh
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        run: git clone https://github.com/DanDuncalf/nshared.git ../shared
+
+      - name: Download Windows x64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-windows-x64
+
+      - name: Build Windows test binaries
+        run: cmd /c "cd test && build-tests.bat"
+        timeout-minutes: 10
+
+      - name: Run unit tests
+        run: python test/runner.py unit --quick --windows-only --skip-build
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
+
+      - name: Verify test.results
+        shell: pwsh
+        run: |
+          $content = Get-Content test.results -Raw
+          if ($content -match "OVERALL STATUS: PASS") {
+            Write-Host "PASS confirmed"
+          } else {
+            Write-Error "FAIL: test.results does not show PASS"
+            exit 1
+          }
+          if ($content -match "FAILED:\s*0") {
+            Write-Host "Zero failures confirmed"
+          } else {
+            Write-Error "FAIL: test.results shows failures"
+            exit 1
+          }
+          if ($content -match "SKIPPED:\s*0") {
+            Write-Host "Zero skips confirmed"
+          } else {
+            Write-Error "FAIL: test.results shows skipped tests"
+            exit 1
+          }
+
+  # ====================================================================
+  # JOB: test-linux-arm64 — Build + test natively on ARM64
+  # ====================================================================
+  build-test-linux-arm64:
+    name: Build + test Linux ARM64 (native)
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout shared library
+        run: git clone https://github.com/DanDuncalf/nshared.git ../shared
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3
+
+      - name: Build Linux ARM64 binaries
+        run: chmod +x build.sh && bash build.sh
+        timeout-minutes: 15
+
+      - name: Rename for packaging compatibility
+        run: |
+          mv NewChangeDirectory NewChangeDirectory_arm64 2>/dev/null || true
+          mv NCDService NCDService_arm64 2>/dev/null || true
+
+      - name: Upload Linux ARM64 binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-arm64-native
+          path: |
+            NewChangeDirectory_arm64
+            NCDService_arm64
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Build test binaries
+        run: make -C test all
+        timeout-minutes: 10
+
+      - name: Run unit tests
+        run: python3 test/runner.py unit --quick --wsl-only --skip-build
+        timeout-minutes: 30
+        env:
+          NCD_TEST_MODE: "1"
+
+      - name: Verify test.results
+        run: |
+          grep -q "OVERALL STATUS: PASS" test.results || { echo "FAIL"; exit 1; }
+          grep -q "FAILED: 0" test.results || { echo "FAIL: failures"; exit 1; }
+          grep -q "SKIPPED: 0" test.results || { echo "FAIL: skips"; exit 1; }
+          echo "All Linux ARM64 tests passed"
+
+  # ====================================================================
   # JOB: test-linux — Run tests on the host build (x64 only)
   # ====================================================================
   test-linux:
@@ -168,7 +279,7 @@ jobs:
   # ====================================================================
   package:
     name: Package distributions
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, test-windows, test-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository (for scripts, docs, completions)
