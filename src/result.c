@@ -255,3 +255,109 @@ void heur_promote_match(NcdMatch *matches, int count, const char *preferred_path
         }
     }
 }
+
+/* ================================================================ frequency-based sort */
+
+/*
+ * heur_sort_by_frequency  --  Sort matches by frequency using index-based quicksort
+ *
+ * matches: Array of NcdMatch to sort (in-place reordering)
+ * count: Number of matches
+ *
+ * Sorts by frequency descending (highest frequency first).
+ * Uses index array for fast comparison - avoids comparing large NcdMatch structures.
+ * Final in-place reorder uses cycle detection to avoid O(n^2) swaps.
+ */
+void heur_sort_by_frequency(NcdMatch *matches, int count)
+{
+    if (!matches || count <= 1) return;
+    
+    /* Allocate index array for indirect sorting */
+    int *indices = (int *)malloc((size_t)count * sizeof(int));
+    if (!indices) return;
+    
+    /* Initialize indices: indices[i] = i */
+    for (int i = 0; i < count; i++) {
+        indices[i] = i;
+    }
+    
+    /* Sort indices by frequency (descending) using iterative quicksort.
+     * Comparison: matches[indices[a]].frequency > matches[indices[b]].frequency */
+    int left = 0, right = count - 1;
+    int stack[64];
+    int top = -1;
+    
+    stack[++top] = left;
+    stack[++top] = right;
+    
+    while (top >= 0) {
+        right = stack[top--];
+        left = stack[top--];
+        
+        while (left < right) {
+            int mid = left + (right - left) / 2;
+            uint32_t pivot = matches[indices[mid]].frequency;
+            
+            /* Move pivot to end */
+            int tmp_idx = indices[mid];
+            indices[mid] = indices[right];
+            indices[right] = tmp_idx;
+            
+            int i = left - 1;
+            for (int j = left; j < right; j++) {
+                if (matches[indices[j]].frequency > pivot) {
+                    i++;
+                    tmp_idx = indices[i];
+                    indices[i] = indices[j];
+                    indices[j] = tmp_idx;
+                }
+            }
+            
+            tmp_idx = indices[i + 1];
+            indices[i + 1] = indices[right];
+            indices[right] = tmp_idx;
+            
+            int pivot_idx = i + 1;
+            
+            if (top < 64 - 2) {
+                stack[++top] = pivot_idx + 1;
+                stack[++top] = right;
+            }
+            
+            right = pivot_idx - 1;
+        }
+    }
+    
+    /* Now reorder matches in-place using cycle detection.
+     * We want matches[i] = matches[indices[i]], but we need to do it in-place.
+     * The permutation is: final_matches[i] = original_matches[indices[i]]
+     * We follow cycles in the permutation. */
+    bool *visited = (bool *)calloc((size_t)count, sizeof(bool));
+    if (!visited) {
+        free(indices);
+        return;
+    }
+    
+    for (int i = 0; i < count; i++) {
+        if (visited[i]) continue;
+        
+        int j = i;
+        NcdMatch save = matches[i];
+        
+        while (!visited[j]) {
+            visited[j] = true;
+            int k = indices[j];
+            
+            if (k != j) {
+                matches[j] = matches[k];
+                j = k;
+            } else {
+                matches[j] = save;
+                break;
+            }
+        }
+    }
+    
+    free(visited);
+    free(indices);
+}

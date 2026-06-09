@@ -196,7 +196,7 @@ TEST(scan_subdirectory_preserves_sibling_directories) {
     ASSERT_TRUE(found_rescan);
 
     /* Rescan just rescan_dir */
-    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL);
+    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL, NULL, NULL);
     ASSERT_TRUE(count2 >= 0);
 
     /* Verify keep_dir still exists after partial rescan */
@@ -270,7 +270,7 @@ TEST(scan_subdirectory_updates_existing_subtree) {
     make_dir(new_child);
 
     /* Rescan just rescan_dir */
-    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL);
+    int count2 = scan_subdirectory(db, drive_letter, rescan_dir, true, true, NULL, NULL, NULL);
     ASSERT_TRUE(count2 >= 0);
 
     /* Verify post-rescan state */
@@ -333,7 +333,7 @@ TEST(scan_subdirectory_adds_new_subtree) {
     make_dir(new_dir);
 
     /* Rescan the new directory */
-    int count2 = scan_subdirectory(db, drive_letter, new_dir, true, true, NULL);
+    int count2 = scan_subdirectory(db, drive_letter, new_dir, true, true, NULL, NULL, NULL);
     ASSERT_TRUE(count2 >= 0);
 
     /* Verify both keep_dir and new_dir exist */

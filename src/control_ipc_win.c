@@ -524,9 +524,20 @@ void ipc_server_close_connection(NcdIpcConnection *conn) {
     }
     
     if (conn->hPipe != INVALID_HANDLE_VALUE) {
-        FlushFileBuffers(conn->hPipe);
+        /*
+         * Do NOT call FlushFileBuffers here.  When the pipe is already
+         * broken (client disconnected), FlushFileBuffers can corrupt the
+         * kernel named-pipe object, causing a permanent feedback loop where
+         * every subsequent CreateNamedPipe instance inherits a broken state
+         * and all future clients see instant ERROR_BROKEN_PIPE ("0 messages").
+         *
+         * Standard Windows pipe cleanup sequence:
+         *   1. DisconnectNamedPipe (no-op if already disconnected)
+         *   2. CloseHandle
+         */
         DisconnectNamedPipe(conn->hPipe);
         CloseHandle(conn->hPipe);
+        conn->hPipe = INVALID_HANDLE_VALUE;
     }
     
     free(conn);
@@ -545,6 +556,38 @@ int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_l
     
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
     DWORD read;
+    
+    /*
+     * Poll for data with timeout before blocking ReadFile.
+     * This prevents the service from permanently stalling when a client
+     * connects but never sends data (hung process, zombie, etc.).
+     * Matches the 200ms timeout used on POSIX (SO_RCVTIMEO).
+     */
+    const int poll_timeout_ms = 200;
+    const int poll_interval_ms = 10;
+    int waited_ms = 0;
+    DWORD bytes_available = 0;
+    
+    while (waited_ms < poll_timeout_ms) {
+        if (PeekNamedPipe(conn->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
+            if (bytes_available >= sizeof(NcdIpcHeader)) {
+                break;  /* Data available, proceed to read */
+            }
+        } else {
+            DWORD err = GetLastError();
+            if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED ||
+                err == ERROR_NO_DATA) {
+                return 0;  /* Client disconnected */
+            }
+        }
+        Sleep((DWORD)poll_interval_ms);
+        waited_ms += poll_interval_ms;
+    }
+    
+    if (waited_ms >= poll_timeout_ms) {
+        /* Client connected but sent nothing within timeout */
+        return 0;
+    }
     
     if (!ReadFile(conn->hPipe, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
         return 0;
@@ -649,4 +692,101 @@ bool ipc_service_exists(void) {
     }
     
     return false;
+}
+
+/* ================================================================
+ * ipc_platform_recv_with_timeout  --  Receive message with timeout
+ *
+ * Platform-specific implementation for non-blocking receive with timeout.
+ * Used for polling progress updates from the service.
+ */
+
+NcdIpcResult ipc_platform_recv_with_timeout(NcdIpcClient *client,
+                                            int timeout_ms,
+                                            NcdMessageType *out_type,
+                                            void **out_payload,
+                                            size_t *out_len) {
+    if (!client || client->hPipe == INVALID_HANDLE_VALUE || !out_type || !out_payload || !out_len) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    *out_type = 0;
+    *out_payload = NULL;
+    *out_len = 0;
+    
+    /* Check if data is available using PeekNamedPipe */
+    DWORD bytes_available = 0;
+    if (!PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
+            return NCD_IPC_ERROR_NOT_FOUND;
+        }
+        return win_error_to_ipc(err);
+    }
+    
+    if (bytes_available == 0) {
+        /* No data available - wait for timeout */
+        int waited_ms = 0;
+        const int poll_interval = 10;
+        
+        while (waited_ms < timeout_ms) {
+            Sleep(poll_interval);
+            waited_ms += poll_interval;
+            
+            if (!PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
+                return NCD_IPC_ERROR_NOT_FOUND;
+            }
+            
+            if (bytes_available >= sizeof(NcdIpcHeader)) {
+                break;
+            }
+        }
+        
+        if (bytes_available == 0 || bytes_available < sizeof(NcdIpcHeader)) {
+            return NCD_IPC_ERROR_NOT_FOUND;
+        }
+    }
+    
+    /* Read the message */
+    uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
+    DWORD read;
+    
+    if (!ReadFile(client->hPipe, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
+            return NCD_IPC_ERROR_NOT_FOUND;
+        }
+        return win_error_to_ipc(err);
+    }
+    
+    if (read < sizeof(NcdIpcHeader)) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
+    
+    /* Validate header */
+    if (hdr->magic != NCD_IPC_MAGIC || hdr->version != NCD_IPC_VERSION) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    *out_type = (NcdMessageType)hdr->type;
+    
+    /* Copy payload if present */
+    if (hdr->payload_len > 0) {
+        if (sizeof(NcdIpcHeader) + hdr->payload_len > (size_t)read) {
+            return NCD_IPC_ERROR_INVALID;
+        }
+        
+        void *payload = malloc(hdr->payload_len);
+        if (!payload) {
+            return NCD_IPC_ERROR_GENERIC;
+        }
+        
+        memcpy(payload, msg_buf + sizeof(NcdIpcHeader), hdr->payload_len);
+        *out_payload = payload;
+        *out_len = hdr->payload_len;
+    }
+    
+    return NCD_IPC_OK;
 }

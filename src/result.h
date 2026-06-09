@@ -71,6 +71,15 @@ void heur_sanitize(const char *src, char *dst, size_t dst_size, bool to_lower);
 bool heur_get_preferred(const char *search_raw, char *out_path, size_t out_size);
 
 /*
+ * heur_get_frequency_by_target  --  Get total frequency for a target path
+ *
+ * target: The target path to look up
+ *
+ * Returns the sum of frequency for all heuristics entries matching the target.
+ */
+uint32_t heur_get_frequency_by_target(const char *target);
+
+/*
  * heur_note_choice  --  Record a user choice in heuristics
  *
  * search_raw: The search term used
@@ -96,6 +105,17 @@ void heur_print(void);
  * heur_clear  --  Clear all heuristics (for /fc command)
  */
 void heur_clear(void);
+
+/*
+ * heur_sort_by_frequency  --  Sort matches by frequency (descending)
+ *
+ * matches: Array of NcdMatch to sort
+ * count: Number of matches
+ *
+ * Sorts in-place using index-based quicksort for performance.
+ * Higher frequency entries appear first.
+ */
+void heur_sort_by_frequency(NcdMatch *matches, int count);
 
 #ifdef __cplusplus
 }

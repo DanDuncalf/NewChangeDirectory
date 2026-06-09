@@ -49,6 +49,28 @@ NcdIpcResult ipc_platform_conn_write(NcdIpcConnection *conn,
                                      const void *data,
                                      size_t len);
 
+/*
+ * ipc_platform_recv_with_timeout  --  Receive a message with timeout
+ *
+ * Platform-specific implementation for non-blocking receive with timeout.
+ * Used for polling progress updates from the service.
+ *
+ * Parameters:
+ *   client   - The IPC client handle
+ *   timeout_ms - Timeout in milliseconds (0 = non-blocking)
+ *   out_type - Set to the received message type
+ *   out_payload - Set to heap-allocated copy of payload (caller must free)
+ *   out_len  - Set to payload length
+ *
+ * Returns NCD_IPC_OK on success, NCD_IPC_ERROR_NOT_FOUND on timeout,
+ * or other error codes on failure.
+ */
+NcdIpcResult ipc_platform_recv_with_timeout(NcdIpcClient *client,
+                                            int timeout_ms,
+                                            NcdMessageType *out_type,
+                                            void **out_payload,
+                                            size_t *out_len);
+
 #ifdef __cplusplus
 }
 #endif

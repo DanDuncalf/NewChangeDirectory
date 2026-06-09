@@ -34,6 +34,11 @@ extern int state_backend_submit_metadata_update_service(NcdStateView *view,
 extern int state_backend_request_rescan_service(NcdStateView *view,
                                                 const bool drive_mask[26],
                                                 bool scan_root_only);
+extern int state_backend_request_rescan_with_progress_service(NcdStateView *view,
+                                                const bool drive_mask[26],
+                                                bool scan_root_only,
+                                                StateBackendScanProgressFn progress_fn,
+                                                void *user_data);
 extern int state_backend_request_flush_service(NcdStateView *view);
 extern const char *state_backend_service_error_string(void);
 
@@ -462,6 +467,25 @@ int state_backend_request_rescan(NcdStateView *view,
     (void)view;
     (void)drive_mask;
     (void)scan_root_only;
+    return 0;
+}
+
+int state_backend_request_rescan_with_progress(NcdStateView *view,
+                                            const bool drive_mask[26],
+                                            bool scan_root_only,
+                                            StateBackendScanProgressFn progress_fn,
+                                            void *user_data) {
+    if (view && view->info.from_service) {
+        return state_backend_request_rescan_with_progress_service(view, drive_mask, scan_root_only, progress_fn, user_data);
+    }
+
+    /* In local mode, we don't handle rescan here */
+    /* The caller (main.c) should perform the rescan directly */
+    (void)view;
+    (void)drive_mask;
+    (void)scan_root_only;
+    (void)progress_fn;
+    (void)user_data;
     return 0;
 }
 

@@ -214,6 +214,37 @@ int state_backend_request_rescan(NcdStateView *view,
                                  bool scan_root_only);
 
 /*
+ * Scan progress callback type for rescan with progress.
+ */
+typedef void (*StateBackendScanProgressFn)(char drive_letter,
+                                          const char *current_path,
+                                          void *user_data);
+
+/*
+ * state_backend_request_rescan_with_progress  --  Request rescan and receive progress updates
+ *
+ * Dispatches to service or local implementation based on view mode.
+ * Sends a rescan request and polls for progress updates, calling the
+ * progress callback for each update received.
+ *
+ * Returns 0 on success (rescan completed), -1 on error.
+ */
+int state_backend_request_rescan_with_progress(NcdStateView *view,
+                                               const bool drive_mask[26],
+                                               bool scan_root_only,
+                                               StateBackendScanProgressFn progress_fn,
+                                               void *user_data);
+
+/*
+ * state_backend_request_rescan_with_progress_service  --  Service implementation
+ */
+int state_backend_request_rescan_with_progress_service(NcdStateView *view,
+                                               const bool drive_mask[26],
+                                               bool scan_root_only,
+                                               StateBackendScanProgressFn progress_fn,
+                                               void *user_data);
+
+/*
  * state_backend_request_flush  --  Request immediate persistence
  *
  * Asks the service (if active) to flush any pending changes to disk.

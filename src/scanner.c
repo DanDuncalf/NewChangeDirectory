@@ -747,12 +747,15 @@ typedef struct ScanFrame {
  * Removes existing entries under subdir_path and replaces them with
  * newly scanned ones.  Preserves all other directories on the drive.
  * Returns number of directories added, or -1 on error.
+ * Progress callback is optional (pass NULL to suppress progress output).
  */
 int scan_subdirectory(NcdDatabase   *db,
                       char           drive_letter,
                       const char    *subdir_path,
                       bool           include_hidden,
                       bool           include_system,
+                      ScanProgressFn  progress_fn,
+                      void          *progress_user_data,
                       const NcdExclusionList *exclusions)
 {
     if (!subdir_path || !subdir_path[0]) return -1;
@@ -868,6 +871,8 @@ int scan_subdirectory(NcdDatabase   *db,
     ctx.include_system = include_system;
     ctx.dir_count = 0;
     ctx.status = &local_status;
+    ctx.progress_fn = progress_fn;
+    ctx.progress_user_data = progress_user_data;
 #if NCD_PLATFORM_LINUX
     ctx.visited = diridset_create();
 #endif

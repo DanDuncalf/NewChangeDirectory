@@ -3289,6 +3289,26 @@ bool db_heur_get_preferred(NcdMetadata *meta, const char *search,
     return false;
 }
 
+uint32_t db_heur_get_frequency_by_target(NcdMetadata *meta, const char *target)
+{
+    if (!meta || !target || !target[0]) return 0;
+    
+    uint32_t total_freq = 0;
+    
+    for (int i = 0; i < meta->heuristics.count; i++) {
+        NcdHeurEntryV2 *entry = &meta->heuristics.entries[i];
+#if NCD_PLATFORM_WINDOWS
+        if (_stricmp(entry->target, target) == 0) {
+#else
+        if (strcasecmp(entry->target, target) == 0) {
+#endif
+            total_freq += entry->frequency;
+        }
+    }
+    
+    return total_freq;
+}
+
 void db_heur_clear(NcdMetadata *meta)
 {
     if (!meta) return;

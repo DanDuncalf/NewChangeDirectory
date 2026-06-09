@@ -560,6 +560,7 @@ typedef struct {
     int  timeout_seconds;         /* /t <seconds> -- scan inactivity timeout */
     bool scan_root_only;          /* Linux: /r / scans only root, not /mnt */
     char scan_subdirectory[NCD_MAX_PATH]; /* /r. -- rescan specific subdirectory */
+    bool silent;                  /* /silent -- suppress rescan progress output */
 #if DEBUG
     bool test_no_checksum;        /* /test NC -- ignore checksum validation  */
     bool test_slow_mode;          /* /test SL -- pause 1s every 100 dirs     */
@@ -625,10 +626,11 @@ typedef struct {
  * NcdMatch  --  one candidate result returned by the matcher
  */
 typedef struct {
-    char  full_path[NCD_MAX_PATH]; /* e.g. "C:\Users\Scott\Downloads"        */
-    char  drive_letter;            /* 'C'                                    */
-    int   drive_index;             /* index in NcdDatabase.drives[]          */
-    int   dir_index;               /* index in DriveData.dirs[]              */
+    char   full_path[NCD_MAX_PATH]; /* e.g. "C:\\Users\\Scott\\Downloads"        */
+    char   drive_letter;            /* 'C'                                    */
+    int    drive_index;             /* index in NcdDatabase.drives[]          */
+    int    dir_index;               /* index in DriveData.dirs[]              */
+    uint32_t frequency;             /* Times this target was selected (heuristics) */
 } NcdMatch;
 
 /* ---------------------------------------------------- utility macros      */

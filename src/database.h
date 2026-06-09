@@ -391,6 +391,12 @@ bool db_heur_get_preferred(NcdMetadata *meta, const char *search,
                            char *out_path, size_t out_size);
 
 /*
+ * Get the total frequency count for a target path across all searches.
+ * Returns the sum of frequency for all heuristics entries where target matches.
+ */
+uint32_t db_heur_get_frequency_by_target(NcdMetadata *meta, const char *target);
+
+/*
  * Clear all heuristics entries.
  */
 void db_heur_clear(NcdMetadata *meta);

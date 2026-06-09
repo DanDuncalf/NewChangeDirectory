@@ -27,10 +27,10 @@ extern "C" {
 #define NCD_IPC_MAGIC       0x434E4950U  /* 'N' 'C' 'I' 'P' = NCD IPC */
 
 /* Protocol version */
-#define NCD_IPC_VERSION     4   /* Added platform/arch to detailed status */
+#define NCD_IPC_VERSION     5   /* Added RESCAN_PROGRESS and RESCAN_COMPLETE async messages */
 
 /* Application version - must match between client and service */
-#define NCD_APP_VERSION     "1.3"
+#define NCD_APP_VERSION     "1.4"
 
 /* Maximum message size */
 #define NCD_IPC_MAX_MSG_SIZE 4096
@@ -64,6 +64,10 @@ typedef enum {
     NCD_MSG_RESPONSE = 0x80,        /* Response to client request */
     NCD_MSG_ERROR,                  /* Error response */
     NCD_MSG_VERSION_MISMATCH,       /* Version mismatch error */
+    
+    /* Server -> Client (async progress, no response expected) */
+    NCD_MSG_RESCAN_PROGRESS = 0x100, /* Progress update during rescan */
+    NCD_MSG_RESCAN_COMPLETE = 0x101, /* Rescan completed notification */
 } NcdMessageType;
 
 /* --------------------------------------------------------- result codes       */
@@ -230,6 +234,19 @@ typedef struct {
     /* Followed by: error_message \0 */
 } NcdErrorPayload;
 
+/*
+ * NcdRescanProgressPayload  --  Rescan progress update (async, server -> client)
+ * 
+ * Sent by the service during rescan to notify clients of progress.
+ * No response is expected - this is a fire-and-forget notification.
+ */
+typedef struct {
+    char  drive_letter;             /* Drive being scanned (e.g., 'C') */
+    uint8_t pad[3];                /* Alignment padding */
+    uint32_t dir_count;            /* Total directories found so far */
+    char  current_path[256];       /* Current directory being scanned */
+} NcdRescanProgressPayload;
+
 /* --------------------------------------------------------- opaque handles     */
 
 typedef struct NcdIpcClient NcdIpcClient;
@@ -389,6 +406,23 @@ NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
  */
 NcdIpcResult ipc_client_request_shutdown(NcdIpcClient *client);
 
+/*
+ * ipc_client_receive_progress  --  Receive rescan progress update from service
+ *
+ * Non-blocking receive with timeout. Used by clients to poll for progress
+ * updates during service rescan.
+ *
+ * Returns:
+ *   NCD_IPC_OK - Progress received, caller must free *out_progress
+ *   NCD_IPC_ERROR_NOT_FOUND - No progress message available (timeout)
+ *   Other errors indicate connection issues
+ *
+ * Note: Caller must call ipc_free_message() on *out_progress if NCD_IPC_OK.
+ */
+NcdIpcResult ipc_client_receive_progress(NcdIpcClient *client,
+                                          int timeout_ms,
+                                          NcdRescanProgressPayload **out_progress);
+
 /* --------------------------------------------------------- server API         */
 
 /*
@@ -469,6 +503,23 @@ NcdIpcResult ipc_server_send_version_mismatch(NcdIpcConnection *conn,
                                                const char *service_version,
                                                const char *service_build,
                                                const char *message);
+
+/*
+ * ipc_server_send_progress  --  Send rescan progress update to client
+ *
+ * This is an async message (no sequence number, no response expected).
+ * Used by the service to notify clients of rescan progress.
+ */
+NcdIpcResult ipc_server_send_progress(NcdIpcConnection *conn,
+                                      const NcdRescanProgressPayload *progress);
+
+/*
+ * ipc_server_send_rescan_complete  --  Send rescan completion notification
+ *
+ * This is an async message (no sequence number, no response expected).
+ * Used by the service to notify clients that rescan has finished.
+ */
+NcdIpcResult ipc_server_send_rescan_complete(NcdIpcConnection *conn);
 
 /* --------------------------------------------------------- utilities          */
 

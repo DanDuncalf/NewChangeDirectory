@@ -70,6 +70,9 @@ static atomic_int g_shutdown_requested = 0;
 #endif
 static int g_debug_mode = 0;  /* Set to 1 for verbose IPC logging */
 
+/* Global variable to store the client connection for rescan progress */
+static NcdIpcConnection *g_rescan_client_conn = NULL;
+
 /* Init-database option: block startup and scan drives synchronously */
 static bool g_init_db = false;
 static char g_init_drives[26];
@@ -86,7 +89,7 @@ static char g_exe_path[MAX_PATH] = {0};
 #endif
 
 /* Version info - must match NCD_APP_VERSION in control_ipc.h */
-#define SERVICE_VERSION     "1.3"
+#define SERVICE_VERSION     NCD_APP_VERSION
 #define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
 
 /* Debug logging macro */
@@ -279,6 +282,33 @@ static void log_init(void) {
         fopen_errno = errno;
     }
     log_lock_release();
+
+    /* If the system log file was created by a higher-privilege process
+     * (e.g. Administrator), regular users will get EACCES trying to
+     * append. Fall back to the per-user log directory so the daemon
+     * can always write its log. */
+    if (!g_log_file && fopen_errno == EACCES) {
+        char local[MAX_PATH];
+        if (platform_get_env("LOCALAPPDATA", local, sizeof(local))) {
+            int w = snprintf(log_path, sizeof(log_path), "%s\\NCD", local);
+            if (w > 0 && (size_t)w < sizeof(log_path)) {
+                platform_create_dir(log_path);
+                w = snprintf(log_path, sizeof(log_path), "%s\\NCD\\ncd_service.log", local);
+                if (w > 0 && (size_t)w < sizeof(log_path)) {
+                    log_lock_acquire();
+                    g_log_file = fopen(log_path, NCD_FILE_APPEND_BINARY);
+                    if (!g_log_file) {
+                        fopen_errno = errno;
+                    }
+                    log_lock_release();
+                    if (g_log_file) {
+                        /* Note: fallback log location differs from system log */
+                        fprintf(stderr, "NCD Service: System log unwritable, using %s\n", log_path);
+                    }
+                }
+            }
+        }
+    }
 
     if (g_log_file) {
         log_lock_acquire();
@@ -1043,11 +1073,12 @@ static void handle_request_rescan(NcdIpcConnection *conn,
                                    ServiceState *state,
                                    SnapshotPublisher *pub,
                                    const NcdRequestRescanPayload *payload) {
-    (void)conn; (void)sequence; (void)state; (void)pub; (void)payload;
-    (void)state;
-    (void)pub;
+    (void)state; (void)pub; (void)payload;
     LOG_EVENT("REQUEST_RESCAN received (seq=%u, drive_mask=0x%X, partial=%d)",
               sequence, payload->drive_mask, payload->is_partial);
+
+    /* Store the client connection for progress updates */
+    g_rescan_client_conn = conn;
 
     /* Signal main loop to perform rescan */
     ATOMIC_STORE(g_rescan_requested, 1);
@@ -1543,12 +1574,42 @@ static void signal_loader_stop(void) {
 
 /* --------------------------------------------------------- main loop          */
 
+/* Forward declaration for rescan progress callback context */
+typedef struct {
+    char drive_letter;
+    uint32_t total_dirs;
+} RescanProgressContext;
+
+/* Rescan progress callback - sends progress to connected client */
+static void rescan_progress_callback(char drive_letter,
+                                     const char *current_path,
+                                     void *user_data) {
+    (void)user_data;
+    if (!g_rescan_client_conn) return;
+
+    NcdRescanProgressPayload progress;
+    memset(&progress, 0, sizeof(progress));
+    progress.drive_letter = drive_letter;
+    progress.dir_count = 0;  /* Total will be set when complete */
+    if (current_path) {
+        strncpy(progress.current_path, current_path, sizeof(progress.current_path) - 1);
+        progress.current_path[sizeof(progress.current_path) - 1] = '\0';
+    }
+
+    ipc_server_send_progress(g_rescan_client_conn, &progress);
+}
+
 static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     /* Skip rescan in test mode to prevent scanning user drives */
     const char *test_mode = getenv("NCD_TEST_MODE");
     if (test_mode && test_mode[0]) {
         LOG_EVENT("Rescan skipped: NCD_TEST_MODE is set");
         LOG_DETAIL("Test mode detected, skipping filesystem rescan");
+        /* Notify client that rescan is complete (skipped) */
+        if (g_rescan_client_conn) {
+            ipc_server_send_rescan_complete(g_rescan_client_conn);
+            g_rescan_client_conn = NULL;
+        }
         return;
     }
 
@@ -1570,6 +1631,11 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
         LOG_DETAIL("ERROR - Failed to create new database for rescan");
         LOG_EVENT("Rescan failed: database creation error");
         service_state_set_runtime_state(state, prev_state);
+        /* Notify client that rescan is complete (failed) */
+        if (g_rescan_client_conn) {
+            ipc_server_send_rescan_complete(g_rescan_client_conn);
+            g_rescan_client_conn = NULL;
+        }
         return;
     }
 
@@ -1596,9 +1662,9 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
             continue;
         }
 
-        /* Scan the drive */
+        /* Scan the drive with progress callback */
         int dirs = scan_mount(new_db, mount_path, show_hidden, show_system,
-                             NULL, NULL, exclusions);
+                             rescan_progress_callback, NULL, exclusions);
         if (dirs >= 0) {
             scanned_count++;
             LOG_DETAIL("Drive %c: scanned (%d dirs)", drives[i], dirs);
@@ -1630,6 +1696,13 @@ static void perform_rescan(ServiceState *state, SnapshotPublisher *pub) {
     service_state_set_runtime_state(state, SERVICE_STATE_READY);
     service_state_set_status_message(state, "Ready");
     LOG_EVENT("Service state changed back to READY after rescan");
+
+    /* Notify client that rescan is complete */
+    if (g_rescan_client_conn) {
+        ipc_server_send_rescan_complete(g_rescan_client_conn);
+        g_rescan_client_conn = NULL;
+    }
+
     LOG_DETAIL("Exiting perform_rescan");
 }
 
@@ -1646,15 +1719,16 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
     LOG_EVENT("Service main loop started");
 
     time_t last_flush_check = time(NULL);
-    const int FLUSH_INTERVAL_SEC = 15;
-    const int DEFERRED_FLUSH_SEC = 10;
+    const int FLUSH_INTERVAL_SEC = 120;     /* 2 minutes */
+    const int DEFERRED_FLUSH_SEC = 120;    /* 2 minutes */
     int client_connection_count = 0;
 
 #if NCD_PLATFORM_WINDOWS
-    /* Windows: keep existing single-connection blocking loop.
-     * Named pipes use OVERLAPPED I/O and handle concurrent connects
-     * through the pipe instance pool, so the 5-second dwell issue
-     * seen on POSIX doesn't apply. */
+    /* Windows: single-connection synchronous loop.
+     * Named pipes use PIPE_WAIT (blocking) mode with PeekNamedPipe
+     * timeout protection in ipc_server_receive().  Each client
+     * connection is handled sequentially; concurrent clients retry
+     * on the client side until the pipe is free. */
     while (ATOMIC_LOAD(g_running)) {
         NcdIpcConnection *conn = ipc_server_accept(server, 100);
 
@@ -2286,6 +2360,12 @@ static int run_service(void) {
     if (!snapshot_publisher_publish_meta(pub, state)) {
         fprintf(stderr, "NCD Service: Failed to publish metadata snapshot\n");
         LOG_DETAIL("ERROR - Failed to publish initial metadata snapshot");
+        if (ncd_is_system_mode()) {
+            fprintf(stderr, "  System mode requires Administrator privileges for Global\\ shared memory.\n");
+            fprintf(stderr, "  Workaround: ncdservice start -log2 --user-mode\n");
+            LOG_EVENT("ERROR - System mode requires Administrator privileges");
+            LOG_EVENT("  Workaround: use --user-mode");
+        }
         goto cleanup;
     }
     LOG_EVENT("Metadata snapshot published");
@@ -2531,6 +2611,18 @@ int main(int argc, char *argv[]) {
             }
 #if NCD_PLATFORM_WINDOWS
             int ret = spawn_daemon(g_exe_path, extra_args);
+            if (ret == 0) {
+                /* Wait briefly for daemon to initialize, then verify it stayed alive.
+                 * The daemon may exit immediately due to permission errors (e.g.
+                 * missing SeCreateGlobalPrivilege in system mode). */
+                Sleep(500);
+                if (!ipc_service_exists()) {
+                    fprintf(stderr, "NCD Service: Daemon exited immediately (check log).\n");
+                    fprintf(stderr, "  Try: ncdservice start -log2 --user-mode\n");
+                    log_close();
+                    return 1;
+                }
+            }
             log_close();
             return ret;
 #else
@@ -2544,30 +2636,42 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             if (pid > 0) {
-                /* Parent - wait a moment for child to start */
-                usleep(500000); /* 500ms */
-                if (ipc_service_exists()) {
-                    printf("NCD Service started\n");
+                /* Parent - poll for child to start with retries */
+                int retries = 30;  /* 30 * 200ms = 6 seconds total */
+                bool started = false;
+                while (retries-- > 0) {
+                    usleep(200000); /* 200ms */
+                    if (ipc_service_exists()) {
+                        started = true;
+                        break;
+                    }
+                }
+                if (started) {
+                    printf("NCD Service started (PID: %d)\n", pid);
                     LOG_DETAIL("Parent: Service started successfully");
+                    log_close();
+                    return 0;
                 } else {
                     fprintf(stderr, "NCD Service: Failed to start\n");
-                    LOG_DETAIL("Parent: Service failed to start");
+                    LOG_DETAIL("Parent: Service failed to start after %d retries", 30);
+                    log_close();
+                    return 1;
                 }
-                log_close();
-                return 0;
             }
             /* Child continues to run service below */
-            /* Close stdio to daemonize properly */
-            FILE *dev_null_r = freopen("/dev/null", "r", stdin);
-            FILE *dev_null_w1 = freopen("/dev/null", "w", stdout);
-            FILE *dev_null_w2 = freopen("/dev/null", "w", stderr);
-            (void)dev_null_r; (void)dev_null_w1; (void)dev_null_w2; /* Suppress unused warnings */
+            /* Close stdio to daemonize properly, but keep stderr for logging */
+            freopen("/dev/null", "r", stdin);
+            freopen("/dev/null", "w", stdout);
             /* Reopen log file in child to avoid sharing with parent */
             if (g_log_file) {
                 fclose(g_log_file);
                 g_log_file = NULL;
             }
             log_init();
+            /* Redirect stderr to log file so initialization errors are captured */
+            if (g_log_file) {
+                dup2(fileno(g_log_file), STDERR_FILENO);
+            }
             LOG_DETAIL("Child process continuing after daemonization...");
             /* Fall through to run_service below */
 #endif

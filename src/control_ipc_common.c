@@ -531,3 +531,100 @@ NcdIpcResult ipc_server_send_version_mismatch(NcdIpcConnection *conn,
 void ipc_free_message(void *payload) {
     free(payload);
 }
+
+/* --------------------------------------------------------- progress API        */
+
+/*
+ * ipc_server_send_progress  --  Send rescan progress update to client
+ *
+ * Async message (no sequence, no response expected).
+ */
+NcdIpcResult ipc_server_send_progress(NcdIpcConnection *conn,
+                                      const NcdRescanProgressPayload *progress) {
+    if (!conn || !progress) {
+        return NCD_IPC_ERROR_GENERIC;
+    }
+    
+    uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
+    NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
+    hdr->magic = NCD_IPC_MAGIC;
+    hdr->version = NCD_IPC_VERSION;
+    hdr->type = NCD_MSG_RESCAN_PROGRESS;
+    hdr->sequence = 0;  /* Async, no sequence */
+    hdr->payload_len = sizeof(NcdRescanProgressPayload);
+    
+    memcpy(msg_buf + sizeof(NcdIpcHeader), progress, sizeof(NcdRescanProgressPayload));
+    
+    return ipc_platform_conn_write(conn, msg_buf, sizeof(NcdIpcHeader) + sizeof(NcdRescanProgressPayload));
+}
+
+/*
+ * ipc_server_send_rescan_complete  --  Send rescan completion notification
+ *
+ * Async message (no sequence, no response expected).
+ */
+NcdIpcResult ipc_server_send_rescan_complete(NcdIpcConnection *conn) {
+    if (!conn) {
+        return NCD_IPC_ERROR_GENERIC;
+    }
+    
+    uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
+    NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
+    hdr->magic = NCD_IPC_MAGIC;
+    hdr->version = NCD_IPC_VERSION;
+    hdr->type = NCD_MSG_RESCAN_COMPLETE;
+    hdr->sequence = 0;  /* Async, no sequence */
+    hdr->payload_len = 0;
+    
+    return ipc_platform_conn_write(conn, msg_buf, sizeof(NcdIpcHeader));
+}
+
+/*
+ * ipc_client_receive_progress  --  Receive rescan progress update from service
+ *
+ * Non-blocking receive with timeout. Used by clients to poll for progress.
+ */
+NcdIpcResult ipc_client_receive_progress(NcdIpcClient *client,
+                                         int timeout_ms,
+                                         NcdRescanProgressPayload **out_progress) {
+    if (!client || !out_progress) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    *out_progress = NULL;
+    
+    NcdMessageType msg_type = 0;
+    void *payload = NULL;
+    size_t payload_len = 0;
+    
+    NcdIpcResult result = ipc_platform_recv_with_timeout(client, timeout_ms,
+                                                          &msg_type, &payload, &payload_len);
+    
+    if (result != NCD_IPC_OK) {
+        return result;
+    }
+    
+    /* Check message type */
+    if (msg_type == NCD_MSG_RESCAN_COMPLETE) {
+        /* Rescan complete notification - no payload */
+        if (payload) free(payload);
+        *out_progress = NULL;
+        return NCD_IPC_OK;
+    }
+    
+    if (msg_type != NCD_MSG_RESCAN_PROGRESS) {
+        /* Unexpected message type - free payload and return error */
+        if (payload) free(payload);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    /* Validate payload size */
+    if (payload_len < sizeof(NcdRescanProgressPayload)) {
+        if (payload) free(payload);
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    /* Return the progress payload */
+    *out_progress = (NcdRescanProgressPayload *)payload;
+    return NCD_IPC_OK;
+}

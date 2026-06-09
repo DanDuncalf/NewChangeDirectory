@@ -19,7 +19,7 @@
 
 /* Build version - must match NCD_APP_VERSION in control_ipc.h */
 #ifndef NCD_BUILD_VER
-#define NCD_BUILD_VER   "1.3"
+#define NCD_BUILD_VER   NCD_APP_VERSION
 #endif
 #ifndef NCD_BUILD_STAMP
 #define NCD_BUILD_STAMP __DATE__ " " __TIME__
@@ -920,6 +920,94 @@ void state_backend_get_source_info_service(const NcdStateView *view,
     } else {
         memset(info, 0, sizeof(*info));
     }
+}
+
+/* --------------------------------------------------------- rescan with progress */
+
+/*
+ * state_backend_request_rescan_with_progress_service  --  Request rescan and receive progress updates
+ *
+ * Sends a rescan request to the service and polls for progress updates,
+ * calling the progress callback for each update received.
+ *
+ * Returns:
+ *   0 on success (rescan completed)
+ *   -1 on error
+ */
+int state_backend_request_rescan_with_progress_service(NcdStateView *view,
+                                                const bool drive_mask[26],
+                                                bool scan_root_only,
+                                                void (*progress_fn)(char drive_letter,
+                                                                    const char *current_path,
+                                                                    void *user_data),
+                                                void *user_data) {
+    if (!view || !SERVICE(view).ipc_client) {
+        set_error("Not connected to service");
+        return -1;
+    }
+    
+    /* Check service state first - fail fast if loading/scanning */
+    NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);
+    if (ping_result == NCD_IPC_ERROR_BUSY_LOADING ||
+        ping_result == NCD_IPC_ERROR_BUSY_SCANNING ||
+        ping_result == NCD_IPC_ERROR_NOT_READY) {
+        set_error(ipc_error_string(ping_result));
+        return -1;
+    }
+    
+    /* Send rescan request */
+    NcdIpcResult result = ipc_client_request_rescan(SERVICE(view).ipc_client, drive_mask, scan_root_only);
+    
+    if (result == NCD_IPC_ERROR_BUSY_LOADING ||
+        result == NCD_IPC_ERROR_BUSY_SCANNING) {
+        set_error("Service is currently scanning - request cannot be processed");
+        return -1;
+    }
+    
+    if (result != NCD_IPC_OK) {
+        set_error(ipc_error_string(result));
+        return -1;
+    }
+    
+    /* Poll for progress updates */
+    const int poll_interval_ms = 100;
+    const int max_poll_time_ms = 300000;  /* 5 minute timeout */
+    int waited_ms = 0;
+    
+    while (waited_ms < max_poll_time_ms) {
+        NcdRescanProgressPayload *progress = NULL;
+        result = ipc_client_receive_progress(SERVICE(view).ipc_client, poll_interval_ms, &progress);
+        
+        waited_ms += poll_interval_ms;
+        
+        if (result == NCD_IPC_ERROR_NOT_FOUND) {
+            /* No message available yet, continue polling */
+            continue;
+        }
+        
+        if (result != NCD_IPC_OK) {
+            /* Error or disconnected */
+            set_error(ipc_error_string(result));
+            return -1;
+        }
+        
+        if (progress == NULL) {
+            /* RESCAN_COMPLETE received - rescan finished */
+            return 0;
+        }
+        
+        /* Call progress callback */
+        if (progress_fn) {
+            progress_fn(progress->drive_letter, progress->current_path, user_data);
+        }
+        
+        /* Free progress payload */
+        ipc_free_message(progress);
+    }
+    
+    /* Timeout - service took too long */
+    set_error("Rescan timed out");
+    return -1;
 }
 
 /* Service detection */

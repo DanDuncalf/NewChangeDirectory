@@ -576,3 +576,81 @@ bool ipc_service_exists(void) {
     
     return false;
 }
+
+/* ================================================================
+ * ipc_platform_recv_with_timeout  --  Receive message with timeout
+ *
+ * Platform-specific implementation for non-blocking receive with timeout.
+ * Used for polling progress updates from the service.
+ */
+
+NcdIpcResult ipc_platform_recv_with_timeout(NcdIpcClient *client,
+                                            int timeout_ms,
+                                            NcdMessageType *out_type,
+                                            void **out_payload,
+                                            size_t *out_len) {
+    if (!client || client->fd < 0 || !out_type || !out_payload || !out_len) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    *out_type = 0;
+    *out_payload = NULL;
+    *out_len = 0;
+    
+    /* Use poll() to check if data is available */
+    struct pollfd pfd;
+    pfd.fd = client->fd;
+    pfd.events = POLLIN;
+    
+    int poll_result = poll(&pfd, 1, timeout_ms);
+    if (poll_result <= 0) {
+        /* Timeout or error */
+        return NCD_IPC_ERROR_NOT_FOUND;
+    }
+    
+    if (!(pfd.revents & POLLIN)) {
+        return NCD_IPC_ERROR_NOT_FOUND;
+    }
+    
+    /* Read the message */
+    uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
+    ssize_t received = recv(client->fd, msg_buf, NCD_IPC_MAX_MSG_SIZE, 0);
+    
+    if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return NCD_IPC_ERROR_NOT_FOUND;
+        }
+        return errno_to_ipc(errno);
+    }
+    
+    if ((size_t)received < sizeof(NcdIpcHeader)) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
+    
+    /* Validate header */
+    if (hdr->magic != NCD_IPC_MAGIC || hdr->version != NCD_IPC_VERSION) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    
+    *out_type = (NcdMessageType)hdr->type;
+    
+    /* Copy payload if present */
+    if (hdr->payload_len > 0) {
+        if (sizeof(NcdIpcHeader) + hdr->payload_len > (size_t)received) {
+            return NCD_IPC_ERROR_INVALID;
+        }
+        
+        void *payload = malloc(hdr->payload_len);
+        if (!payload) {
+            return NCD_IPC_ERROR_GENERIC;
+        }
+        
+        memcpy(payload, msg_buf + sizeof(NcdIpcHeader), hdr->payload_len);
+        *out_payload = payload;
+        *out_len = hdr->payload_len;
+    }
+    
+    return NCD_IPC_OK;
+}

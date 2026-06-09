@@ -516,11 +516,26 @@ void heur_note_choice(const char *search_raw, const char *target_path)
     heur_sanitize(target_path, target, sizeof(target), false);
     if (key[0] == '\0' || target[0] == '\0') return;
 
-    NcdMetadata *meta = get_metadata();
-    if (!meta) return;
+    /* Use state backend if available (handles both standalone and service modes) */
+    if (g_state_view) {
+        state_backend_submit_heuristic_update(g_state_view, key, target);
+    } else {
+        /* Fallback to direct metadata update for standalone mode */
+        NcdMetadata *meta = get_metadata();
+        if (!meta) return;
+        db_heur_note_choice(meta, key, target);
+        save_metadata_if_dirty();
+    }
+}
 
-    db_heur_note_choice(meta, key, target);
-    save_metadata_if_dirty();
+uint32_t heur_get_frequency_by_target(const char *target)
+{
+    if (!target || !target[0]) return 0;
+    
+    NcdMetadata *meta = get_metadata();
+    if (!meta) return 0;
+    
+    return db_heur_get_frequency_by_target(meta, target);
 }
 
 /* heur_promote_match is now in result.c */
@@ -590,7 +605,7 @@ static void con_close(void)
  * IMPORTANT: This version MUST match NCD_APP_VERSION in control_ipc.h
  * and SERVICE_VERSION in service_main.c
  */
-#define NCD_BUILD_VER   "1.3"
+#define NCD_BUILD_VER   NCD_APP_VERSION
 #define NCD_BUILD_STAMP __DATE__ " " __TIME__
 
 static void print_version(void)
@@ -4615,6 +4630,19 @@ static int agent_mode_chmod(const NcdOptions *opts)
 #if NCD_PLATFORM_LINUX
 #endif
 
+/* Progress callback for subdirectory rescans (used when !opts.silent) */
+typedef struct {
+    char drive;
+} SubdirScanProgress;
+
+static void subdir_scan_progress_cb(char drive_letter, const char *current_path, void *user_data)
+{
+    (void)drive_letter;
+    SubdirScanProgress *p = (SubdirScanProgress *)user_data;
+    if (!p || !current_path) return;
+    ncd_printf("\r  scanning %s", current_path);
+}
+
 #if NCD_PLATFORM_WINDOWS
 typedef struct {
     char drive;
@@ -4629,6 +4657,14 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 }
 #endif
 
+/* Progress callback for service rescan (used when !opts.silent) */
+static void service_rescan_progress_cb(char drive_letter, const char *current_path, void *user_data)
+{
+    (void)user_data;
+    if (!current_path) return;
+    ncd_printf("\r  %s", current_path);
+}
+
 static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
                                 const NcdExclusionList *exclusions)
 {
@@ -4641,7 +4677,21 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
     /* Handle subdirectory rescan: /r. */
     if (opts->scan_subdirectory[0]) {
         char drive = platform_get_drive_letter(opts->scan_subdirectory);
-        int n = scan_subdirectory(db, drive, opts->scan_subdirectory, opts->show_hidden, opts->show_system, exclusions);
+        
+        /* Set up progress callback if not silent */
+        ScanProgressFn progress_fn = NULL;
+        void *progress_user_data = NULL;
+        static SubdirScanProgress subdir_progress;
+        
+        if (!opts->silent) {
+            subdir_progress.drive = drive;
+            progress_fn = subdir_scan_progress_cb;
+            progress_user_data = &subdir_progress;
+            ncd_printf("  Scanning: %s\r\n", opts->scan_subdirectory);
+        }
+        
+        int n = scan_subdirectory(db, drive, opts->scan_subdirectory, opts->show_hidden, opts->show_system,
+                                  progress_fn, progress_user_data, exclusions);
         ncd_printf("  Scanned %d directories.\r\n", n);
         return n;
     }
@@ -5672,13 +5722,29 @@ int main(int argc, char *argv[])
                     /* No specific drives requested -- rescan all */
                     for (int di = 0; di < 26; di++) drive_mask[di] = true;
                 }
+
+                /* Use progress-enabled rescan if not silent */
                 ncd_printf("NCD: Requesting service to rescan...\r\n");
-                int rc = state_backend_request_rescan(g_state_view, drive_mask, false);
-                if (rc == 0) {
-                    ncd_printf("  Rescan request sent to service.\r\n");
-                    ncd_printf("  The service will scan drives in the background.\r\n");
-                    ncd_printf("  Use 'ncdservice status' to monitor progress.\r\n");
-                    return 0;
+                int rc;
+                if (opts.silent) {
+                    /* Silent mode - no progress output */
+                    rc = state_backend_request_rescan(g_state_view, drive_mask, false);
+                    if (rc == 0) {
+                        ncd_printf("  Rescan request sent to service.\r\n");
+                        ncd_printf("  The service will scan drives in the background.\r\n");
+                        ncd_printf("  Use 'ncdservice status' to monitor progress.\r\n");
+                        return 0;
+                    }
+                } else {
+                    /* Show progress - use streaming rescan */
+                    ncd_printf("  Service is scanning...\r\n");
+                    ncd_printf("  (Use 'ncd_service stop' to cancel)\r\n");
+                    rc = state_backend_request_rescan_with_progress(
+                        g_state_view, drive_mask, false, service_rescan_progress_cb, NULL);
+                    if (rc == 0) {
+                        ncd_printf("  Rescan completed.\r\n");
+                        return 0;
+                    }
                 }
                 /* Service request failed -- fall through to local scan */
                 ncd_printf("NCD: Service rescan unavailable (%s), falling back to local scan.\r\n",
@@ -6344,6 +6410,14 @@ int main(int argc, char *argv[])
         }
     }
     
+    /* Populate frequency field for each match from heuristics */
+    for (int i = 0; i < match_count; i++) {
+        matches[i].frequency = heur_get_frequency_by_target(matches[i].full_path);
+    }
+    
+    /* Sort matches by frequency (descending) - most selected directories first */
+    heur_sort_by_frequency(matches, match_count);
+    
     /* Free locally loaded metadata (not needed anymore) */
     if (search_meta && !is_service_backend()) {
         db_metadata_free(search_meta);
@@ -6358,8 +6432,9 @@ int main(int argc, char *argv[])
         con_close();
         return 1;
     }
-
-    /* Heuristics: if this search term has a prior chosen target, list it first. */
+    
+    /* Heuristics: if this search term has a prior chosen target, list it first.
+     * This promotes the exact search->target match to the top, overriding frequency sort. */
     char preferred_path[NCD_MAX_PATH] = {0};
     if (heur_get_preferred(opts.search, preferred_path, sizeof(preferred_path)))
         heur_promote_match(matches, match_count, preferred_path);
