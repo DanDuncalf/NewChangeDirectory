@@ -595,18 +595,13 @@ static void con_close(void)
 
 /* ============================================================== version   */
 /*
- * Bump NCD_BUILD_VER with every change so it is always possible to tell
- * exactly which binary is installed.  __DATE__ / __TIME__ are injected by
- * the compiler, giving a precise build timestamp at zero maintenance cost.
+ * NCD_APP_VERSION and NCD_BUILD_STAMP are defined in control_ipc.h.
+ * NCD_BUILD_VER is an alias kept for local readability.
  *
  * The banner is printed ONLY when the user explicitly passes /v on the
  * command line.  It is silent in all other paths.
- * 
- * IMPORTANT: This version MUST match NCD_APP_VERSION in control_ipc.h
- * and SERVICE_VERSION in service_main.c
  */
 #define NCD_BUILD_VER   NCD_APP_VERSION
-#define NCD_BUILD_STAMP __DATE__ " " __TIME__
 
 static void print_version(void)
 {

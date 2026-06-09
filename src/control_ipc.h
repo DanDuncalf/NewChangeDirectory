@@ -32,6 +32,9 @@ extern "C" {
 /* Application version - must match between client and service */
 #define NCD_APP_VERSION     "1.4"
 
+/* Build stamp — single source for all modules */
+#define NCD_BUILD_STAMP     __DATE__ " " __TIME__
+
 /* Maximum message size */
 #define NCD_IPC_MAX_MSG_SIZE 4096
 

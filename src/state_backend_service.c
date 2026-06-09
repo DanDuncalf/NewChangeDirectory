@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Build version - must match NCD_APP_VERSION in control_ipc.h */
+/* Build version — aliases for shared defines in control_ipc.h */
 #ifndef NCD_BUILD_VER
 #define NCD_BUILD_VER   NCD_APP_VERSION
 #endif
@@ -745,7 +745,7 @@ const NcdDatabase *state_view_database_service(const NcdStateView *view) {
 /* --------------------------------------------------------- mutations          */
 
 /* Default retries for busy states */
-#define DEFAULT_BUSY_RETRIES 10  /* 10 * 100ms = 1 second max wait */
+#define DEFAULT_BUSY_RETRIES  NCD_DEFAULT_SERVICE_RETRY_COUNT  /* from ncd.h */
 #define BUSY_RETRY_DELAY_MS 100
 
 /*
@@ -971,7 +971,7 @@ int state_backend_request_rescan_with_progress_service(NcdStateView *view,
     
     /* Poll for progress updates */
     const int poll_interval_ms = 100;
-    const int max_poll_time_ms = 300000;  /* 5 minute timeout */
+    const int max_poll_time_ms = NCD_SCAN_TIMEOUT_MS;  /* 5 minute timeout, from ncd.h */
     int waited_ms = 0;
     
     while (waited_ms < max_poll_time_ms) {

@@ -253,7 +253,7 @@ static bool name_matches_pattern(const char *name, const char *pattern)
 
 /* ============================================= parse search into parts    */
 
-#define MAX_PARTS 32
+#define MAX_PARTS  NCD_MATCHER_MAX_PARTS  /* from ncd.h */
 
 typedef struct {
     char   parts[MAX_PARTS][NCD_MAX_NAME];

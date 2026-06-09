@@ -88,9 +88,12 @@ static char g_exe_path[MAX_PATH] = {0};
 #define CLOSE_SERVICE_MUTEX() ((void)0)
 #endif
 
-/* Version info - must match NCD_APP_VERSION in control_ipc.h */
-#define SERVICE_VERSION     NCD_APP_VERSION
-#define SERVICE_BUILD_STAMP __DATE__ " " __TIME__
+/* Version info — aliases for shared defines in control_ipc.h */
+#define SERVICE_VERSION       NCD_APP_VERSION
+#define SERVICE_BUILD_STAMP   NCD_BUILD_STAMP
+
+/* Log file name */
+#define NCD_SERVICE_LOG_NAME  "ncd_service.log"
 
 /* Debug logging macro */
 #define DBG_LOG(...) do { if (g_debug_mode) printf(__VA_ARGS__); } while(0)
@@ -265,7 +268,7 @@ static void log_init(void) {
         }
     }
 
-    snprintf(log_path, sizeof(log_path), "%s%sncd_service.log", logs_dir, NCD_PATH_SEP);
+    snprintf(log_path, sizeof(log_path), "%s%s" NCD_SERVICE_LOG_NAME, logs_dir, NCD_PATH_SEP);
 
     /* Detect and rotate corrupted log files (e.g. UTF-16 injection from external tools).
      * Null bytes in a text log file indicate corruption that breaks most readers.
@@ -293,7 +296,7 @@ static void log_init(void) {
             int w = snprintf(log_path, sizeof(log_path), "%s\\NCD", local);
             if (w > 0 && (size_t)w < sizeof(log_path)) {
                 platform_create_dir(log_path);
-                w = snprintf(log_path, sizeof(log_path), "%s\\NCD\\ncd_service.log", local);
+                w = snprintf(log_path, sizeof(log_path), "%s\\NCD\\" NCD_SERVICE_LOG_NAME, local);
                 if (w > 0 && (size_t)w < sizeof(log_path)) {
                     log_lock_acquire();
                     g_log_file = fopen(log_path, NCD_FILE_APPEND_BINARY);
@@ -716,11 +719,11 @@ static void handle_get_detailed_status(NcdIpcConnection *conn,
     db_logs_path(log_dir, sizeof(log_dir));
     char log_path[MAX_PATH] = {0};
     if (log_dir[0] != '\0') {
-        snprintf(log_path, sizeof(log_path), "%s%sncd_service.log", log_dir, NCD_PATH_SEP);
+        snprintf(log_path, sizeof(log_path), "%s%s" NCD_SERVICE_LOG_NAME, log_dir, NCD_PATH_SEP);
     } else {
         char temp[MAX_PATH];
         if (platform_get_temp_path(temp, sizeof(temp))) {
-            snprintf(log_path, sizeof(log_path), "%s%sncd_service.log", temp, NCD_PATH_SEP);
+            snprintf(log_path, sizeof(log_path), "%s%s" NCD_SERVICE_LOG_NAME, temp, NCD_PATH_SEP);
         }
     }
 

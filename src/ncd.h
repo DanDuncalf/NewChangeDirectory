@@ -132,12 +132,15 @@ typedef struct {
     uint64_t checksum;         /* CRC64 of all data after this header         */
 } MetaFileHdr;                 /* 24 bytes */
 
-/* Section IDs in metadata file */
+/* Section IDs in metadata file — aliases for NCD_SHM_SECTION_* */
 #define NCD_META_SECTION_CONFIG      0x01
 #define NCD_META_SECTION_GROUPS      0x02
 #define NCD_META_SECTION_HEURISTICS  0x03
 #define NCD_META_SECTION_EXCLUSIONS  0x04
-#define NCD_META_SECTION_DIR_HISTORY 0x05  /* Circular list of last 9 directories */
+#define NCD_META_SECTION_DIR_HISTORY 0x05
+
+/* Number of metadata sections (config, groups, heuristics, exclusions, dir_history) */
+#define NCD_META_SECTION_COUNT  5
 
 /* Enhanced heuristics constants */
 #define NCD_HEUR_MAX_ENTRIES    100     /* Max history entries (was 20) */

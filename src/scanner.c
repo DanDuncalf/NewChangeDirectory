@@ -155,7 +155,7 @@ bool find_is_reparse(const PlatformFindData *fd)
 /* ================================================================ tuning  */
 
 /* Fire the progress callback after every Nth directory found per mount. */
-#define PROGRESS_INTERVAL  100
+#define PROGRESS_INTERVAL  NCD_SCAN_PROGRESS_INTERVAL  /* from ncd.h */
 
 /*
  * Activity-based timeout: milliseconds of inactivity before considering
@@ -163,7 +163,7 @@ bool find_is_reparse(const PlatformFindData *fd)
  * been found for this duration. This allows large/slow drives to complete
  * without being cut off prematurely.
  */
-#define SCAN_INACTIVITY_TIMEOUT_MS  60000  /* 60 seconds */
+#define SCAN_INACTIVITY_TIMEOUT_MS  NCD_SCAN_INACTIVITY_MS  /* from ncd.h */
 
 /* ================================================================ context */
 

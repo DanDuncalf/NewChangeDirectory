@@ -70,7 +70,7 @@ static size_t compute_metadata_snapshot_size(const NcdMetadata *meta) {
     size_t size = sizeof(ShmSnapshotHdr);
     
     /* Section descriptors */
-    size += 5 * sizeof(ShmSectionDesc);  /* config, groups, heuristics, exclusions, dir_history */
+    size += NCD_META_SECTION_COUNT * sizeof(ShmSectionDesc);
     
     /* Align to 8 bytes */
     size = (size + 7) & ~7;
@@ -215,14 +215,14 @@ static bool build_metadata_snapshot(uint8_t *buf, size_t buf_size,
     hdr->version = NCD_SHM_VERSION;
     hdr->flags = NCD_SHM_FLAG_COMPLETE | NCD_SHM_FLAG_READONLY;
     hdr->total_size = (uint32_t)buf_size;
-    hdr->section_count = 5;  /* config, groups, heuristics, exclusions, dir_history */
+    hdr->section_count = NCD_META_SECTION_COUNT;
     hdr->generation = generation;
     
     size_t offset = sizeof(ShmSnapshotHdr);
     
     /* Section descriptors */
     ShmSectionDesc *sections = (ShmSectionDesc *)(buf + offset);
-    offset += 5 * sizeof(ShmSectionDesc);
+    offset += NCD_META_SECTION_COUNT * sizeof(ShmSectionDesc);
     
     /* Align to 8 bytes */
     offset = (offset + 7) & ~7;

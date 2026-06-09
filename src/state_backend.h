@@ -17,6 +17,7 @@ extern "C" {
 #endif
 
 #include "ncd.h"
+#include "control_ipc.h"
 
 /* --------------------------------------------------------- types            */
 
@@ -190,16 +191,7 @@ int state_backend_submit_metadata_update(NcdStateView *view,
                                          const void *data,
                                          size_t data_size);
 
-/* Metadata update types */
-#define NCD_META_UPDATE_GROUP_ADD       1
-#define NCD_META_UPDATE_GROUP_REMOVE    2
-#define NCD_META_UPDATE_EXCLUSION_ADD   3
-#define NCD_META_UPDATE_EXCLUSION_REMOVE 4
-#define NCD_META_UPDATE_CONFIG          5
-#define NCD_META_UPDATE_CLEAR_HISTORY   6
-#define NCD_META_UPDATE_DIR_HISTORY_ADD 7
-#define NCD_META_UPDATE_DIR_HISTORY_REMOVE 8
-#define NCD_META_UPDATE_DIR_HISTORY_SWAP   9
+/* Metadata update types — defined in control_ipc.h (single source) */
 
 /*
  * state_backend_request_rescan  --  Request a database rescan

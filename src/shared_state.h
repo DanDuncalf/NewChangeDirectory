@@ -47,7 +47,7 @@ typedef ShmMetadataHeader ShmSnapshotHdr;
 /* Legacy limits */
 #ifndef NCD_SHM_MAX_SECTIONS
 #define NCD_SHM_MAX_SECTIONS    8
-#define NCD_SHM_MAX_DRIVES      64
+#define NCD_SHM_MAX_DRIVES      NCD_MAX_DRIVES
 #define NCD_SHM_MAX_POOL_SIZE   (256ULL * 1024 * 1024)
 #define NCD_SHM_MAX_SNAPSHOT_SIZE (1ULL * 1024 * 1024 * 1024)
 #endif

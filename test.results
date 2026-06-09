@@ -1,7 +1,7 @@
 ================================================================================
 NCD Test Results Report
 ================================================================================
-Generated: 2026-06-09T15:20:52Z
+Generated: 2026-06-09T16:07:32Z
 Generator: runner.py
 Platform: Windows
 WSL Available: True
@@ -17,8 +17,8 @@ BUILD INFORMATION
 ================================================================================
 
 [Windows Main Binaries]
-  NCDService.exe                           : 2026-06-09T15:11:41Z
-  NewChangeDirectory.exe                   : 2026-06-09T15:11:40Z
+  NCDService.exe                           : 2026-06-09T15:56:30Z
+  NewChangeDirectory.exe                   : 2026-06-09T15:56:29Z
 
 [Linux Main Binaries]
   NCDService                               : 2026-06-09T15:12:10Z
@@ -30,71 +30,71 @@ UNIT TEST RESULTS - WINDOWS
 
   Pass    Fail    Skip  Name                                 Arch     Mode             Date        Time
 ------  ------  ------  ------------------------------------ -------- -------- ------------  ----------
-    10       0       0  fuzz_database_load.exe               x64      native     2026-06-09    15:12:31
-    10       0       0  fuzz_ipc.exe                         x64      native     2026-06-09    15:12:36
-    58       0       0  test_agent_cli_extended.exe          x64      native     2026-06-09    15:12:46
-    12       0       0  test_agent_complete_mkdir_quit.exe   x64      native     2026-06-09    15:12:49
-    26       0       0  test_agent_integration.exe           x64      native     2026-06-09    15:12:47
-    15       0       0  test_agent_ls_check.exe              x64      native     2026-06-09    15:12:48
-    16       0       0  test_agent_mkdir_extended.exe        x64      native     2026-06-09    15:13:03
-    16       0       0  test_agent_mode.exe                  x64      native     2026-06-09    15:12:58
-     4       0       0  test_agent_mv.exe                    x64      native     2026-06-09    15:13:06
-    14       0       0  test_agent_query_tree.exe            x64      native     2026-06-09    15:12:48
-     7       0       0  test_agent_rmdir.exe                 x64      native     2026-06-09    15:13:03
-     5       0       0  test_agent_verify.exe                x64      native     2026-06-09    15:13:07
-    15       0       0  test_bugs.exe                        x64      native     2026-06-09    15:12:17
-    30       0       0  test_cli_edge_cases.exe              x64      native     2026-06-09    15:12:38
-    40       0       0  test_cli_parse.exe                   x64      native     2026-06-09    15:12:44
-    47       0       0  test_cli_parse_extended.exe          x64      native     2026-06-09    15:12:44
-     7       0       0  test_common.exe                      x64      native     2026-06-09    15:12:18
-    33       0       0  test_common_extended.exe             x64      native     2026-06-09    15:12:45
-    22       0       0  test_config.exe                      x64      native     2026-06-09    15:12:41
-    50       0       0  test_database.exe                    x64      native     2026-06-09    15:12:15
-    50       0       0  test_database_extended.exe           x64      native     2026-06-09    15:12:30
-    13       0       0  test_db_corruption.exe               x64      native     2026-06-09    15:12:17
-    10       0       0  test_framework_contract.exe          x64      native     2026-06-09    15:12:58
-    17       0       0  test_history.exe                     x64      native     2026-06-09    15:12:42
-    13       0       0  test_integration_extended.exe        x64      native     2026-06-09    15:12:46
-    11       0       0  test_ipc.exe                         x64      native     2026-06-09    15:12:42
-    19       0       0  test_ipc_extended.exe                x64      native     2026-06-09    15:12:35
-    11       0       0  test_key_injection.exe               x64      native     2026-06-09    15:12:55
-     6       0       0  test_legacy_service_shutdown.exe     x64      native     2026-06-09    15:12:23
-    40       0       0  test_main.exe                        x64      native     2026-06-09    15:12:38
-    23       0       0  test_matcher.exe                     x64      native     2026-06-09    15:12:16
-    30       0       0  test_matcher_extended.exe            x64      native     2026-06-09    15:12:40
-    10       0       0  test_metadata.exe                    x64      native     2026-06-09    15:12:19
-    30       0       0  test_odd_cases.exe                   x64      native     2026-06-09    15:12:31
-    11       0       0  test_p0_regression.exe               x64      native     2026-06-09    15:12:59
-    12       0       0  test_platform.exe                    x64      native     2026-06-09    15:12:19
-    20       0       0  test_result_edge_cases.exe           x64      native     2026-06-09    15:12:40
-    13       0       0  test_result_output.exe               x64      native     2026-06-09    15:12:43
-    11       0       0  test_scanner.exe                     x64      native     2026-06-09    15:12:20
-    35       0       0  test_scanner_extended.exe            x64      native     2026-06-09    15:12:39
-    10       0       0  test_service_database.exe            x64      native     2026-06-09    15:12:52
-     4       0       0  test_service_empty_db.exe            x64      native     2026-06-09    15:12:52
-     4       0       0  test_service_init_db.exe             x64      native     2026-06-09    15:12:34
-    11       0       0  test_service_integration.exe         x64      native     2026-06-09    15:12:22
-    13       0       0  test_service_ipc.exe                 x64      native     2026-06-09    15:12:53
-    22       0       0  test_service_lazy_load.exe           x64      native     2026-06-09    15:12:21
-    13       0       0  test_service_lifecycle.exe           x64      native     2026-06-09    15:12:21
-     7       0       0  test_service_logging.exe             x64      native     2026-06-09    15:12:53
-     9       0       0  test_service_parity.exe              x64      native     2026-06-09    15:12:54
-     6       0       0  test_service_race_conditions.exe     x64      native     2026-06-09    15:12:33
-    20       0       0  test_service_rescan.exe              x64      native     2026-06-09    15:12:33
-    25       0       0  test_service_stress.exe              x64      native     2026-06-09    15:12:32
-     6       0       0  test_service_version_compat.exe      x64      native     2026-06-09    15:12:23
-    10       0       0  test_shared_state_extended.exe       x64      native     2026-06-09    15:12:54
-    11       0       0  test_shm_platform.exe                x64      native     2026-06-09    15:12:55
-    20       0       0  test_shm_stress.exe                  x64      native     2026-06-09    15:12:35
-    15       0       0  test_strbuilder.exe                  x64      native     2026-06-09    15:12:18
-    41       0       0  test_strbuilder_extended.exe         x64      native     2026-06-09    15:12:45
-    25       0       0  test_stress.exe                      x64      native     2026-06-09    15:12:41
-     8       0       0  test_ui_config.exe                   x64      native     2026-06-09    15:12:50
-    15       0       0  test_ui_exclusions.exe               x64      native     2026-06-09    15:12:37
-    45       0       0  test_ui_extended.exe                 x64      native     2026-06-09    15:12:36
-     9       0       0  test_ui_history.exe                  x64      native     2026-06-09    15:12:50
-     9       0       0  test_ui_navigator.exe                x64      native     2026-06-09    15:12:51
-    10       0       0  test_ui_selector.exe                 x64      native     2026-06-09    15:12:49
+    10       0       0  fuzz_database_load.exe               x64      native     2026-06-09    15:57:39
+    10       0       0  fuzz_ipc.exe                         x64      native     2026-06-09    15:57:45
+    58       0       0  test_agent_cli_extended.exe          x64      native     2026-06-09    15:58:00
+    12       0       0  test_agent_complete_mkdir_quit.exe   x64      native     2026-06-09    15:58:03
+    26       0       0  test_agent_integration.exe           x64      native     2026-06-09    15:58:01
+    15       0       0  test_agent_ls_check.exe              x64      native     2026-06-09    15:58:02
+    16       0       0  test_agent_mkdir_extended.exe        x64      native     2026-06-09    15:58:23
+    16       0       0  test_agent_mode.exe                  x64      native     2026-06-09    15:58:15
+     4       0       0  test_agent_mv.exe                    x64      native     2026-06-09    15:58:27
+    14       0       0  test_agent_query_tree.exe            x64      native     2026-06-09    15:58:01
+     7       0       0  test_agent_rmdir.exe                 x64      native     2026-06-09    15:58:23
+     5       0       0  test_agent_verify.exe                x64      native     2026-06-09    15:58:27
+    15       0       0  test_bugs.exe                        x64      native     2026-06-09    15:57:19
+    30       0       0  test_cli_edge_cases.exe              x64      native     2026-06-09    15:57:48
+    40       0       0  test_cli_parse.exe                   x64      native     2026-06-09    15:57:56
+    47       0       0  test_cli_parse_extended.exe          x64      native     2026-06-09    15:57:57
+     7       0       0  test_common.exe                      x64      native     2026-06-09    15:57:20
+    33       0       0  test_common_extended.exe             x64      native     2026-06-09    15:57:58
+    22       0       0  test_config.exe                      x64      native     2026-06-09    15:57:53
+    50       0       0  test_database.exe                    x64      native     2026-06-09    15:57:17
+    50       0       0  test_database_extended.exe           x64      native     2026-06-09    15:57:37
+    13       0       0  test_db_corruption.exe               x64      native     2026-06-09    15:57:18
+    10       0       0  test_framework_contract.exe          x64      native     2026-06-09    15:58:16
+    17       0       0  test_history.exe                     x64      native     2026-06-09    15:57:54
+    13       0       0  test_integration_extended.exe        x64      native     2026-06-09    15:57:59
+    11       0       0  test_ipc.exe                         x64      native     2026-06-09    15:57:54
+    19       0       0  test_ipc_extended.exe                x64      native     2026-06-09    15:57:43
+    11       0       0  test_key_injection.exe               x64      native     2026-06-09    15:58:12
+     6       0       0  test_legacy_service_shutdown.exe     x64      native     2026-06-09    15:57:27
+    40       0       0  test_main.exe                        x64      native     2026-06-09    15:57:47
+    23       0       0  test_matcher.exe                     x64      native     2026-06-09    15:57:18
+    30       0       0  test_matcher_extended.exe            x64      native     2026-06-09    15:57:50
+    10       0       0  test_metadata.exe                    x64      native     2026-06-09    15:57:22
+    30       0       0  test_odd_cases.exe                   x64      native     2026-06-09    15:57:38
+    11       0       0  test_p0_regression.exe               x64      native     2026-06-09    15:58:17
+    12       0       0  test_platform.exe                    x64      native     2026-06-09    15:57:21
+    20       0       0  test_result_edge_cases.exe           x64      native     2026-06-09    15:57:51
+    13       0       0  test_result_output.exe               x64      native     2026-06-09    15:57:55
+    11       0       0  test_scanner.exe                     x64      native     2026-06-09    15:57:22
+    35       0       0  test_scanner_extended.exe            x64      native     2026-06-09    15:57:49
+    10       0       0  test_service_database.exe            x64      native     2026-06-09    15:58:06
+     4       0       0  test_service_empty_db.exe            x64      native     2026-06-09    15:58:07
+     4       0       0  test_service_init_db.exe             x64      native     2026-06-09    15:57:42
+    11       0       0  test_service_integration.exe         x64      native     2026-06-09    15:57:26
+    13       0       0  test_service_ipc.exe                 x64      native     2026-06-09    15:58:08
+    22       0       0  test_service_lazy_load.exe           x64      native     2026-06-09    15:57:24
+    13       0       0  test_service_lifecycle.exe           x64      native     2026-06-09    15:57:25
+     7       0       0  test_service_logging.exe             x64      native     2026-06-09    15:58:09
+     9       0       0  test_service_parity.exe              x64      native     2026-06-09    15:58:10
+     6       0       0  test_service_race_conditions.exe     x64      native     2026-06-09    15:57:41
+    20       0       0  test_service_rescan.exe              x64      native     2026-06-09    15:57:41
+    25       0       0  test_service_stress.exe              x64      native     2026-06-09    15:57:40
+     6       0       0  test_service_version_compat.exe      x64      native     2026-06-09    15:57:26
+    10       0       0  test_shared_state_extended.exe       x64      native     2026-06-09    15:58:10
+    11       0       0  test_shm_platform.exe                x64      native     2026-06-09    15:58:11
+    20       0       0  test_shm_stress.exe                  x64      native     2026-06-09    15:57:44
+    15       0       0  test_strbuilder.exe                  x64      native     2026-06-09    15:57:20
+    41       0       0  test_strbuilder_extended.exe         x64      native     2026-06-09    15:57:58
+    25       0       0  test_stress.exe                      x64      native     2026-06-09    15:57:52
+     8       0       0  test_ui_config.exe                   x64      native     2026-06-09    15:58:05
+    15       0       0  test_ui_exclusions.exe               x64      native     2026-06-09    15:57:46
+    45       0       0  test_ui_extended.exe                 x64      native     2026-06-09    15:57:46
+     9       0       0  test_ui_history.exe                  x64      native     2026-06-09    15:58:04
+     9       0       0  test_ui_navigator.exe                x64      native     2026-06-09    15:58:05
+    10       0       0  test_ui_selector.exe                 x64      native     2026-06-09    15:58:03
 
 ================================================================================
 UNIT TEST RESULTS - LINUX
