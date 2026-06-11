@@ -389,11 +389,29 @@ NCD can run with an optional resident service (`NCDService.exe` on Windows, `ncd
 ### Starting the Service
 
 ```bash
-# Windows
+# Windows - daemon mode (background process, starts at logon if in Startup)
 ncd_service.bat start
+
+# Windows - install as proper Windows service (auto-start on boot, requires Admin)
+ncd_service.bat install
+
+# Windows - uninstall Windows service
+ncd_service.bat uninstall
 
 # Linux
 ncd_service start
+```
+
+**On Windows**, there are two ways to run the service:
+
+1. **Daemon mode** (`start`) — Runs as a background process. Use `install.bat` to add it to your Startup folder so it starts when you log in. No Administrator required.
+2. **Windows Service mode** (`install`) — Registers with the Service Control Manager (SCM) as `SERVICE_AUTO_START`. Starts automatically at **system boot**, even before any user logs in. Requires Administrator privileges.
+
+**On Linux**, use the provided systemd service unit (`packaging/linux/ncd.service`) via:
+```bash
+sudo cp packaging/linux/ncd.service /etc/systemd/system/
+sudo systemctl enable ncd
+sudo systemctl start ncd
 ```
 
 When the service is running, NCD automatically connects to it. If the service is not available, NCD falls back to standalone mode (loading from disk).

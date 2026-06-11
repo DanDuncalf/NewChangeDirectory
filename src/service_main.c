@@ -51,6 +51,13 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <winsvc.h>  /* Service Control Manager API */
+
+/* SCM service status globals */
+static SERVICE_STATUS g_scm_status;
+static SERVICE_STATUS_HANDLE g_scm_status_handle = NULL;
+static bool g_is_scm_service = false;  /* true when launched by SCM */
+
 static LONG g_running = 1;
 static LONG g_flush_requested = 0;
 static LONG g_rescan_requested = 0;
@@ -2138,19 +2145,23 @@ static void print_usage(void) {
     printf("NCD Service - Resident state service for NewChangeDirectory\n");
     printf("\n");
     printf("Usage:\n");
-    printf("  ncd_service start              Start the service (daemon mode)\n");
-    printf("  ncd_service stop               Stop the running service (waits up to 5s)\n");
-    printf("  ncd_service stop block <N>     Stop and wait N seconds for shutdown\n");
+    printf("  ncdservice start               Start the service (daemon mode)\n");
+    printf("  ncdservice install             Register as Windows service (auto-start on boot)\n");
+    printf("  ncdservice uninstall           Unregister Windows service\n");
+    printf("  ncdservice stop                Stop the running service (waits up to 5s)\n");
+    printf("  ncdservice stop block <N>      Stop and wait N seconds for shutdown\n");
     printf("                                 Returns -1 if service didn't stop in time\n");
-    printf("  ncd_service status             Show service status (running/stopped)\n");
-    printf("  ncd_service /agdb              Run service in foreground with debug output\n");
-    printf("  ncd_service -conf <path>       Use custom config file\n");
-    printf("  ncd_service --daemon           Run service in foreground (internal use)\n");
-    printf("  ncd_service -log<n>            Enable logging (n=0-5, see below)\n");
-    printf("  ncd_service -init [drives]     Initialize database on startup\n");
+    printf("  ncdservice status              Show service status (running/stopped)\n");
+    printf("  ncdservice /agdb               Run service in foreground with debug output\n");
+    printf("  ncdservice -conf <path>        Use custom config file\n");
+    printf("  ncdservice --daemon            Run service in foreground (internal use)\n");
+    printf("  ncdservice -log<n>             Enable logging (n=0-5, see below)\n");
+    printf("  ncdservice -init [drives]      Initialize database on startup\n");
     printf("                                 Scans specified drives (e.g. C,D,E)\n");
     printf("                                 or all drives if none specified.\n");
     printf("                                 Blocks until scan is complete.\n");
+    printf("  ncdservice start --user-mode    Start in per-user mode (current user only)\n");
+    printf("                                 Default is system-wide (all users)\n");
     printf("\n");
     printf("Logging levels (-log<n>):\n");
     printf("  -log0  Log service start, rescan requests, and client requests\n");
@@ -2275,6 +2286,202 @@ static int parse_log_option(const char *arg) {
     }
     return -1;  /* Not a valid -log option */
 }
+
+/* --------------------------------------------------------- SCM (Service Control Manager) */
+
+#if NCD_PLATFORM_WINDOWS
+
+/* Forward declaration of run_service (defined later) */
+static int run_service(void);
+
+/* SCM control handler -- called by the SCM to stop the service */
+static void WINAPI scm_ctrl_handler(DWORD ctrl) {
+    switch (ctrl) {
+        case SERVICE_CONTROL_STOP:
+        case SERVICE_CONTROL_SHUTDOWN:
+            LOG_EVENT("SCM control: STOP/SHUTDOWN received");
+            ATOMIC_STORE(g_running, 0);
+            ATOMIC_STORE(g_shutdown_requested, 1);
+            g_scm_status.dwCurrentState = SERVICE_STOP_PENDING;
+            g_scm_status.dwWin32ExitCode = NO_ERROR;
+            g_scm_status.dwWaitHint = 30000;
+            SetServiceStatus(g_scm_status_handle, &g_scm_status);
+            break;
+        case SERVICE_CONTROL_INTERROGATE:
+            SetServiceStatus(g_scm_status_handle, &g_scm_status);
+            break;
+        default:
+            break;
+    }
+}
+
+/* SCM service entry point -- called by StartServiceCtrlDispatcher */
+static void WINAPI scm_service_main(DWORD argc, LPSTR *argv) {
+    (void)argc;
+    (void)argv;
+
+    LOG_EVENT("SCM ServiceMain entered");
+
+    g_scm_status_handle = RegisterServiceCtrlHandlerA("NCDService", scm_ctrl_handler);
+    if (!g_scm_status_handle) {
+        LOG_EVENT("ERROR - RegisterServiceCtrlHandler failed (GLE=%lu)", GetLastError());
+        return;
+    }
+
+    g_scm_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    g_scm_status.dwCurrentState = SERVICE_RUNNING;
+    g_scm_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+    g_scm_status.dwWin32ExitCode = NO_ERROR;
+    g_scm_status.dwServiceSpecificExitCode = 0;
+    g_scm_status.dwCheckPoint = 0;
+    g_scm_status.dwWaitHint = 0;
+    SetServiceStatus(g_scm_status_handle, &g_scm_status);
+
+    LOG_EVENT("SCM service running, delegating to run_service()");
+
+    int ret = run_service();
+
+    g_scm_status.dwCurrentState = SERVICE_STOPPED;
+    g_scm_status.dwControlsAccepted = 0;
+    if (ret != 0) {
+        g_scm_status.dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR;
+        g_scm_status.dwServiceSpecificExitCode = (DWORD)ret;
+    }
+    SetServiceStatus(g_scm_status_handle, &g_scm_status);
+
+    LOG_EVENT("SCM ServiceMain exiting with code %d", ret);
+}
+
+/* Install the service with the SCM (auto-start on boot) */
+static int cmd_scm_install(const char *exe_path) {
+    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
+    if (!scm) {
+        fprintf(stderr, "NCD Service: Failed to open SCM (GLE=%lu).\n", GetLastError());
+        fprintf(stderr, "  Run as Administrator to install the service.\n");
+        return 1;
+    }
+
+    char bin_path[MAX_PATH * 2];
+    snprintf(bin_path, sizeof(bin_path), "\"%s\" --service", exe_path);
+
+    SC_HANDLE svc = CreateServiceA(
+        scm,
+        "NCDService",
+        "NCD State Service",
+        SERVICE_ALL_ACCESS,
+        SERVICE_WIN32_OWN_PROCESS,
+        SERVICE_AUTO_START,
+        SERVICE_ERROR_NORMAL,
+        bin_path,
+        NULL, NULL, NULL, NULL, NULL
+    );
+
+    if (!svc) {
+        DWORD gle = GetLastError();
+        if (gle == ERROR_SERVICE_EXISTS) {
+            printf("NCD Service: Already registered with SCM.\n");
+            printf("  Use 'ncdservice uninstall' first to reinstall.\n");
+        } else {
+            fprintf(stderr, "NCD Service: Failed to create service (GLE=%lu).\n", gle);
+            fprintf(stderr, "  Run as Administrator to install the service.\n");
+        }
+        CloseServiceHandle(scm);
+        return 1;
+    }
+
+    printf("NCD Service: Registered as Windows service.\n");
+    printf("  Binary path: %s\n", bin_path);
+    printf("  Startup type: Automatic (starts on boot)\n");
+
+    SERVICE_DESCRIPTIONA desc;
+    desc.lpDescription = "Keeps NCD directory databases hot in memory for fast navigation. Part of NewChangeDirectory (NCD).";
+    ChangeServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
+
+    CloseServiceHandle(svc);
+    CloseServiceHandle(scm);
+
+    /* Start the service now (non-blocking prompt) */
+    printf("\nStart the service now? [Y/N]: ");
+    fflush(stdout);
+    int c = getchar();
+    if (c == 'Y' || c == 'y') {
+        SC_HANDLE scm2 = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+        if (scm2) {
+            SC_HANDLE svc2 = OpenServiceA(scm2, "NCDService", SERVICE_START);
+            if (svc2) {
+                if (StartServiceA(svc2, 0, NULL)) {
+                    printf("NCD Service: Started.\n");
+                } else {
+                    DWORD gle = GetLastError();
+                    if (gle == ERROR_SERVICE_ALREADY_RUNNING) {
+                        printf("NCD Service: Already running.\n");
+                    } else {
+                        fprintf(stderr, "NCD Service: Failed to start (GLE=%lu).\n"
+                                "  Start manually: net start NCDService\n", gle);
+                    }
+                }
+                CloseServiceHandle(svc2);
+            }
+            CloseServiceHandle(scm2);
+        }
+    }
+    /* Drain any remaining input */
+    while (getchar() != '\n');
+
+    return 0;
+}
+
+/* Uninstall the service from the SCM */
+static int cmd_scm_uninstall(const char *exe_path) {
+    (void)exe_path;
+
+    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+    if (!scm) {
+        fprintf(stderr, "NCD Service: Failed to open SCM (GLE=%lu).\n", GetLastError());
+        fprintf(stderr, "  Run as Administrator to uninstall the service.\n");
+        return 1;
+    }
+
+    SC_HANDLE svc = OpenServiceA(scm, "NCDService", SERVICE_ALL_ACCESS);
+    if (!svc) {
+        DWORD gle = GetLastError();
+        if (gle == ERROR_SERVICE_DOES_NOT_EXIST) {
+            printf("NCD Service: Not registered with SCM.\n");
+        } else {
+            fprintf(stderr, "NCD Service: Failed to open service (GLE=%lu).\n", gle);
+        }
+        CloseServiceHandle(scm);
+        return 1;
+    }
+
+    /* Try to stop the service first */
+    SERVICE_STATUS status;
+    if (ControlService(svc, SERVICE_CONTROL_STOP, &status)) {
+        printf("NCD Service: Stopping...\n");
+        for (int i = 0; i < 100; i++) {
+            if (!QueryServiceStatus(svc, &status)) break;
+            if (status.dwCurrentState == SERVICE_STOPPED) break;
+            Sleep(100);
+        }
+    }
+
+    if (DeleteService(svc)) {
+        printf("NCD Service: Unregistered from SCM.\n");
+    } else {
+        DWORD gle = GetLastError();
+        fprintf(stderr, "NCD Service: Failed to delete service (GLE=%lu).\n"
+                "  Try: sc delete NCDService\n", gle);
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+        return 1;
+    }
+
+    CloseServiceHandle(svc);
+    CloseServiceHandle(scm);
+    return 0;
+}
+
+#endif /* NCD_PLATFORM_WINDOWS */
 
 /* --------------------------------------------------------- run service        */
 
@@ -2743,6 +2950,19 @@ int main(int argc, char *argv[]) {
             LOG_EVENT("Daemon mode requested");
             /* Fall through to run_service below */
         }
+#if NCD_PLATFORM_WINDOWS
+        else if (strcmp(cmd, "--service") == 0) {
+            LOG_EVENT("Service mode requested (SCM launch)");
+            g_is_scm_service = true;
+            /* Fall through to run_service via SCM dispatcher below */
+        }
+        else if (strcmp(cmd, "install") == 0) {
+            return cmd_scm_install(g_exe_path);
+        }
+        else if (strcmp(cmd, "uninstall") == 0) {
+            return cmd_scm_uninstall(g_exe_path);
+        }
+#endif
         else {
             fprintf(stderr, "Unknown command: %s\n", cmd);
             print_usage();
@@ -2763,7 +2983,28 @@ int main(int argc, char *argv[]) {
 #endif
     }
 
-    /* Run the service (for --daemon, after Linux fork, or Linux no-args) */
+#if NCD_PLATFORM_WINDOWS
+    /* SCM mode: register with Service Control Manager and let it dispatch to scm_service_main */
+    if (g_is_scm_service) {
+        LOG_EVENT("SCM mode: calling StartServiceCtrlDispatcher...");
+        SERVICE_TABLE_ENTRYA dispatch_table[] = {
+            { "NCDService", scm_service_main },
+            { NULL, NULL }
+        };
+        if (!StartServiceCtrlDispatcherA(dispatch_table)) {
+            DWORD gle = GetLastError();
+            LOG_EVENT("ERROR - StartServiceCtrlDispatcher failed (GLE=%lu)", gle);
+            fprintf(stderr, "NCD Service: Failed to register with SCM (GLE=%lu).\n", gle);
+            log_close();
+            return 1;
+        }
+        LOG_EVENT("SCM dispatcher returned (service stopped)");
+        log_close();
+        return 0;
+    }
+#endif
+
+    /* Run the service (for --daemon, after Linux fork, Linux no-args, or Windows --daemon) */
     int ret = run_service();
     log_close();
     return ret;

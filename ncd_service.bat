@@ -3,15 +3,19 @@
 :: ncd_service.bat  --  NCD State Service launcher for Windows
 ::
 :: Usage:
-::   ncd_service.bat start [-logN] [-init [drives]]   - Start the service
-::   ncd_service.bat stop                             - Stop the service
-::   ncd_service.bat status                           - Check if service is running
-::   ncd_service.bat restart [-logN] [-init [drives]] - Restart the service
+::   ncd_service.bat start [-logN] [-init [drives]]   - Start the service (daemon mode)
+::   ncd_service.bat install                           - Register as Windows service (auto-start on boot)
+::   ncd_service.bat uninstall                         - Unregister Windows service
+::   ncd_service.bat stop                              - Stop the service
+::   ncd_service.bat status                            - Check if service is running
+::   ncd_service.bat restart [-logN] [-init [drives]]  - Restart the service
 ::
 :: All extra arguments after the command are forwarded to NCDService.exe.
 :: Examples:
 ::   ncd_service.bat start -log2
 ::   ncd_service.bat start -init C,D,E -log2
+::   ncd_service.bat install
+::   ncd_service.bat uninstall
 
 setlocal enabledelayedexpansion
 
@@ -31,6 +35,8 @@ if not "%1"=="" (
 if "%ACTION%"=="" set ACTION=status
 
 if "%ACTION%"=="start" goto :start
+if "%ACTION%"=="install" goto :install
+if "%ACTION%"=="uninstall" goto :uninstall
 if "%ACTION%"=="status" goto :status
 if "%ACTION%"=="stop" goto :stop
 if "%ACTION%"=="restart" goto :restart
@@ -46,6 +52,27 @@ if not exist %SERVICE_EXE% (
     exit /b 1
 )
 %SERVICE_EXE% start%EXTRA_ARGS%
+goto :end
+
+:install
+if not exist %SERVICE_EXE% (
+    echo ERROR: %SERVICE_EXE% not found
+    echo Please build the project first with build.bat
+    exit /b 1
+)
+echo.
+echo Registering NCD Service with Windows Service Control Manager...
+echo (Requires Administrator privileges)
+echo.
+%SERVICE_EXE% install
+goto :end
+
+:uninstall
+echo.
+echo Unregistering NCD Service from Windows Service Control Manager...
+echo (Requires Administrator privileges)
+echo.
+%SERVICE_EXE% uninstall
 goto :end
 
 :status
@@ -80,7 +107,9 @@ echo.
 echo Usage: ncd_service.bat [command] [options...]
 echo.
 echo Commands:
-echo   start    - Start the NCD State Service
+echo   start    - Start the NCD State Service (background daemon mode)
+echo   install  - Register as a Windows service (auto-start on boot, requires Admin)
+echo   uninstall- Unregister the Windows service (requires Admin)
 echo   stop     - Stop the NCD State Service
 echo   restart  - Restart the NCD State Service
 echo   status   - Check if service is running
@@ -95,9 +124,15 @@ echo.
 echo Examples:
 echo   ncd_service.bat start -log2
 echo   ncd_service.bat start -log2 -init C,D
+echo   ncd_service.bat install
+echo   ncd_service.bat uninstall
 echo.
-echo The NCD State Service keeps directory databases hot in memory
-echo for faster navigation. It is optional - NCD works without it.
+echo Modes:
+echo   Daemon mode (start):  Runs as a background process. Starts when you log in
+echo                         if added to Startup (e.g., via install.bat).
+echo   Service mode (install): Registers as a proper Windows service with the SCM.
+echo                           Starts automatically at system boot, even before login.
+echo                           Run as Administrator to use.
 echo.
 
 :end

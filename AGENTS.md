@@ -4,7 +4,7 @@
 
 | User says | Exact command |
 |-----------|---------------|
-| `run all tests` | `python test\generate_report.py` (bg, 3600s) |
+| `run all tests` | `python test\generate_report.py` (bg, 3600s) — runs Windows + WSL Linux; WSL is REQUIRED, failure if unavailable |
 | `run unit tests` | `python test\runner.py unit` |
 | `run integration tests` | `python test\runner.py integration` |
 | `repair test env` | `python test\runner.py --repair` |
@@ -230,7 +230,7 @@ When the user asks to "run all tests", execute **exactly** this command and noth
 python test/generate_report.py
 ```
 
-This is the **unified cross-platform runner** — it auto-builds, runs Windows + WSL tests, and writes the detailed `test.results` report. See `AGENT_TESTING_GUIDE.md` § *Expected Output Format — MANDATORY*.
+This is the **unified cross-platform runner** — it auto-builds, runs **Windows + WSL Linux** tests, and writes the detailed `test.results` report. **Linux (WSL) is REQUIRED.** If WSL is unavailable, the run is a failure, not a skip. See `AGENT_TESTING_GUIDE.md` § *Expected Output Format — MANDATORY*.
 
 > **Pre-test clean:** If any `src\*.c` or `..\shared\*.c` file has changed since the last build, run `cmd /c clean.bat` first. Stale `.obj` files can cause test executables to link against old code.
 
@@ -606,6 +606,7 @@ NCD maintains version compatibility between the client (`NewChangeDirectory.exe`
 
 | Client Version | Min Service Version | Compatible Service Versions |
 |----------------|---------------------|----------------------------|
+| 1.5.x | 1.5.0 | 1.5.0 - 1.5.x |
 | 1.3.x | 1.3.1 | 1.3.0 - 1.3.x |
 | 1.2.x | 1.2.0 | 1.2.0 - 1.3.x (forward compatible) |
 

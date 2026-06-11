@@ -1,27 +1,29 @@
 # Agent Testing Guide for NCD
 
-**Last Updated:** 2026-04-18
+**Last Updated:** 2026-06-10
 
 ## 🚨 Zero-Context Quick Reference
 
 If your context window is empty, run these commands from the repo root (`E:\llama\NewChangeDirectory`):
 
 ```batch
-:: Unified cross-platform report - auto-builds, runs Windows + Linux tests, writes test.results
+:: Unified cross-platform report - auto-builds, runs Windows + Linux (WSL) tests, writes test.results
+:: Linux (WSL) is REQUIRED - run without --windows-only to test both platforms
 python test/generate_report.py
 
-:: Full build + test cycle (Windows integration tests only)
+:: Full build + test cycle (Windows only, skip Linux)
 python test/runner.py --windows-only
 
 :: If binaries already exist, skip the build
-python test/runner.py --skip-build --windows-only
+python test/runner.py --skip-build
 
 :: Quick unit-test only run
 python test/runner.py unit
 ```
 
 **Critical facts to avoid footguns:**
-- **`generate_report.py` is the preferred entry point.** It auto-detects outdated binaries, rebuilds them, runs both Windows and Linux unit tests, and writes `test.results`. It exits with code 1 if any test fails or is skipped.
+- **`generate_report.py` is the preferred entry point.** It auto-detects outdated binaries, rebuilds them, runs **both Windows and Linux (WSL) unit tests**, and writes `test.results`. It exits with code 1 if any test fails, is skipped, or if WSL is unavailable.
+- **Linux (WSL) is always required.** Running "all tests" means both Windows and WSL. If WSL is not available, the run is a failure — not a skip.
 - **ALWAYS** use `python test/runner.py` for integration tests. Never run `test\*.exe` or `test\*.bat` directly — they don't restore environment on Ctrl+C.
 - `test/ncd_testlib/build.py` is the Windows test build logic. If you add a new `test_*.c`, you **must** add its build rule there or it is **silently skipped**.
 - The parallel expansion tests (`test_*_extended.c`, `test_service_*.c`, etc.) are already in `test/ncd_testlib/build.py` as of 2026-04-22.
@@ -173,7 +175,7 @@ This script is the **unified cross-platform test runner and report generator**:
 - **Build failure detection:** Captures compiler output and aborts with exit code 1 if any build fails
 - **Cross-platform execution:** Runs Windows `.exe` unit tests AND Linux ELF tests (via WSL when available)
 - **Skip tracking:** Detects `SKIP:` output and counts skipped tests separately
-- **Exit code enforcement:** Returns 0 **only** if all tests pass with zero failures and zero skips
+- **Exit code enforcement:** Returns 0 **only** if all tests pass with zero failures, zero skips, and zero timeouts. Any skipped or timed-out test is treated as a failure.
 - **test.results output:** Writes a structured report file with build timestamps and full statistics
 
 Self-isolating behavior:

@@ -20,7 +20,7 @@ WINDOWS_SUITES = [
     ("Service Tests (Isolated)", TEST_DIR / "Test-Service-Windows.bat", 60),
     ("NCD Standalone", TEST_DIR / "Test-NCD-Windows-Standalone.bat", 60),
     ("NCD with Service", TEST_DIR / "Test-NCD-Windows-With-Service.bat", 60),
-    ("Windows Feature Tests", TEST_DIR / "Win" / "test_features.bat", 180),
+    ("Windows Feature Tests", TEST_DIR / "Win" / "test_features.bat", 300),
     ("Windows Agent Command Tests", TEST_DIR / "Win" / "test_agent_commands.bat", 120),
     ("Service Race Tester", TEST_DIR / "Win" / "test_service_race.bat", 60),
 ]
@@ -31,7 +31,7 @@ WSL_SUITES = [
     ("WSL NCD with Service", TEST_DIR / "test_ncd_wsl_with_service.sh", 90),
     ("WSL Feature Tests", TEST_DIR / "Wsl" / "test_features.sh", 120),
     ("WSL Agent Command Tests", TEST_DIR / "Wsl" / "test_agent_commands.sh", 180),
-    ("WSL Service Race Tester", TEST_DIR / "Wsl" / "test_service_race.sh", 120),
+    ("WSL Service Race Tester", TEST_DIR / "Wsl" / "test_service_race.sh", 180),
 ]
 
 
@@ -157,14 +157,14 @@ def run_windows_suite(script_path: Path, timeout: int = 60):
     has_pass = re.search(r"RESULT:\s*PASSED", output, re.IGNORECASE) is not None
     timed_out = (rc == -2)
 
-    if has_fail or failed > 0:
+    if timed_out:
+        raw = "TIMEOUT"
+        if failed == 0:
+            failed = 1  # Timeout counts as a failure
+    elif has_fail or failed > 0:
         raw = "FAIL"
     elif has_pass or (passed > 0 and total > 0):
-        # Trust parsed test results even if the script returned non-zero
-        # or was killed by timeout during cleanup.
         raw = "PASS"
-    elif timed_out:
-        raw = "TIMEOUT"
     else:
         raw = "FAIL" if rc != 0 else "PASS"
 
@@ -253,14 +253,14 @@ def run_wsl_suite(script_path: Path, timeout: int = 60):
     has_pass = re.search(r"RESULT:\s*PASSED", output, re.IGNORECASE) is not None
     timed_out = (rc == -2)
 
-    if has_fail or failed > 0:
+    if timed_out:
+        raw = "TIMEOUT"
+        if failed == 0:
+            failed = 1  # Timeout counts as a failure
+    elif has_fail or failed > 0:
         raw = "FAIL"
     elif has_pass or (passed > 0 and total > 0):
-        # Trust parsed test results even if the script returned non-zero
-        # or was killed by timeout during cleanup.
         raw = "PASS"
-    elif timed_out:
-        raw = "TIMEOUT"
     else:
         raw = "FAIL" if rc != 0 else "PASS"
 

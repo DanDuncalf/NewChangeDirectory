@@ -3,7 +3,7 @@
 
 #define MyAppName "NewChangeDirectory"
 #define MyAppShortName "NCD"
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "NCD Project"
 #define MyAppURL "https://github.com/your-org/ncd"
 

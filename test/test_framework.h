@@ -141,7 +141,7 @@ typedef int (*test_func_t)(void);
            tests_run, tests_passed, tests_failed, tests_skipped); \
     printf("Assertions: %d total, %d failed\n", \
            asserts_total, asserts_failed); \
-    return tests_failed > 0 ? 1 : 0; \
+    return tests_failed > 0 || tests_skipped > 0 ? 1 : 0; \
 }
 
 #endif

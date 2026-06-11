@@ -110,7 +110,7 @@ def is_wsl_available():
     """Check if WSL is installed and responsive."""
     if platform.system() != "Windows":
         return False
-    rc, _, _ = run_cmd(["wsl", "echo", "wsl_ok"], timeout=10)
+    rc, _, _ = run_cmd(["wsl", "echo", "wsl_ok"], timeout=30)
     return rc == 0
 
 

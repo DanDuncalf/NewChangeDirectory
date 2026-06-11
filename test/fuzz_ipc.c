@@ -69,27 +69,13 @@ static void ensure_service_stopped(void) {
     system("pkill -9 -x NCDService 2>/dev/null; killall -9 NCDService 2>/dev/null");
     system("rm -f ${XDG_RUNTIME_DIR:-/tmp}/ncd_service.pid 2>/dev/null");
 #endif
-    platform_sleep_ms(200);
+    platform_sleep_ms(500);
 }
 
 static bool ensure_service_running(void) {
-    if (ipc_service_exists()) {
-        /* Verify it's actually responsive, not a zombie pipe */
-        ipc_client_init();
-        NcdIpcClient *client = ipc_client_connect();
-        if (client) {
-            NcdIpcResult result = ipc_client_ping(client);
-            ipc_client_disconnect(client);
-            ipc_client_cleanup();
-            if (result == NCD_IPC_OK || result == NCD_IPC_ERROR_BUSY_LOADING || result == NCD_IPC_ERROR_BUSY_SCANNING) {
-                return true;
-            }
-        } else {
-            ipc_client_cleanup();
-        }
-        /* Not responsive - restart */
-        ensure_service_stopped();
-    }
+    /* Always do a fresh start — kill any existing service first */
+    ensure_service_stopped();
+    
     if (!service_executable_exists()) return false;
 
 #if NCD_PLATFORM_WINDOWS
@@ -98,7 +84,7 @@ static bool ensure_service_running(void) {
     const char *start_cmd = "../NCDService start";
 #endif
 
-    for (int attempt = 0; attempt < 3; attempt++) {
+    for (int attempt = 0; attempt < 5; attempt++) {
         ensure_service_stopped();
 #if NCD_PLATFORM_WINDOWS
         system(start_cmd);

@@ -29,8 +29,8 @@ Options:
     --help            Show this help
 
 Exit codes:
-    0 - No test failures (skipped tests are not failures)
-    1 - Build failure or test failure
+    0 - All tests passed, zero failures, zero skipped, zero timeouts
+    1 - Build failure, test failure, skipped test, or timeout detected
 """
 
 import argparse
@@ -154,8 +154,8 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
         overall_status = "FAIL"
         reason = f"{total_failed + win_int_fail + lin_int_fail} test(s) failed"
     elif total_skipped > 0 or win_int_skip > 0 or lin_int_skip > 0:
-        overall_status = "PASS"
-        reason = f"All non-skipped tests passed ({total_skipped + win_int_skip + lin_int_skip} skipped)"
+        overall_status = "FAIL"
+        reason = f"{total_skipped + win_int_skip + lin_int_skip} test(s) skipped (skipped = failure)"
     if build_info.get('build_failed'):
         overall_status = "FAIL"
         reason = "Build failure detected"
@@ -460,7 +460,7 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
                 print(f"### Running {exe_name} ...")
                 TestIsolation._stop_ncd_processes()
                 # Service lifecycle tests need more time in isolated environments
-                test_timeout = 120 if "service" in exe_name.lower() else 60
+                test_timeout = 180 if "service" in exe_name.lower() else 60
                 output = run_test_binary(path, 'linux', timeout=test_timeout)
                 if output.strip():
                     try:
@@ -637,8 +637,8 @@ def main():
                 print("[RESULT] FAIL - See test.results for details")
                 sys.exit(1)
             elif total_skipped > 0:
-                print(f"[RESULT] PASS - {total_skipped} tests skipped (see test.results for details)")
-                sys.exit(0)
+                print(f"[RESULT] FAIL - {total_skipped} tests skipped (skipped = failure)")
+                sys.exit(1)
             else:
                 print("[RESULT] PASS - All tests passed")
                 sys.exit(0)

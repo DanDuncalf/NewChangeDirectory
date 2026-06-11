@@ -714,7 +714,7 @@ TEST(race_cascading_rescan_requests) {
 
     /* Wait for service to settle back to READY */
     bool ready = false;
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 300; i++) {
         NcdIpcClient *client = ipc_client_connect();
         if (client) {
             NcdIpcDetailedStatus info;

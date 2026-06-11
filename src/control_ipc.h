@@ -30,7 +30,7 @@ extern "C" {
 #define NCD_IPC_VERSION     5   /* Added RESCAN_PROGRESS and RESCAN_COMPLETE async messages */
 
 /* Application version - must match between client and service */
-#define NCD_APP_VERSION     "1.4"
+#define NCD_APP_VERSION     "1.5"
 
 /* Build stamp — single source for all modules */
 #define NCD_BUILD_STAMP     __DATE__ " " __TIME__

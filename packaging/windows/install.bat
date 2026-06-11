@@ -142,12 +142,13 @@ if errorlevel 1 (
     echo   [OK] Already in PATH
 )
 
-:: Optional: Add to startup
+:: Optional: Add to startup or register as Windows service
 echo.
-echo Start NCD Service automatically at logon?
-echo   [1] Yes -- add to startup
-echo   [2] No  -- start manually when needed
-set /p STARTUP_CHOICE="Choice [1/2]: "
+echo How should NCD Service start automatically?
+echo   [1] Logon startup -- runs when you log in (no Admin required)
+echo   [2] Windows service -- runs at system boot, even before login (requires Admin)
+echo   [3] No auto-start  -- start manually when needed
+set /p STARTUP_CHOICE="Choice [1/2/3]: "
 if "!STARTUP_CHOICE!"=="1" (
     echo Adding NCD Service to startup...
     reg add "%REG_ROOT%\Software\Microsoft\Windows\CurrentVersion\Run" /v NCDService /t REG_SZ /d "\"%DEST_DIR%\NCDService.exe\" start" /f >nul 2>&1
@@ -155,6 +156,17 @@ if "!STARTUP_CHOICE!"=="1" (
         echo   [WARN] Failed to add startup entry. You may need to run as Administrator.
     ) else (
         echo   [OK] NCD Service will start at logon.
+    )
+)
+if "!STARTUP_CHOICE!"=="2" (
+    if %IS_ELEVATED%==0 (
+        echo.
+        echo Windows service registration requires Administrator privileges.
+        echo Requesting elevation...
+        powershell -NoProfile -Command "Start-Process -FilePath '%DEST_DIR%\NCDService.exe' -ArgumentList 'install' -Verb RunAs -Wait"
+    ) else (
+        echo Registering NCD Service with Windows Service Control Manager...
+        "%DEST_DIR%\NCDService.exe" install
     )
 )
 
@@ -206,12 +218,14 @@ echo   ncd -?               - Show help
 echo.
 if "%INSTALL_SCOPE%"=="system" (
     echo To uninstall:
-    echo   1. Delete files from: %DEST_DIR%
-    echo   2. Remove from PATH via System Environment Variables
-    echo   3. Remove startup entry from Registry (HKLM\...\Run\NCDService)
+    echo   1. If installed as Windows service: '%DEST_DIR%\NCDService.exe' uninstall  (requires Admin)
+    echo   2. Delete files from: %DEST_DIR%
+    echo   3. Remove from PATH via System Environment Variables
+    echo   4. Remove startup entry from Registry (HKLM\...\Run\NCDService)
 ) else (
-    echo To uninstall, simply delete the files from:
-    echo   %DEST_DIR%
+    echo To uninstall:
+    echo   1. If installed as Windows service: '%DEST_DIR%\NCDService.exe' uninstall  (requires Admin)
+    echo   2. Delete the files from: %DEST_DIR%
 )
 echo.
 
