@@ -1533,13 +1533,11 @@ bool db_save_binary(const NcdDatabase *db, const char *path)
         return false;
     }
 #if NCD_PLATFORM_LINUX
-    /* Ensure data is physically on disk before renaming (POSIX durability) */
+    /* Ensure data is physically on disk before renaming.
+     * May fail on some filesystems (WSL DrvFs) — data is already
+     * flushed via fflush(), so non-fatal. */
     if (fsync(fileno(f)) != 0) {
-        db_set_error("Failed to fsync database to disk: %s", strerror(errno));
-        fclose(f);
-        free(buf);
-        platform_delete_file(tmp_path);
-        return false;
+        db_set_error("Warning: fsync binary database failed (non-fatal): %s", strerror(errno));
     }
 #endif
     fclose(f);
@@ -2764,13 +2762,11 @@ bool db_metadata_save(NcdMetadata *meta)
         return false;
     }
 #if NCD_PLATFORM_LINUX
-    /* Ensure data is physically on disk before renaming (POSIX durability) */
+    /* Ensure data is physically on disk before renaming (POSIX durability).
+     * This may fail on some filesystems (e.g. WSL DrvFs mounts) —
+     * data is already flushed to kernel via fflush(), so non-fatal. */
     if (fsync(fileno(f)) != 0) {
-        db_set_error("Failed to fsync metadata to disk: %s", strerror(errno));
-        fclose(f);
-        free(buf);
-        platform_delete_file(tmp_path);
-        return false;
+        db_set_error("Warning: fsync metadata failed (non-fatal): %s", strerror(errno));
     }
 #endif
     fclose(f);

@@ -1226,9 +1226,9 @@ static void process_all_pending(ServiceState *state, SnapshotPublisher *pub) {
 static bool try_queue_mutation(ServiceState *state,
                                 NcdMessageType msg_type,
                                 const void *payload, size_t payload_len) {
-    /* Only queue during LOADING or SCANNING states */
+    /* Only queue during STARTING, LOADING or SCANNING states */
     ServiceRuntimeState runtime = service_state_get_runtime_state(state);
-    if (runtime != SERVICE_STATE_LOADING && runtime != SERVICE_STATE_SCANNING) {
+    if (runtime != SERVICE_STATE_STARTING && runtime != SERVICE_STATE_LOADING && runtime != SERVICE_STATE_SCANNING) {
         return false;
     }
 

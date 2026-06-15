@@ -87,6 +87,8 @@ if "%NCD_TEST_MODE%"=="" (
 set "ORIGINAL_LOCALAPPDATA=%LOCALAPPDATA%"
 set "ORIGINAL_NCD_TEST_MODE=%NCD_TEST_MODE%"
 
+set "EXIT_CODE=0"
+
 :: Create local environment scope - this will be cleaned up on normal exit
 setlocal enabledelayedexpansion
 
@@ -171,15 +173,17 @@ echo Setting up test environment...
 
 :: --- Use pre-provisioned test drive from Python harness if available ---
 if defined NCD_TEST_DRIVE (
-    set "TESTDRIVE=%NCD_TEST_DRIVE%"
-    set "HAS_ISOLATED_DRIVE=1"
-    if defined NCD_TEST_ROOT (
-        set "TESTROOT=%NCD_TEST_ROOT%"
-    ) else (
-        set "TESTROOT=%TESTDRIVE%:"
+    if not "%NCD_TEST_DRIVE%"=="" (
+        set "TESTDRIVE=%NCD_TEST_DRIVE%"
+        set "HAS_ISOLATED_DRIVE=1"
+        if defined NCD_TEST_ROOT (
+            set "TESTROOT=%NCD_TEST_ROOT%"
+        ) else (
+            set "TESTROOT=%TESTDRIVE%:"
+        )
+        echo   Using pre-provisioned test drive %TESTDRIVE%: -^> %TESTROOT%
+        goto :create_tree
     )
-    echo   Using pre-provisioned test drive %TESTDRIVE%: -^> %TESTROOT%
-    goto :create_tree
 )
 
 :: --- Try to find an unused drive letter for VHD ---
@@ -1057,15 +1061,14 @@ if %FAIL_COUNT% GTR 0 (
     echo Some tests FAILED.
     >> "%LOG_FILE%" echo RESULT: FAILED
     call :final_cleanup
-    endlocal
-    exit /b 1
+    endlocal & set "EXIT_CODE=1"
 ) else (
     echo All tests PASSED!
     >> "%LOG_FILE%" echo RESULT: PASSED
     call :final_cleanup
-    endlocal
-    exit /b 0
+    endlocal & set "EXIT_CODE=0"
 )
+if "%EXIT_CODE%"=="1" exit 1 else exit 0
 
 :: ==========================================================================
 :: Cleanup Functions

@@ -122,8 +122,11 @@ int run_service_command_ex(const char *cmd, const char *extra_args,
         snprintf(full_cmd, sizeof(full_cmd), "%s %s", exe, cmd);
     }
 #else
-    (void)extra_args;
-    snprintf(full_cmd, sizeof(full_cmd), "%s %s 2>&1", exe, cmd);
+    if (extra_args && extra_args[0]) {
+        snprintf(full_cmd, sizeof(full_cmd), "%s %s %s 2>&1", exe, cmd, extra_args);
+    } else {
+        snprintf(full_cmd, sizeof(full_cmd), "%s %s 2>&1", exe, cmd);
+    }
 #endif
     return run_command_raw(full_cmd, output, output_size);
 }
