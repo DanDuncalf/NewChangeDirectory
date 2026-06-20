@@ -124,9 +124,16 @@ bool ncd_platform_db_default_path(char *buf, size_t buf_size)
     if (!buf || buf_size == 0) return false;
     
     if (ncd_is_system_mode()) {
-        platform_create_dir(NCD_SYSTEM_DIR);
-        int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
-        return written > 0 && (size_t)written < buf_size;
+#if NCD_PLATFORM_WINDOWS
+        /* Non-elevated users cannot write to C:\ProgramData\NCD.
+         * Auto-fallback to user data dir so standalone ncd works. */
+        if (platform_is_admin())
+#endif
+        {
+            platform_create_dir(NCD_SYSTEM_DIR);
+            int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
+            return written > 0 && (size_t)written < buf_size;
+        }
     }
     
     char data_dir[MAX_PATH];
@@ -144,13 +151,20 @@ bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
     if (!buf || buf_size == 0) return false;
     
     if (ncd_is_system_mode()) {
-        platform_create_dir(NCD_SYSTEM_DIR);
 #if NCD_PLATFORM_WINDOWS
-        int w = snprintf(buf, buf_size, "%s%sncd_%c.database", NCD_SYSTEM_DIR, NCD_PATH_SEP, toupper((unsigned char)letter));
-#else
-        int w = snprintf(buf, buf_size, "%s/ncd_%02x.database", NCD_SYSTEM_DIR, (unsigned char)letter);
+        /* Non-elevated users cannot write to C:\ProgramData\NCD.
+         * Auto-fallback to user data dir so standalone ncd works. */
+        if (platform_is_admin())
 #endif
-        return w > 0 && (size_t)w < buf_size;
+        {
+            platform_create_dir(NCD_SYSTEM_DIR);
+#if NCD_PLATFORM_WINDOWS
+            int w = snprintf(buf, buf_size, "%s%sncd_%c.database", NCD_SYSTEM_DIR, NCD_PATH_SEP, toupper((unsigned char)letter));
+#else
+            int w = snprintf(buf, buf_size, "%s/ncd_%02x.database", NCD_SYSTEM_DIR, (unsigned char)letter);
+#endif
+            return w > 0 && (size_t)w < buf_size;
+        }
     }
     
     char data_dir[MAX_PATH];

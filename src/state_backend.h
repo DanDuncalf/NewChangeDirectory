@@ -106,6 +106,14 @@ typedef struct NcdStateView {
 int state_backend_open_best_effort(NcdStateView **out, NcdStateSourceInfo *info);
 
 /*
+ * state_backend_service_available  --  Check if the NCD service is running
+ *
+ * Returns true if the service IPC endpoint exists and is reachable.
+ * This is a lightweight check that does not establish a full connection.
+ */
+bool state_backend_service_available(void);
+
+/*
  * state_backend_open_local  --  Open state from local disk only
  *
  * Loads metadata and database directly from disk files, bypassing any

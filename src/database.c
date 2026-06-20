@@ -403,7 +403,11 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
     FILE *f = fopen(tmp_path, "wb");
-    if (!f) { free(buf); return false; }
+    if (!f) {
+        db_set_error("Failed to open temp file for writing: %s", strerror(errno));
+        free(buf);
+        return false;
+    }
 
     size_t written = fwrite(buf, 1, pos, f);
     if (written != pos) {
@@ -426,6 +430,7 @@ bool db_save_binary_single(const NcdDatabase *db, int drive_idx,
 
     /* Atomic file replacement (replaces destination if it exists) */
     if (!platform_move_file_replace(tmp_path, path)) {
+        db_set_error("Failed to install database file (permissions?): %s", strerror(errno));
         platform_delete_file(tmp_path);
         return false;
     }
@@ -583,6 +588,7 @@ bool db_config_save(const NcdConfig *cfg)
     
     /* Atomic file replacement */
     if (!platform_move_file_replace(tmp_path, path)) {
+        db_set_error("Failed to install config file (permissions?): %s", strerror(errno));
         platform_delete_file(tmp_path);
         return false;
     }
@@ -2127,6 +2133,7 @@ bool db_set_skipped_rescan_flag(const char *path)
     
     /* Atomic file replacement */
     if (!platform_move_file_replace(tmp_path, path)) {
+        db_set_error("Failed to install skip-flag file (permissions?): %s", strerror(errno));
         platform_delete_file(tmp_path);
         return false;
     }

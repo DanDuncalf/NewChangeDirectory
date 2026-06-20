@@ -207,6 +207,15 @@ static bool ensure_state_initialized(void)
     NCD_DEBUG_LOG("NCD DEBUG: State backend initialized successfully (service=%d)\n",
             g_state_info.from_service);
     
+    /* Warn if a service is running but we fell back to standalone mode.
+     * This most commonly happens due to a version mismatch between the
+     * client and the service executable. */
+    if (!g_state_info.from_service && state_backend_service_available()) {
+        ncd_printf("NCD: Warning -- NCD service is running but could not be used "
+                   "(version mismatch?).\r\n"
+                   "     Running in standalone mode with local database.\r\n");
+    }
+    
     /* Register cleanup handler to close state backend at exit */
     atexit(close_state_backend);
     

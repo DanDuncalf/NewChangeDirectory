@@ -521,7 +521,6 @@ void state_backend_get_source_info(const NcdStateView *view,
 
 /* Forward declaration for service backend (implemented in state_backend_service.c) */
 extern int state_backend_try_service(NcdStateView **out, NcdStateSourceInfo *info);
-extern bool state_backend_service_available(void);
 
 int state_backend_open_best_effort(NcdStateView **out, NcdStateSourceInfo *info) {
     if (!out) {
