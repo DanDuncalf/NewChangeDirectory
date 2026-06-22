@@ -13,6 +13,8 @@
 
 **Before reading any other file, before using Grep, Glob, or ReadFile on source code, and before answering any user question, you MUST ingest the entire contents of `graphify-out/GRAPH_REPORT.md`.** This file contains the pre-built knowledge graph (2,354 nodes, 7,519 edges, 83 communities) that maps cross-module dependencies, god nodes, and semantic communities. No exceptions.
 
+> **Note:** `graphify-out/` is gitignored. If the file does not exist locally, regenerate it with `graphify build` before proceeding. The corpus check at the top of the report tells you whether the graph is current.
+
 - **Read order:** `graphify-out/GRAPH_REPORT.md` → then query the graph → then read raw source files only after the graph has directed you to specific functions or modules.
 - **Why:** Skipping this step wastes ~100K+ tokens on naive file searches and guarantees missed cross-module connections.
 - **For cross-module questions:** Use `graphify query` or `graphify path` instead of grepping.
@@ -129,8 +131,6 @@ NewChangeDirectory/
 │   ├── Win/                  # Windows-specific tests
 │   ├── Wsl/                  # WSL/Linux-specific tests
 │   └── PowerShell/           # PowerShell-specific tests
-├── tasks/                    # Active task notes
-│   └── heap_corruption_investigation.md  # Active investigation note
 ├── ncd.bat                   # Windows wrapper script (CMD)
 ├── ncd                       # Linux wrapper script (Bash)
 ├── ncd_service.bat           # Windows service launcher
