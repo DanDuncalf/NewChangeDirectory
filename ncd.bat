@@ -57,8 +57,14 @@ if defined NCD_INFO_CMD set "NCD_MESSAGE="
 
 :: ------------------------------------------------------------------
 :: 2.  Run the executable -- all arguments passed straight through
+::     Default to user-mode (per-user service) unless overridden.
 :: ------------------------------------------------------------------
-NewChangeDirectory.exe %*
+echo %* | findstr /I "--user-mode" >nul 2>&1
+if "%ERRORLEVEL%"=="0" (
+    NewChangeDirectory.exe %*
+) else (
+    NewChangeDirectory.exe --user-mode %*
+)
 set "NCD_EXIT_CODE=%ERRORLEVEL%"
 
 :: ------------------------------------------------------------------

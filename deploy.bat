@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "SRC_DIR=%~dp0"
-set "DEST_DIR=%USERPROFILE%\Tools"
+set "DEST_DIR=C:\ProgramData\NCD"
 
 if not "%~1"=="" set "DEST_DIR=%~1"
 
@@ -56,33 +56,24 @@ if "%ERRORLEVEL%"=="0" (
 :: Check if service is running
 tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul
 if "%ERRORLEVEL%"=="0" (
-    echo Service is currently running.
-    
-    :: Check version compatibility using agent mode
-    echo Checking version compatibility...
-    "%SRC_DIR%NewChangeDirectory.exe" /agent check --service-status >nul 2>&1
+    echo Service is currently running. Requesting graceful shutdown...
+
+    :: Try graceful stop first (works even across version mismatches)
+    "%SRC_DIR%NCDService.exe" stop 2>nul
+
+    :: Wait for service to stop (max 10 seconds)
+    set /a "WAIT_COUNT=0"
+    :WAIT_LOOP
+    timeout /t 1 /nobreak >nul
+    tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul
     if "%ERRORLEVEL%"=="0" (
-        echo Requesting graceful service shutdown...
-        "%SRC_DIR%NewChangeDirectory.exe" /agent quit 2>nul
-        
-        :: Wait for service to stop (max 10 seconds)
-        set /a "WAIT_COUNT=0"
-        :WAIT_LOOP
-        timeout /t 1 /nobreak >nul
-        tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul
-        if "%ERRORLEVEL%"=="0" (
-            set /a "WAIT_COUNT+=1"
-            if !WAIT_COUNT! LSS 10 goto WAIT_LOOP
-            echo Warning: Service did not stop gracefully, forcing termination...
-            taskkill /F /IM NCDService.exe >nul 2>&1
-            timeout /t 1 /nobreak >nul
-        ) else (
-            echo Service stopped gracefully.
-        )
-    ) else (
-        echo Service not responding, forcing termination...
+        set /a "WAIT_COUNT+=1"
+        if !WAIT_COUNT! LSS 10 goto WAIT_LOOP
+        echo Warning: Service did not stop gracefully, forcing termination...
         taskkill /F /IM NCDService.exe >nul 2>&1
         timeout /t 1 /nobreak >nul
+    ) else (
+        echo Service stopped gracefully.
     )
     echo.
 )
@@ -125,11 +116,6 @@ copy /Y "%SRC_DIR%ncd.bat" "%DEST_DIR%\" >nul || (
     exit /b 1
 )
 
-:: Copy ncd_service.bat if it exists
-if exist "%SRC_DIR%ncd_service.bat" (
-    copy /Y "%SRC_DIR%ncd_service.bat" "%DEST_DIR%\" >nul
-)
-
 echo.
 echo ================================================
 echo Deployment Summary
@@ -144,10 +130,10 @@ if "%HAS_SERVICE%"=="1" (
     echo.
     echo Starting NCD Service...
     pushd "%DEST_DIR%"
-    call "%DEST_DIR%\ncd_service.bat" start
+    "%DEST_DIR%\NCDService.exe" start -log2
     popd
     timeout /t 2 /nobreak >nul
-    
+
     :: Verify service started
     tasklist /FI "IMAGENAME eq NCDService.exe" 2>nul | find /I "NCDService.exe" >nul
     if "%ERRORLEVEL%"=="0" (
@@ -156,6 +142,11 @@ if "%HAS_SERVICE%"=="1" (
         echo   [WARNING] Service may not have started. Check manually.
     )
 )
+
+:: Ensure deploy directory is in User PATH
+echo.
+echo Ensuring %DEST_DIR% is in PATH...
+powershell -NoProfile -Command "$p = [Environment]::GetEnvironmentVariable('PATH', 'User'); $entries = ($p -split ';' | Where-Object { $_ -and $_ -ne '' -and $_ -ne 'C:\Users\Dan\Tools\bin' }); if (($entries -join ';') -notlike '*C:\ProgramData\NCD*') { $entries += 'C:\ProgramData\NCD' }; $result = $entries -join ';'; [Environment]::SetEnvironmentVariable('PATH', $result, 'User'); if ($result -like '*C:\ProgramData\NCD*') { Write-Output '  [OK] C:\ProgramData\NCD added to User PATH' } else { Write-Output '  [INFO] C:\ProgramData\NCD already in PATH' }; $stale = $p | Select-String 'C:\\Users\\Dan\\Tools\\bin'; if ($stale) { Write-Output '  [OK] Removed stale C:\Users\Dan\Tools\bin from PATH' }"
 
 echo.
 echo ================================================
