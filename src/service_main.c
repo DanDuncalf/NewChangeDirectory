@@ -2142,7 +2142,7 @@ static int wait_for_service_stop_with_timeout(int timeout_seconds) {
 
 /* Print service usage information */
 static void print_usage(void) {
-    printf("NCD Service - Resident state service for NewChangeDirectory\n");
+    printf("NCD Service v%s - Resident state service for NewChangeDirectory\n", SERVICE_VERSION);
     printf("\n");
     printf("Usage:\n");
     printf("  ncdservice start               Start the service (daemon mode)\n");
@@ -2152,6 +2152,7 @@ static void print_usage(void) {
     printf("  ncdservice stop block <N>      Stop and wait N seconds for shutdown\n");
     printf("                                 Returns -1 if service didn't stop in time\n");
     printf("  ncdservice status              Show service status (running/stopped)\n");
+    printf("  ncdservice -v, --version      Show version information\n");
     printf("  ncdservice /agdb               Run service in foreground with debug output\n");
     printf("  ncdservice -conf <path>        Use custom config file\n");
     printf("  ncdservice --daemon            Run service in foreground (internal use)\n");
@@ -2739,7 +2740,21 @@ int main(int argc, char *argv[]) {
     if (argc > 1 + arg_offset) {
         const char *cmd = argv[1 + arg_offset];
 
-        if (strcmp(cmd, "-?") == 0 ||
+        if (strcmp(cmd, "-v") == 0 ||
+            strcmp(cmd, "--version") == 0 ||
+            strcmp(cmd, "version") == 0) {
+            printf("NCD Service v%s [built %s] [%s %s]\n",
+                   SERVICE_VERSION, SERVICE_BUILD_STAMP,
+#if NCD_PLATFORM_WINDOWS
+                   "Windows",
+#else
+                   "Linux",
+#endif
+                   platform_get_arch_name());
+            log_close();
+            return 0;
+        }
+        else if (strcmp(cmd, "-?") == 0 ||
             strcmp(cmd, "-h") == 0 ||
             strcmp(cmd, "--help") == 0 ||
             strcmp(cmd, "help") == 0) {

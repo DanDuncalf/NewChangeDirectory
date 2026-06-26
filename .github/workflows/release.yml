@@ -20,8 +20,7 @@ permissions:
 # ──────────────────────────────────────────────────────────────────────
 # Environment
 # ──────────────────────────────────────────────────────────────────────
-env:
-  NCD_VERSION: "1.5.0"
+# NCD_VERSION derived from src/control_ipc.h (extracted from git tag in package job)
 
 jobs:
 

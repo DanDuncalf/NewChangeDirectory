@@ -728,17 +728,46 @@ static bool check_service_version(bool *out_service_was_stopped, bool *out_servi
         return true;  /* Versions match */
     }
     
-    /* Version mismatch - report to user */
+    /* Version mismatch - report to user with directional messaging */
+    int client_newer = (strcmp(result.client_version, result.service_version) > 0);
+    
     ncd_println("");
     ncd_println("==================================================");
-    ncd_println("VERSION MISMATCH DETECTED");
+    if (client_newer) {
+        ncd_println("VERSION MISMATCH - Service outdated");
+    } else {
+        ncd_println("VERSION MISMATCH - Client outdated");
+    }
     ncd_println("==================================================");
-    ncd_printf("Client version:  %s (built %s)\r\n", 
+    ncd_printf("Client:  %s (built %s)\r\n", 
                result.client_version, result.client_build);
-    ncd_printf("Service version: %s (built %s)\r\n",
+    ncd_printf("Service: %s (built %s)\r\n",
                result.service_version, result.service_build);
     ncd_println("");
-    ncd_println(result.message);
+    
+    if (client_newer) {
+        ncd_println("The old service has been stopped.");
+#if NCD_PLATFORM_WINDOWS
+        ncd_println("  If it persists, run:");
+        ncd_println("  taskkill /F /IM NCDService.exe");
+        ncd_println("Then start the updated service:");
+        ncd_println("  NCDService.exe start");
+#else
+        ncd_println("  If it persists, run:");
+        ncd_println("  pkill -9 ncd_service");
+        ncd_println("Then start the updated service:");
+        ncd_println("  ncd_service start");
+#endif
+    } else {
+        ncd_println("Your NCD client is out of date.");
+#if NCD_PLATFORM_WINDOWS
+        ncd_printf("  -> Upgrade NCD to %s\r\nTo stop the service: NCDService.exe stop\r\n",
+                   result.service_version);
+#else
+        ncd_printf("  -> Upgrade NCD to %s\r\nTo stop the service: ncd_service stop\r\n",
+                   result.service_version);
+#endif
+    }
     ncd_println("==================================================");
     ncd_println("");
     

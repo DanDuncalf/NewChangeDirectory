@@ -47,34 +47,15 @@ case "${ACTION}" in
         sleep 1
         "${SERVICE_BIN}" start "$@"
         ;;
+    -v|--version|version)
+        "${SERVICE_BIN}" --version
+        ;;
     help|--help|-?)
-        echo "NCD State Service Launcher"
-        echo ""
-        echo "Usage: ncd_service [command] [options...]"
-        echo ""
-        echo "Commands:"
-        echo "  start    - Start the NCD State Service"
-        echo "  stop     - Stop the NCD State Service"
-        echo "  restart  - Restart the NCD State Service"
-        echo "  status   - Check if service is running"
-        echo "  help     - Show this help message"
-        echo ""
-        echo "Options (forwarded to NCDService):"
-        echo "  -log0..-log5  - Enable service logging (recommended: -log2)"
-        echo "  -init [paths] - Initialize database on startup"
-        echo "  --user-mode   - Run in per-user mode"
-        echo "  -conf <path>  - Custom metadata file path"
-        echo ""
-        echo "Examples:"
-        echo "  ncd_service start -log2"
-        echo "  ncd_service start -log2 -init /home"
-        echo ""
-        echo "The NCD State Service keeps directory databases hot in memory"
-        echo "for faster navigation. It is optional - NCD works without it."
+        "${SERVICE_BIN}" --help
         ;;
     *)
         echo "ncd_service: unknown action '${ACTION}'" >&2
-        echo "Usage: ncd_service {start|stop|status|restart|help}" >&2
+        echo "Usage: ncd_service {start|stop|status|restart|help|--version|--help}" >&2
         exit 1
         ;;
 esac

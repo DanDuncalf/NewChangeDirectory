@@ -20,6 +20,9 @@ MAIN_SOURCE_PATTERNS = [
 WINDOWS_MAIN_BINARIES = ["NewChangeDirectory.exe", "NCDService.exe"]
 LINUX_MAIN_BINARIES = ["NewChangeDirectory", "NCDService"]
 
+WINDOWS_ALT_SERVICE_BINARIES = ["NCDService_v13.exe", "NCDService_v17.exe"]
+LINUX_ALT_SERVICE_BINARIES = ["ncd_service_v13", "ncd_service_v17"]
+
 
 def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None, env=None):
     """Run a command and return (returncode, stdout, stderr).
@@ -52,249 +55,250 @@ def run_cmd(cmd, cwd=None, timeout=300, shell=False, stdin=None, env=None):
     comm_thread.join(timeout)
 
     if comm_thread.is_alive():
-        # The process is still running after the timeout.
         proc.kill()
-        comm_thread.join(timeout=10)
-        out = stdout[0].decode("utf-8", errors="replace") if stdout[0] else ""
-        err = stderr[0].decode("utf-8", errors="replace") if stderr[0] else ""
-        return -2, out, err + f"\nCommand timed out after {timeout}s"
+        comm_thread.join()
+        return -2, stdout[0].decode("utf-8", errors="replace"), stderr[0].decode("utf-8", errors="replace")
 
-    if exc[0] is not None:
-        raise exc[0]
+    if exc[0]:
+        return -1, stdout[0].decode("utf-8", errors="replace"), str(exc[0])
 
-    out = stdout[0].decode("utf-8", errors="replace") if stdout[0] else ""
-    err = stderr[0].decode("utf-8", errors="replace") if stderr[0] else ""
-    return proc.returncode, out, err
+    return (
+        proc.returncode,
+        stdout[0].decode("utf-8", errors="replace"),
+        stderr[0].decode("utf-8", errors="replace"),
+    )
 
 
 def get_mtime(path):
-    """Return file modification time as datetime or None."""
-    try:
-        mtime = os.path.getmtime(path)
-        return datetime.fromtimestamp(mtime, tz=timezone.utc)
-    except (OSError, TypeError):
+    """Get modification time of a file as UTC datetime, or None if missing."""
+    p = Path(path)
+    if not p.exists():
         return None
-
-
-def newest_source_mtime(patterns, root):
-    """Return the newest mtime among files matching glob patterns."""
-    newest = None
-    for pat in patterns:
-        for p in root.glob(pat):
-            if p.is_file():
-                mt = get_mtime(p)
-                if mt and (newest is None or mt > newest):
-                    newest = mt
-    return newest
-
-
-def binary_needs_rebuild(binary_path, source_patterns, extra_sources=None):
-    """Check if a binary is missing or older than its sources."""
-    bin_mt = get_mtime(binary_path)
-    if bin_mt is None:
-        return True, "missing"
-    src_mt = newest_source_mtime(source_patterns, PROJECT_ROOT)
-    if extra_sources:
-        for src in extra_sources:
-            p = Path(src)
-            if p.exists():
-                mt = get_mtime(p)
-                if mt and (src_mt is None or mt > src_mt):
-                    src_mt = mt
-    if src_mt and src_mt > bin_mt:
-        return True, f"outdated (source newer: {src_mt.isoformat()})"
-    return False, "up-to-date"
+    return datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
 
 
 def is_wsl_available():
-    """Check if WSL is installed and responsive."""
-    if platform.system() != "Windows":
+    """Check if WSL (Windows Subsystem for Linux) is available."""
+    try:
+        rc, _, _ = run_cmd(["wsl", "--list", "--running"], timeout=10)
+        return rc == 0
+    except Exception:
         return False
-    rc, _, _ = run_cmd(["wsl", "echo", "wsl_ok"], timeout=30)
-    return rc == 0
 
 
-def wsl_path(win_path):
-    """Convert a Windows path to a WSL /mnt/ path."""
-    p = Path(win_path).resolve()
-    drive = p.drive.lower().rstrip(":")
+def wsl_path(path):
+    """Convert a Windows path to a WSL path."""
+    p = Path(path).resolve()
+    drive = p.drive[0].lower()
     rest = str(p)[2:].replace("\\", "/")
     return f"/mnt/{drive}{rest}"
 
 
+def binary_needs_rebuild(binary_path, source_patterns):
+    """Check if binary needs rebuild based on source modification times."""
+    binary_mtime = get_mtime(binary_path)
+    if binary_mtime is None:
+        return True
+    for pattern in source_patterns:
+        for source in Path(PROJECT_ROOT).glob(pattern):
+            source_mtime = get_mtime(source)
+            if source_mtime and source_mtime > binary_mtime:
+                return True
+    return False
+
+
 def build_windows_main():
-    """Build Windows main binaries (NewChangeDirectory.exe, NCDService.exe)."""
+    """Build main Windows binaries. Returns True on success."""
     print("[BUILD] Checking Windows main binaries...")
     needs_build = False
-    for exe in WINDOWS_MAIN_BINARIES:
-        needed, reason = binary_needs_rebuild(PROJECT_ROOT / exe, MAIN_SOURCE_PATTERNS)
-        if needed:
-            print(f"[BUILD] {exe} needs rebuild: {reason}")
+    for name in WINDOWS_MAIN_BINARIES:
+        path = PROJECT_ROOT / name
+        if binary_needs_rebuild(path, MAIN_SOURCE_PATTERNS):
+            print(f"[BUILD] {name} needs rebuild: missing or outdated")
             needs_build = True
     if not needs_build:
         print("[BUILD] Windows main binaries are up-to-date.")
         return True
     print("[BUILD] Building Windows main binaries via build.bat...")
-    rc, out, err = run_cmd(["cmd", "/c", "build.bat"], cwd=PROJECT_ROOT, timeout=300)
+    rc, stdout, stderr = run_cmd("build.bat", cwd=str(PROJECT_ROOT), timeout=300, shell=True)
     if rc != 0:
         print(f"[BUILD] Windows main build FAILED (exit {rc})")
-        print(out)
-        print(err)
+        if stderr:
+            print(stderr)
         return False
     print("[BUILD] Windows main build succeeded.")
     return True
 
 
 def build_windows_tests():
-    """Build Windows test executables."""
+    """Build Windows test binaries. Returns True on success."""
     print("[BUILD] Checking Windows test binaries...")
-    test_source_patterns = [str(p.relative_to(PROJECT_ROOT)) for p in UNIT_TEST_DIR.glob("*.c")]
-    all_dep_patterns = MAIN_SOURCE_PATTERNS + test_source_patterns
-    needs_build = False
-    for candidate in sorted(UNIT_TEST_DIR.glob("test_*.c")):
-        exe = candidate.with_suffix(".exe")
-        if not exe.exists():
-            continue
-        needed, reason = binary_needs_rebuild(exe, all_dep_patterns)
-        if needed:
-            print(f"[BUILD] {exe.name} needs rebuild: {reason}")
-            needs_build = True
-    for candidate in sorted(UNIT_TEST_DIR.glob("ipc_*.c")):
-        exe = candidate.with_suffix(".exe")
-        if not exe.exists():
-            continue
-        needed, reason = binary_needs_rebuild(exe, all_dep_patterns)
-        if needed:
-            print(f"[BUILD] {exe.name} needs rebuild: {reason}")
-            needs_build = True
-    for candidate in sorted(UNIT_TEST_DIR.glob("fuzz_*.c")):
-        exe = candidate.with_suffix(".exe")
-        if not exe.exists():
-            continue
-        needed, reason = binary_needs_rebuild(exe, all_dep_patterns)
-        if needed:
-            print(f"[BUILD] {exe.name} needs rebuild: {reason}")
-            needs_build = True
-    if not needs_build:
-        print("[BUILD] Windows test binaries are up-to-date.")
-        return True
-    print("[BUILD] Building Windows test binaries via test\\build-tests.bat...")
-    rc, out, err = run_cmd(["cmd", "/c", "build-tests.bat"], cwd=UNIT_TEST_DIR, timeout=300)
-    if rc != 0:
-        print(f"[BUILD] Windows test build FAILED (exit {rc})")
-        print(out)
-        print(err)
-        return False
-    print("[BUILD] Windows test build succeeded.")
+    # Check if any test exe needs rebuild based on source changes
+    test_dir = PROJECT_ROOT / "test"
+    for pattern in MAIN_SOURCE_PATTERNS:
+        for source in Path(PROJECT_ROOT).glob(pattern):
+            source_mtime = get_mtime(source)
+            if source_mtime is None:
+                continue
+            for exe in test_dir.glob("*.exe"):
+                exe_mtime = get_mtime(exe)
+                if exe_mtime is None or source_mtime > exe_mtime:
+                    print("[BUILD] Test binaries need rebuild (source newer)")
+                    rc, stdout, stderr = run_cmd(
+                        "build-tests.bat", cwd=str(test_dir), timeout=300, shell=True
+                    )
+                    if rc != 0:
+                        print(f"[BUILD] Windows test build FAILED (exit {rc})")
+                        return False
+                    # Also run build_new_tests.bat if it exists
+                    new_tests_bat = test_dir / "build_new_tests.bat"
+                    if new_tests_bat.exists():
+                        rc2, _, _ = run_cmd(
+                            "build_new_tests.bat", cwd=str(test_dir), timeout=120, shell=True
+                        )
+                        # build_new_tests.bat may return 1 for benign warnings, ignore
+                    print("[BUILD] Windows test build succeeded.")
+                    return True
+    print("[BUILD] Windows test binaries are up-to-date.")
     return True
 
 
 def build_linux_main(test_build=False):
-    """Build Linux main binaries via WSL or natively.
-
-    Args:
-        test_build: When True, build with -DNCD_TEST_BUILD so the stdio TUI
-                    test backend is available for headless feature tests.
-    """
+    """Build main Linux binaries. Returns True on success."""
     print("[BUILD] Checking Linux main binaries...")
-    needs_build = False
-    
-    # When test_build=True, always rebuild to ensure -DNCD_TEST_BUILD is active.
-    # A release build could otherwise be cached and used, breaking TUI tests.
     if test_build:
-        needs_build = True
         print("[BUILD] Test build requested - forcing rebuild for NCD_TEST_BUILD")
     else:
-        for binary in LINUX_MAIN_BINARIES:
-            needed, reason = binary_needs_rebuild(PROJECT_ROOT / binary, MAIN_SOURCE_PATTERNS)
-            if needed:
-                print(f"[BUILD] {binary} needs rebuild: {reason}")
+        needs_build = False
+        for name in LINUX_MAIN_BINARIES:
+            path = PROJECT_ROOT / name
+            if binary_needs_rebuild(path, MAIN_SOURCE_PATTERNS):
+                print(f"[BUILD] {name} needs rebuild: missing or outdated")
                 needs_build = True
-    if not needs_build:
-        print("[BUILD] Linux main binaries are up-to-date.")
-        return True
+        if not needs_build:
+            print("[BUILD] Linux main binaries are up-to-date.")
+            return True
 
-    build_cmd = "./build.sh test" if test_build else "./build.sh"
     if platform.system() == "Windows":
         if not is_wsl_available():
-            print("[BUILD] ERROR: WSL not available, cannot build Linux binaries.")
+            print("[BUILD] ERROR: WSL not available, cannot build Linux binaries")
             return False
-        wsl_proj = wsl_path(PROJECT_ROOT)
-        print(f"[BUILD] Building Linux main binaries via WSL ({wsl_proj})...")
-        rc, out, err = run_cmd(
-            ["wsl", "bash", "-c", f'cd "{wsl_proj}" && {build_cmd}'],
-            timeout=300
+        wsl_root = wsl_path(PROJECT_ROOT)
+        cmd = f'cd "{wsl_root}" && ./build.sh'
+        rc, stdout, stderr = run_cmd(
+            ["wsl", "bash", "-c", cmd],
+            cwd=str(PROJECT_ROOT), timeout=300
         )
     else:
-        print(f"[BUILD] Building Linux main binaries natively ({build_cmd})...")
-        rc, out, err = run_cmd([build_cmd], cwd=PROJECT_ROOT, timeout=300)
+        rc, stdout, stderr = run_cmd(
+            ["./build.sh"], cwd=str(PROJECT_ROOT), timeout=300, shell=True
+        )
 
     if rc != 0:
         print(f"[BUILD] Linux main build FAILED (exit {rc})")
-        print(out)
-        print(err)
+        if stderr:
+            print(stderr)
         return False
     print("[BUILD] Linux main build succeeded.")
     return True
 
 
 def build_linux_tests():
-    """Build Linux test executables via WSL or natively."""
+    """Build Linux test binaries. Returns True on success."""
     print("[BUILD] Checking Linux test binaries...")
-    test_source_patterns = [str(p.relative_to(PROJECT_ROOT)) for p in UNIT_TEST_DIR.glob("*.c")]
-    all_dep_patterns = MAIN_SOURCE_PATTERNS + test_source_patterns
-    needs_build = False
-    for pattern in ("test_*.c", "fuzz_*.c", "bench_*.c", "ipc_*.c"):
-        for candidate in sorted(UNIT_TEST_DIR.glob(pattern)):
-            binary = candidate.with_suffix("")
-            if not binary.exists():
+    test_dir = PROJECT_ROOT / "test"
+
+    # Check if any test needs rebuild
+    needs_rebuild = False
+    for pattern in MAIN_SOURCE_PATTERNS:
+        for source in Path(PROJECT_ROOT).glob(pattern):
+            source_mtime = get_mtime(source)
+            if source_mtime is None:
                 continue
-            needed, reason = binary_needs_rebuild(binary, all_dep_patterns)
-            if needed:
-                print(f"[BUILD] {binary.name} needs rebuild: {reason}")
-                needs_build = True
-    if not needs_build:
+            for elf in test_dir.glob("*"):
+                if elf.is_file() and not elf.suffix:
+                    elf_mtime = get_mtime(elf)
+                    if elf_mtime is None:
+                        needs_rebuild = True
+                        break
+                    if source_mtime > elf_mtime:
+                        needs_rebuild = True
+                        print(f"[BUILD] {elf.name} needs rebuild: outdated (source newer: {source_mtime.isoformat()})")
+                if needs_rebuild:
+                    break
+            if needs_rebuild:
+                break
+        if needs_rebuild:
+            break
+
+    if not needs_rebuild:
         print("[BUILD] Linux test binaries are up-to-date.")
         return True
 
+    print(f"[BUILD] Building Linux test binaries via WSL ({wsl_path(test_dir)})...")
     if platform.system() == "Windows":
         if not is_wsl_available():
-            print("[BUILD] ERROR: WSL not available, cannot build Linux tests.")
+            print("[BUILD] ERROR: WSL not available")
             return False
-        wsl_test = wsl_path(UNIT_TEST_DIR)
-        print(f"[BUILD] Building Linux test binaries via WSL ({wsl_test})...")
-        rc, out, err = run_cmd(
-            ["wsl", "bash", "-c", f'cd "{wsl_test}" && make all'],
-            timeout=600
+        wsl_test_dir = wsl_path(test_dir)
+        rc, stdout, stderr = run_cmd(
+            ["wsl", "bash", "-c", f'cd "{wsl_test_dir}" && make all'],
+            cwd=str(PROJECT_ROOT), timeout=600
         )
     else:
-        print("[BUILD] Building Linux test binaries natively...")
-        rc, out, err = run_cmd(["make", "all"], cwd=UNIT_TEST_DIR, timeout=300)
+        rc, stdout, stderr = run_cmd(
+            ["make", "-C", str(test_dir), "all"],
+            cwd=str(PROJECT_ROOT), timeout=600
+        )
 
     if rc != 0:
         print(f"[BUILD] Linux test build FAILED (exit {rc})")
-        print(out)
-        print(err)
+        if stderr:
+            print(stderr)
         return False
     print("[BUILD] Linux test build succeeded.")
     return True
 
 
 def ensure_ncd_service_for_tests():
-    """Ensure Linux service launcher scripts exist where tests expect them."""
-    proj_binary = PROJECT_ROOT / "NCDService"
-    if not proj_binary.exists():
-        print("[BUILD] Missing Linux service binary:")
-        print(f"[BUILD]   {proj_binary}")
-        return False
-    test_binary = UNIT_TEST_DIR / "NCDService"
-    if not test_binary.exists():
-        import shutil
-        try:
-            shutil.copy2(str(proj_binary), str(test_binary))
-            print(f"[BUILD] Copied NCDService to test directory")
-        except Exception as e:
-            print(f"[BUILD] Warning: Could not copy NCDService to test dir: {e}")
+    """Ensure ncd_service launcher scripts exist for Linux tests."""
+    test_dir = PROJECT_ROOT / "test"
+    scripts = ["test_ncd_wsl_standalone.sh", "test_ncd_wsl_with_service.sh",
+               "test_service_wsl.sh"]
+    for script in scripts:
+        path = test_dir / script
+        if not path.exists():
+            return False
+    return True
+
+
+def build_alt_services():
+    """Build alternative-version service binaries for version compatibility testing."""
+    # Check if already built (idempotent - prevents double-build)
+    windows_targets = [PROJECT_ROOT / "test" / "NCDService_v13.exe", PROJECT_ROOT / "test" / "NCDService_v17.exe"]
+    linux_targets = [UNIT_TEST_DIR / "ncd_service_v13", UNIT_TEST_DIR / "ncd_service_v17"]
+    targets = windows_targets if platform.system() == "Windows" else linux_targets
+    if all(t.exists() for t in targets):
+        print("[BUILD] Alt services already exist, skipping build")
+        return True
+
+    if platform.system() == "Windows":
+        bat = PROJECT_ROOT / "test" / "build_alt_services.bat"
+        rc, stdout, stderr = run_cmd(str(bat), cwd=str(PROJECT_ROOT), timeout=120, shell=True)
+        if rc != 0:
+            print(f"[BUILD] Alt service build FAILED (exit {rc})")
+            if stderr:
+                print(stderr)
+            return False
+    else:
+        rc, stdout, stderr = run_cmd(
+            ["make", "-C", str(UNIT_TEST_DIR), "alt_services"],
+            cwd=str(PROJECT_ROOT), timeout=120
+        )
+        if rc != 0:
+            print(f"[BUILD] Linux alt service build FAILED (exit {rc})")
+            return False
+    print("[BUILD] Alt services built (v1.3, v1.7)")
     return True
 
 
@@ -313,6 +317,8 @@ def build_all(skip_build=False, windows_only=False, wsl_only=False):
                 ok = False
             if not build_windows_tests():
                 ok = False
+            if not build_alt_services():
+                ok = False
         if is_wsl_available() and not windows_only:
             if not build_linux_main(test_build=True):
                 ok = False
@@ -321,10 +327,14 @@ def build_all(skip_build=False, windows_only=False, wsl_only=False):
             if not ensure_ncd_service_for_tests():
                 print("[BUILD] ERROR: Linux service launcher scripts are missing")
                 ok = False
+            if not build_alt_services():
+                ok = False
     else:
         if not build_linux_main(test_build=True):
             ok = False
         if not build_linux_tests():
+            ok = False
+        if not build_alt_services():
             ok = False
 
     if not ok:

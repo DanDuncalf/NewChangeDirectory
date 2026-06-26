@@ -54,6 +54,8 @@ from ncd_testlib.build import (
     is_wsl_available,
     WINDOWS_MAIN_BINARIES,
     LINUX_MAIN_BINARIES,
+    WINDOWS_ALT_SERVICE_BINARIES,
+    LINUX_ALT_SERVICE_BINARIES,
 )
 from ncd_testlib.discovery import discover_unit_tests
 from ncd_testlib.executor import run_test_binary, parse_unit_output
@@ -565,6 +567,13 @@ def main():
         build_info["windows_main"][exe] = get_mtime(p)
     for binary in LINUX_MAIN_BINARIES:
         p = PROJECT_ROOT / binary
+        build_info["linux_main"][binary] = get_mtime(p)
+    # Alt service binaries (for version compatibility testing)
+    for exe in WINDOWS_ALT_SERVICE_BINARIES:
+        p = PROJECT_ROOT / "test" / exe
+        build_info["windows_main"][exe] = get_mtime(p)
+    for binary in LINUX_ALT_SERVICE_BINARIES:
+        p = PROJECT_ROOT / "test" / binary
         build_info["linux_main"][binary] = get_mtime(p)
 
     discovered = discover_unit_tests()

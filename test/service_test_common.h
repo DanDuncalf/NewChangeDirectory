@@ -82,6 +82,32 @@ void wait_for_service_fully_exited(int timeout_seconds);
 #define GRACEFUL_SHUTDOWN_TIMEOUT 3
 
 /* ------------------------------------------------------------------
+ * Alternative service binary support (for cross-version testing)
+ * ------------------------------------------------------------------ */
+
+/* Platform-specific names for alternative-version service binaries */
+#if NCD_PLATFORM_WINDOWS
+#define ALT_SERVICE_V13  "NCDService_v13.exe"
+#define ALT_SERVICE_V17  "NCDService_v17.exe"
+#else
+#define ALT_SERVICE_V13  "./ncd_service_v13"
+#define ALT_SERVICE_V17  "./ncd_service_v17"
+#endif
+
+/* Override which service binary to use for subsequent commands.
+ * Pass NULL or empty string to clear override. */
+void service_set_exe_override(const char *binary_name);
+
+/* Clear any override, reverting to the default service binary. */
+void service_clear_exe_override(void);
+
+/* Check if an alternative service binary exists. */
+bool alt_service_exists(const char *binary_name);
+
+/* Start service using a specific binary name. Returns true if started. */
+bool ensure_service_running_with(const char *binary_name, int timeout_seconds);
+
+/* ------------------------------------------------------------------
  * Service lifecycle helpers
  * ------------------------------------------------------------------ */
 

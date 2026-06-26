@@ -32,8 +32,7 @@ defaults:
 # ──────────────────────────────────────────────────────────────────────
 # Environment variables shared across jobs
 # ──────────────────────────────────────────────────────────────────────
-env:
-  NCD_VERSION: "1.5.0"
+# NCD_VERSION derived from src/control_ipc.h in package job below
 
 jobs:
 
@@ -319,6 +318,12 @@ jobs:
       - name: Checkout repository (for packaging scripts)
         uses: actions/checkout@v4
 
+      - name: Extract NCD version from source
+        id: ncd_version
+        run: |
+          VER="$(grep -oP 'NCD_APP_VERSION\s+"\K[^"]+' src/control_ipc.h).0"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
       - name: Download all built binaries
         uses: actions/download-artifact@v4
         with:
@@ -410,26 +415,26 @@ jobs:
 
           # Windows x64 — ZIP
           if [ -d pkg/win-x64 ] && [ "$(ls -A pkg/win-x64/NewChangeDirectory.exe 2>/dev/null)" ]; then
-            (cd pkg/win-x64 && zip -r ../../dist/NCD-${{ env.NCD_VERSION }}-windows-x64.zip .)
-            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-windows-x64.zip"
+            (cd pkg/win-x64 && zip -r ../../dist/NCD-${{ steps.ncd_version.outputs.version }}-windows-x64.zip .)
+            echo "Created: dist/NCD-${{ steps.ncd_version.outputs.version }}-windows-x64.zip"
           fi
 
           # Linux x64 — tar.gz
           if [ -f pkg/linux-x64/NewChangeDirectory ]; then
-            (cd pkg/linux-x64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-x64.tar.gz .)
-            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-x64.tar.gz"
+            (cd pkg/linux-x64 && tar -czf ../../dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-x64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-x64.tar.gz"
           fi
 
           # Linux ARM64 — tar.gz
           if [ -f pkg/linux-arm64/NewChangeDirectory_arm64 ]; then
-            (cd pkg/linux-arm64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-arm64.tar.gz .)
-            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-arm64.tar.gz"
+            (cd pkg/linux-arm64 && tar -czf ../../dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-arm64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-arm64.tar.gz"
           fi
 
           # Linux RISC-V — tar.gz
           if [ -f pkg/linux-riscv64/NewChangeDirectory_riscv64 ]; then
-            (cd pkg/linux-riscv64 && tar -czf ../../dist/NCD-${{ env.NCD_VERSION }}-linux-riscv64.tar.gz .)
-            echo "Created: dist/NCD-${{ env.NCD_VERSION }}-linux-riscv64.tar.gz"
+            (cd pkg/linux-riscv64 && tar -czf ../../dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-riscv64.tar.gz .)
+            echo "Created: dist/NCD-${{ steps.ncd_version.outputs.version }}-linux-riscv64.tar.gz"
           fi
 
       - name: List distribution packages

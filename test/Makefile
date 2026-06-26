@@ -17,6 +17,16 @@ DB_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_S
 MATCHER_SOURCES = ../src/matcher.c ../src/database.c ../src/platform_ncd.c $(SHARED_SOURCES)
 HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
+# Alternative-version service binaries (for version compatibility testing)
+SERVICE_SRCS = ../src/service_main.c ../src/ui.c ../src/service_state.c \
+    ../src/service_publish.c ../src/state_backend_service.c \
+    ../src/state_backend_local.c ../src/database.c ../src/scanner.c \
+    ../src/matcher.c ../src/platform_ncd.c ../src/cli.c ../src/result.c \
+    ../src/shared_state.c ../src/shm_types.c ../src/shm_platform_posix.c \
+    ../src/control_ipc_common.c ../src/control_ipc_posix.c \
+    ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
+SERVICE_LIBS = -lpthread -lrt -lm
+
 # Test executables (note: test_agent_mkdir and test_mkdirs skipped - use internal main.c enums not in headers)
 TESTS = test_database test_matcher test_history test_config \
         test_strbuilder test_common test_platform test_metadata test_scanner \
@@ -40,7 +50,7 @@ TESTS = test_database test_matcher test_history test_config \
         test_result_edge_cases test_stress \
         test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify
 
-.PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone
+.PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone alt_services
 
 all: $(TESTS)
 
@@ -599,6 +609,15 @@ ipc-tests: ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
 service_race_tester: service_race_tester.c ipc_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Alternative-version service binaries for version compatibility testing
+ncd_service_v13: $(SERVICE_SRCS)
+	$(CC) $(CFLAGS) -DNCD_APP_VERSION=\"1.3\" -I../src -I../../shared -o ncd_service_v13 $(SERVICE_SRCS) $(LDFLAGS) $(SERVICE_LIBS)
+
+ncd_service_v17: $(SERVICE_SRCS)
+	$(CC) $(CFLAGS) -DNCD_APP_VERSION=\"1.7\" -I../src -I../../shared -o ncd_service_v17 $(SERVICE_SRCS) $(LDFLAGS) $(SERVICE_LIBS)
+
+alt_services: ncd_service_v13 ncd_service_v17
+
 clean:
 	rm -rf $(OBJDIR) $(TESTS) *.tmp *.database
 	rm -f ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test
@@ -606,6 +625,7 @@ clean:
 	rm -f ipc_fuzzer ipc_stress_test
 	rm -f stress_test.db
 	rm -f test_service_stress test_service_rescan test_service_init_db test_ipc_extended test_shm_stress fuzz_ipc
+	rm -f ncd_service_v13 ncd_service_v17
 
 # Windows-specific test builds
 win-test:

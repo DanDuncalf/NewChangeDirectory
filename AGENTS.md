@@ -251,14 +251,12 @@ python test\runner.py --repair       # Fix corrupted test environment
 ### Release Policy
 
 **No release tag may be pushed until ALL tests pass with zero failures and zero skips.**
-Every release must bump the version number in all of these files:
-- `.github/workflows/ci.yml` — `NCD_VERSION`
-- `.github/workflows/release.yml` — `NCD_VERSION`
-- `Create-Packages.ps1` — `$Version` parameter default
-- `packaging/windows/NCD.iss` — `MyAppVersion`
-- `mcp_server/pyproject.toml` — `version`
-- `AGENTS.md` — compatibility matrix table
-- Winget manifests under `packaging/winget/`
+Every release must bump the version number in:
+- **`src/control_ipc.h`** — `NCD_APP_VERSION` (single source of truth; all other files derive from it)
+- **`mcp_server/_version.py`** — `__version__` (Python build cannot parse C headers; must match NCD_APP_VERSION + `.0`)
+- **Winget manifests** under `packaging/winget/` — `PackageVersion` and release URLs (manually maintained per-release)
+
+> CI workflows, `Create-Packages.ps1`, `NCD.iss`, and `AGENTS.md` compatibility table now derive the version from `src/control_ipc.h` automatically.
 
 After bumping, run `python test/runner.py --quick` to confirm tests pass before pushing.
 
@@ -606,9 +604,11 @@ NCD maintains version compatibility between the client (`NewChangeDirectory.exe`
 
 | Client Version | Min Service Version | Compatible Service Versions |
 |----------------|---------------------|----------------------------|
-| 1.5.x | 1.5.0 | 1.5.0 - 1.5.x |
+| {NCD_APP_VERSION}.x | {NCD_APP_VERSION}.0 | {NCD_APP_VERSION}.0 - {NCD_APP_VERSION}.x |
 | 1.3.x | 1.3.1 | 1.3.0 - 1.3.x |
 | 1.2.x | 1.2.0 | 1.2.0 - 1.3.x (forward compatible) |
+
+> **Note:** `{NCD_APP_VERSION}` refers to the value in `src/control_ipc.h` (currently `"1.6"`). The `.0` / `.x` suffixes produce full semver strings like `1.6.0` and `1.6.x`.
 
 **Upgrade/Downgrade Procedures:**
 

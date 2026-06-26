@@ -166,8 +166,8 @@ echo ========================================
 echo Build successful for all architectures
 echo ========================================
 
-:: Clean up intermediate files
-rmdir /s /q %OBJDIR% 2>nul
+:: Clean up intermediate files (skip if NCD_KEEP_OBJ is set for alt-service builds)
+if not defined NCD_KEEP_OBJ rmdir /s /q %OBJDIR% 2>nul
 
 goto :end
 

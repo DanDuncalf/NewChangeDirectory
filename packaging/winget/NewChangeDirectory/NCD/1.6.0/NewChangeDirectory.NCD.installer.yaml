@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: NewChangeDirectory.NCD
+PackageVersion: 1.6.0
+MinimumOSVersion: 10.0.17763.0
+InstallerType: zip
+NestedInstallerType: portable
+ReleaseDate: 2026-06-10
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/YOUR-ORG/YOUR-REPO/releases/download/v1.6.0/NCD-1.6.0-windows-x64.zip
+    InstallerSha256: A52E0001B94EA18E5615162376CFFA19907561DB302D00A57D02454D49820E94
+    NestedInstallerFiles:
+      - RelativeFilePath: bin\ncd.bat
+        PortableCommandAlias: ncd
+      - RelativeFilePath: bin\ncd_service.bat
+        PortableCommandAlias: ncd_service
+      - RelativeFilePath: bin\NewChangeDirectory.exe
+        PortableCommandAlias: NewChangeDirectory
+      - RelativeFilePath: bin\NCDService.exe
+        PortableCommandAlias: NCDService
+  - Architecture: arm64
+    InstallerUrl: https://github.com/YOUR-ORG/YOUR-REPO/releases/download/v1.6.0/NCD-1.6.0-windows-arm64.zip
+    InstallerSha256: 45BE5FFE252814D3AFC5D0FA6252B17A15AF4B776BCF4D1E8A75F97C0043548C
+    NestedInstallerFiles:
+      - RelativeFilePath: bin\ncd.bat
+        PortableCommandAlias: ncd
+      - RelativeFilePath: bin\ncd_service.bat
+        PortableCommandAlias: ncd_service
+      - RelativeFilePath: bin\NewChangeDirectory.exe
+        PortableCommandAlias: NewChangeDirectory
+      - RelativeFilePath: bin\NCDService.exe
+        PortableCommandAlias: NCDService
+ManifestType: installer
+ManifestVersion: 1.6.0

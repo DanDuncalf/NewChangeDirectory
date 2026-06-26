@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ncd-mcp-server"
-version = "1.5.0"
+dynamic = ["version"]
 description = "MCP server for NewChangeDirectory (NCD)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,9 @@ dependencies = [
 
 [project.scripts]
 ncd-mcp-server = "ncd_mcp_server:main"
+
+[tool.hatch.version]
+path = "mcp_server/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ncd_mcp_server.py"]

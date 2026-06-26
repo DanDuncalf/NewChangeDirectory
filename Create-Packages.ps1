@@ -15,12 +15,19 @@ param(
     [switch]$SkipWindowsArm64,
     [switch]$SkipLinuxArm64,
     [switch]$SkipLinuxRiscv,
-    [string]$Version = "1.5.0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
-
 $ProjectRoot = $PSScriptRoot
+
+# Extract version from single source if not provided
+if (-not $Version) {
+    $hdrPath = Join-Path $ProjectRoot "src\control_ipc.h"
+    $match = Select-String -Path $hdrPath -Pattern 'NCD_APP_VERSION\s+"([^"]+)"'
+    $Version = "$($match.Matches.Groups[1].Value).0"
+}
+
 $DistDir = Join-Path $ProjectRoot "dist"
 $PackagingDir = Join-Path $ProjectRoot "packaging"
 $SharedDir = Join-Path (Join-Path $ProjectRoot "..") "shared"
@@ -358,6 +365,16 @@ if (-not $SkipLinuxBuild -and -not $SkipLinuxRiscv) {
         Write-Host "Created: $tarPath" -ForegroundColor Green
     }
 }
+
+# ========================================================================
+# Generate Inno Setup version include
+# ========================================================================
+
+$issVersion = @"
+#define MyAppVersion `"$Version`"
+"@
+$issVersion | Out-File -Encoding ASCII "$PSScriptRoot\packaging\windows\NCD_version.iss"
+Write-Host "Generated: packaging\windows\NCD_version.iss (version=$Version)"
 
 # ========================================================================
 # Summary

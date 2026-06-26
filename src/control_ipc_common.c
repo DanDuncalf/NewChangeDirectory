@@ -343,6 +343,15 @@ NcdIpcResult ipc_client_get_version(NcdIpcClient *client, NcdIpcVersionInfo *inf
     return NCD_IPC_OK;
 }
 
+/* Compare version strings like "1.5" vs "1.7". Returns <0, 0, >0. */
+static int cmp_version(const char *a, const char *b) {
+    int ma = 0, mi = 0, mb = 0, mj = 0;
+    (void)sscanf(a, "%d.%d", &ma, &mi);
+    (void)sscanf(b, "%d.%d", &mb, &mj);
+    if (ma != mb) return ma - mb;
+    return mi - mj;
+}
+
 NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
                                       const char *client_version,
                                       const char *client_build,
@@ -374,40 +383,56 @@ NcdIpcResult ipc_client_check_version(NcdIpcClient *client,
         result->versions_match = true;
         result->service_was_stopped = false;
         snprintf(result->message, sizeof(result->message),
-                 "Versions match: %s", client_version);
+                 "OK: Client and service both v%s", client_version);
         return NCD_IPC_OK;
     }
     
-    /* Versions don't match - request service shutdown */
+    /* Versions don't match */
     result->versions_match = false;
     
-    /* 
-     * Send shutdown request - pipe may be closed by service after response.
-     * This is expected behavior: service sends response then exits immediately.
-     */
-    ipc_result = ipc_client_request_shutdown(client);
+    int dir = cmp_version(client_version, service_info.app_version);
     
-    /* 
-     * P1.1a: Unified behavior - treat both NCD_IPC_OK and NCD_IPC_ERROR_NOT_FOUND
-     * as success. NOT_FOUND means the service pipe/socket was closed after the
-     * shutdown response, which is expected (service exited). Previously POSIX
-     * did not handle this case, causing spurious failures.
-     */
-    if (ipc_result == NCD_IPC_OK || ipc_result == NCD_IPC_ERROR_NOT_FOUND) {
-        result->service_was_stopped = true;
-        snprintf(result->message, sizeof(result->message),
-                 "Version mismatch detected. Client: %s (%s), Service: %s (%s). "
-                 "Service has been gracefully stopped.",
-                 client_version, client_build,
-                 service_info.app_version, service_info.build_stamp);
+    if (dir > 0) {
+        /* Client is newer than service (service outdated) — stop old service */
+        ipc_result = ipc_client_request_shutdown(client);
+        
+        if (ipc_result == NCD_IPC_OK || ipc_result == NCD_IPC_ERROR_NOT_FOUND) {
+            result->service_was_stopped = true;
+#if defined(_WIN32)
+            snprintf(result->message, sizeof(result->message),
+                     "Service v%s is outdated (client v%s). Service stopped. "
+                     "If it persists: taskkill /F /IM NCDService.exe. "
+                     "Then: NCDService.exe start",
+                     service_info.app_version, client_version);
+#else
+            snprintf(result->message, sizeof(result->message),
+                     "Service v%s is outdated (client v%s). Service stopped. "
+                     "If it persists: pkill -9 ncd_service. "
+                     "Then: ncd_service start",
+                     service_info.app_version, client_version);
+#endif
+        } else {
+            result->service_was_stopped = false;
+            snprintf(result->message, sizeof(result->message),
+                     "Service v%s is outdated (client v%s). "
+                     "Failed to stop service: %s",
+                     service_info.app_version, client_version,
+                     ipc_error_string(ipc_result));
+        }
     } else {
+        /* Client is older than service (client outdated) — do NOT shutdown */
         result->service_was_stopped = false;
+#if defined(_WIN32)
         snprintf(result->message, sizeof(result->message),
-                 "Version mismatch detected. Client: %s (%s), Service: %s (%s). "
-                 "Failed to stop service: %s",
-                 client_version, client_build,
-                 service_info.app_version, service_info.build_stamp,
-                 ipc_error_string(ipc_result));
+                 "Client v%s is outdated (service is v%s). "
+                 "Upgrade NCD to v%s. To stop service: NCDService.exe stop",
+                 client_version, service_info.app_version, service_info.app_version);
+#else
+        snprintf(result->message, sizeof(result->message),
+                 "Client v%s is outdated (service is v%s). "
+                 "Upgrade NCD to v%s. To stop service: ncd_service stop",
+                 client_version, service_info.app_version, service_info.app_version);
+#endif
     }
     
     return NCD_IPC_ERROR_GENERIC;

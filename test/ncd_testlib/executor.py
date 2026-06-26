@@ -63,7 +63,7 @@ def run_test_binary(path, platform_label, timeout=60):
     else:
         env = dict(os.environ)
         env.setdefault("NCD_TEST_MODE", "1")
-        rc, out, err = run_cmd([str(path)], timeout=timeout, env=env)
+        rc, out, err = run_cmd([str(path)], timeout=timeout, env=env, cwd=str(Path(path).parent))
     return out + err
 
 

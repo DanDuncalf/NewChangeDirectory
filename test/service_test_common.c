@@ -5,31 +5,47 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+static char g_service_exe_override[256] = {0};
+
 /* ==================================================================
  * Service executable path resolution
  * ================================================================== */
 
 const char *service_get_executable_path(void) {
+    if (g_service_exe_override[0]) {
+        return g_service_exe_override;
+    }
 #if NCD_PLATFORM_WINDOWS
     DWORD attribs = GetFileAttributesA("NCDService.exe");
     if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
         return "NCDService.exe";
+    /* Try parent directory */
+    attribs = GetFileAttributesA("..\\NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "..\\NCDService.exe";
+    /* Also try grandparent (from test/temp dir to project root) */
+    attribs = GetFileAttributesA("..\\..\\NCDService.exe");
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return "..\\..\\NCDService.exe";
     return "..\\NCDService.exe";
 #else
     /* build.sh produces NCDService; manual builds may use ncd_service */
     if (access("NCDService", X_OK) == 0) return "./NCDService";
     if (access("ncd_service", X_OK) == 0) return "./ncd_service";
     if (access("../NCDService", X_OK) == 0) return "../NCDService";
+    /* Also try grandparent (from test/temp dir to project root) */
+    if (access("../../NCDService", X_OK) == 0) return "../../NCDService";
     return "../ncd_service";
 #endif
 }
 
 bool service_executable_exists(void) {
+    const char *path = service_get_executable_path();
 #if NCD_PLATFORM_WINDOWS
-    DWORD attribs = GetFileAttributesA(service_get_executable_path());
+    DWORD attribs = GetFileAttributesA(path);
     return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
 #else
-    return (access(service_get_executable_path(), X_OK) == 0);
+    return (access(path, X_OK) == 0);
 #endif
 }
 
@@ -340,4 +356,58 @@ bool wait_until(wait_condition_fn cond, int timeout_ms, int interval_ms) {
         elapsed += interval_ms;
     }
     return cond(); /* One final check */
+}
+
+/* ==================================================================
+ * Alternative service binary support
+ * ================================================================== */
+
+void service_set_exe_override(const char *binary_name) {
+    if (binary_name && binary_name[0]) {
+        strncpy(g_service_exe_override, binary_name, sizeof(g_service_exe_override) - 1);
+        g_service_exe_override[sizeof(g_service_exe_override) - 1] = '\0';
+    } else {
+        g_service_exe_override[0] = '\0';
+    }
+}
+
+void service_clear_exe_override(void) {
+    g_service_exe_override[0] = '\0';
+}
+
+bool alt_service_exists(const char *binary_name) {
+    if (!binary_name || !binary_name[0]) return false;
+#if NCD_PLATFORM_WINDOWS
+    DWORD attribs = GetFileAttributesA(binary_name);
+    if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        return true;
+    /* Try test\ prefix (tests may run from a temp directory) */
+    char alt_path[512];
+    snprintf(alt_path, sizeof(alt_path), "test\\%s", binary_name);
+    attribs = GetFileAttributesA(alt_path);
+    return (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    if (access(binary_name, X_OK) == 0) return true;
+    /* Try test/ prefix (tests may run from a temp directory) */
+    char alt_path[512];
+    snprintf(alt_path, sizeof(alt_path), "test/%s", binary_name);
+    return (access(alt_path, X_OK) == 0);
+#endif
+}
+
+bool ensure_service_running_with(const char *binary_name, int timeout_seconds) {
+    if (!alt_service_exists(binary_name)) return false;
+    
+    /* Stop any existing service first */
+    ensure_service_stopped();
+    
+    /* Set override and start */
+    service_set_exe_override(binary_name);
+    run_service_command("start", NULL, 0);
+    
+    bool started = wait_for_service_state(true, timeout_seconds);
+    if (!started) {
+        service_clear_exe_override();
+    }
+    return started;
 }

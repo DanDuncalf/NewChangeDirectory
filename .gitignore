@@ -388,6 +388,12 @@ logs/
 # Graphify knowledge graph output (regenerated locally with `graphify build`, not committed)
 graphify-out/
 
+# Generated version include for Inno Setup (derived from src/control_ipc.h)
+packaging/windows/NCD_version.iss
+
+# Generated version file for MCP server (derived from src/control_ipc.h)
+mcp_server/_version.py
+
 # Claude Code directory (machine-local config + scratch notes; project has no shared Claude config)
 /.claude/
 
