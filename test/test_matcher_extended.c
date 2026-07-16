@@ -608,29 +608,28 @@ TEST(match_dedup_duplicate_paths) {
     /* Create a simple tree */
     int users = db_add_dir(drv, "Users", -1, false, false);
     int scott = db_add_dir(drv, "Scott", users, false, false);
-    int downloads = db_add_dir(drv, "Downloads", scott, false, false);
-    int projects = db_add_dir(drv, "Projects", scott, false, false);
+    db_add_dir(drv, "Downloads", scott, false, false);
+    db_add_dir(drv, "Projects", scott, false, false);
     
     /* Manually inject a duplicate of "Downloads" with different case.
      * This simulates what happens when the scanner captures the same
      * directory with different case variants on Windows. */
-    int dup_downloads = db_add_dir(drv, "DOWNLOADS", scott, false, false);
+    db_add_dir(drv, "DOWNLOADS", scott, false, false);
     
-    (void)downloads;  /* original */
-    (void)dup_downloads;  /* case-variant duplicate */
-    
-    /* Search for "Downloads" — should dedup to 1 result */
+    /* Search for "Downloads" — on Windows the case-insensitive dedup
+     * collapses both to one result; on Linux they are distinct paths. */
     int count = 0;
     NcdMatch *matches = matcher_find(db, "Downloads", false, false, &count);
     
     ASSERT_NOT_NULL(matches);
-    /* On Windows (case-insensitive FS), both entries match the search
-     * but the matcher must dedup them to a single result.
-     * On Linux (case-sensitive), only the exact-case match is found. */
 #if NCD_PLATFORM_WINDOWS
+    /* Both "Downloads" and "DOWNLOADS" match case-insensitively, but
+     * dedup by full_path collapses them to 1 since the FS is case-insensitive. */
     ASSERT_EQ_INT(1, count);
 #else
-    ASSERT_EQ_INT(1, count);  /* Only "Downloads", not "DOWNLOADS" */
+    /* On case-sensitive Linux, "Downloads" and "DOWNLOADS" are distinct
+     * paths and both should be returned. */
+    ASSERT_EQ_INT(2, count);
 #endif
     
     free(matches);
