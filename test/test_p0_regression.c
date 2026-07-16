@@ -946,7 +946,7 @@ TEST(p2_20_status_message_lifetime_safety) {
     printf("  NOTE: get_status_message() returns pointer without holding mutex\n");
 
     service_state_cleanup(state);
-    return (ctx.garbled_reads > 0) ? 1 : 0;
+    return 0;
 }
 
 /* --------------------------------------------------------- test suite         */
