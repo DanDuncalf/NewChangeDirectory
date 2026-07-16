@@ -106,15 +106,17 @@ TEST(stress_database_name_pool_1gb) {
     
     /* Add directories with long names */
     char long_name[256];
-    memset(long_name, 'a', 255);
-    long_name[255] = '\0';
     
     clock_t start = clock();
     int count = get_iterations(1000);
     
     for (int i = 0; i < count; i++) {
-        /* Vary the name slightly */
-        long_name[0] = 'a' + (i % 26);
+        /* Embed index for uniqueness; names are long to stress the pool */
+        snprintf(long_name, sizeof(long_name),
+                 "very_long_directory_name_%06d_"
+                 "padding_padding_padding_padding_padding_padding_padding_"
+                 "padding_padding_padding_padding_padding_padding_padding",
+                 i);
         db_add_dir(drv, long_name, -1, false, false);
     }
     
