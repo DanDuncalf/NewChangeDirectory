@@ -31,7 +31,7 @@ extern "C" {
 
 /* Application version - must match between client and service */
 #ifndef NCD_APP_VERSION
-#define NCD_APP_VERSION     "1.6"
+#define NCD_APP_VERSION     "1.7"
 #endif
 
 /* Build stamp — single source for all modules */
