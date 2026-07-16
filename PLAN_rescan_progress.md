@@ -235,7 +235,7 @@ The client opens a dedicated IPC channel for progress streaming and waits for `N
 | IPC complexity | Use existing connection, add new message type only |
 | Progress callback threading | Use existing `DriveStatus` pattern (already thread-safe) |
 | Service crash during progress | Client timeout returns gracefully |
-| Performance impact | Progress updates throttled to ~100ms intervals |
+| Performance impact | Progress updates throttled to ~200ms intervals (5 fps) |
 
 ---
 

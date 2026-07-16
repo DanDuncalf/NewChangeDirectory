@@ -415,7 +415,7 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
      * We do NOT wait for SHUTTING_DOWN - we fallback immediately. */
     SVC_DBG("Checking if service is ready...\n");
     int wait_ms = 0;
-    const int poll_interval_ms = 100;
+    const int poll_interval_ms = NCD_SCAN_PROGRESS_MIN_MS;  /* 200ms - throttle display to 5 fps */
     const int max_wait_ms = NCD_IPC_TIMEOUT_MS;  /* 5000ms default */
 
     NcdIpcResult ping_result = ipc_client_ping(SERVICE(view).ipc_client);

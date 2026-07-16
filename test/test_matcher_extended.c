@@ -593,6 +593,87 @@ TEST(match_cache_hit_performance) {
     return 0;
 }
 
+/* ================================================================ dedup regression */
+
+/*
+ * P0 regression: matcher deduplicates identical paths.
+ * The database may contain duplicate entries for the same directory
+ * (e.g., case variations on Windows). The matcher must deduplicate
+ * by full_path before returning results.
+ */
+TEST(match_dedup_duplicate_paths) {
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    
+    /* Create a simple tree */
+    int users = db_add_dir(drv, "Users", -1, false, false);
+    int scott = db_add_dir(drv, "Scott", users, false, false);
+    int downloads = db_add_dir(drv, "Downloads", scott, false, false);
+    int projects = db_add_dir(drv, "Projects", scott, false, false);
+    
+    /* Manually inject a duplicate of "Downloads" with different case.
+     * This simulates what happens when the scanner captures the same
+     * directory with different case variants on Windows. */
+    int dup_downloads = db_add_dir(drv, "DOWNLOADS", scott, false, false);
+    
+    (void)downloads;  /* original */
+    (void)dup_downloads;  /* case-variant duplicate */
+    
+    /* Search for "Downloads" — should dedup to 1 result */
+    int count = 0;
+    NcdMatch *matches = matcher_find(db, "Downloads", false, false, &count);
+    
+    ASSERT_NOT_NULL(matches);
+    /* On Windows (case-insensitive FS), both entries match the search
+     * but the matcher must dedup them to a single result.
+     * On Linux (case-sensitive), only the exact-case match is found. */
+#if NCD_PLATFORM_WINDOWS
+    ASSERT_EQ_INT(1, count);
+#else
+    ASSERT_EQ_INT(1, count);  /* Only "Downloads", not "DOWNLOADS" */
+#endif
+    
+    free(matches);
+    db_free(db);
+    return 0;
+}
+
+/*
+ * P0 regression: db_add_dir returns existing index on duplicate.
+ * When a directory with the same parent and name (case-insensitive
+ * on Windows) already exists, db_add_dir must return the existing
+ * index instead of creating a new entry.
+ */
+TEST(match_db_add_dir_rejects_duplicate) {
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, 'C');
+    
+    int users = db_add_dir(drv, "Users", -1, false, false);
+    int first = db_add_dir(drv, "Documents", users, false, false);
+    int dir_count_before = drv->dir_count;
+    
+    /* Try to add the same directory again (exact case) */
+    int second = db_add_dir(drv, "Documents", users, false, false);
+    
+    /* Should return the same index, not create a new entry */
+    ASSERT_EQ_INT(first, second);
+    ASSERT_EQ_INT(dir_count_before, drv->dir_count);
+    
+    /* Try with different case (Windows: case-insensitive match) */
+    int third = db_add_dir(drv, "documents", users, false, false);
+#if NCD_PLATFORM_WINDOWS
+    ASSERT_EQ_INT(first, third);
+    ASSERT_EQ_INT(dir_count_before, drv->dir_count);
+#else
+    /* On Linux, "documents" != "Documents", so a new entry is created */
+    ASSERT_TRUE(third != first);
+    ASSERT_TRUE(drv->dir_count > dir_count_before);
+#endif
+    
+    db_free(db);
+    return 0;
+}
+
 /* ================================================================ Test Suite */
 
 void suite_matcher_extended(void) {
@@ -635,6 +716,10 @@ void suite_matcher_extended(void) {
     RUN_TEST(match_name_index_build_performance_1m);
     RUN_TEST(match_with_large_result_set);
     RUN_TEST(match_cache_hit_performance);
+    
+    /* Dedup Regression (2 tests) */
+    RUN_TEST(match_dedup_duplicate_paths);
+    RUN_TEST(match_db_add_dir_rejects_duplicate);
 }
 
 TEST_MAIN(

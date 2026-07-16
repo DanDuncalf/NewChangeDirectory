@@ -208,12 +208,56 @@ static bool ensure_state_initialized(void)
             g_state_info.from_service);
     
     /* Warn if a service is running but we fell back to standalone mode.
-     * This most commonly happens due to a version mismatch between the
-     * client and the service executable. */
+     * Try to get version info from the service to provide a specific diagnostic
+     * message including binary paths for easy diagnosis. */
     if (!g_state_info.from_service && state_backend_service_available()) {
-        ncd_printf("NCD: Warning -- NCD service is running but could not be used "
-                   "(version mismatch?).\r\n"
-                   "     Running in standalone mode with local database.\r\n");
+        /* Get the client binary path for diagnostics */
+        char client_exe_path[MAX_PATH];
+        platform_get_module_path(client_exe_path, sizeof(client_exe_path));
+        
+        /* Derive the expected service binary location (same directory) */
+        char service_exe_dir[MAX_PATH];
+        platform_strncpy_s(service_exe_dir, sizeof(service_exe_dir), client_exe_path);
+        char *last_sep = strrchr(service_exe_dir, '\\');
+        if (last_sep) *(last_sep + 1) = '\0';
+        else service_exe_dir[0] = '\0';
+        
+        NcdIpcClient *diag = ipc_client_connect();
+        if (diag) {
+            NcdIpcVersionInfo svc_ver;
+            if (ipc_client_get_version(diag, &svc_ver) == NCD_IPC_OK) {
+                if (strcmp(NCD_APP_VERSION, svc_ver.app_version) != 0) {
+                    ncd_printf("NCD: Warning -- Service version mismatch.\r\n"
+                               "     Client  binary : %s\r\n"
+                               "     Client  version: v%s (built %s)\r\n"
+                               "     Service binary : %sNCDService.exe\r\n"
+                               "     Service version: v%s (built %s)\r\n"
+                               "     Running in standalone mode with local database.\r\n",
+                               client_exe_path, NCD_APP_VERSION, NCD_BUILD_STAMP,
+                               service_exe_dir, svc_ver.app_version, svc_ver.build_stamp);
+                } else {
+                    ncd_printf("NCD: Warning -- NCD service is running but could not be used.\r\n"
+                               "     Client  binary: %s\r\n"
+                               "     Service binary: %sNCDService.exe\r\n"
+                               "     Running in standalone mode with local database.\r\n",
+                               client_exe_path, service_exe_dir);
+                }
+            } else {
+                ncd_printf("NCD: Warning -- NCD service is running but could not be used.\r\n"
+                           "     Client  binary: %s\r\n"
+                           "     Service binary: %sNCDService.exe\r\n"
+                           "     Running in standalone mode with local database.\r\n",
+                           client_exe_path, service_exe_dir);
+            }
+            ipc_client_disconnect(diag);
+        } else {
+            ncd_printf("NCD: Warning -- NCD service is running but could not be used "
+                       "(IPC connection failed).\r\n"
+                       "     Client  binary: %s\r\n"
+                       "     Service binary: %sNCDService.exe\r\n"
+                       "     Running in standalone mode with local database.\r\n",
+                       client_exe_path, service_exe_dir);
+        }
     }
     
     /* Register cleanup handler to close state backend at exit */
@@ -731,6 +775,17 @@ static bool check_service_version(bool *out_service_was_stopped, bool *out_servi
     /* Version mismatch - report to user with directional messaging */
     int client_newer = (strcmp(result.client_version, result.service_version) > 0);
     
+    /* Get the client binary path for diagnostic purposes */
+    char client_exe_path[MAX_PATH];
+    platform_get_module_path(client_exe_path, sizeof(client_exe_path));
+    
+    /* Derive the expected service binary location (same directory as client) */
+    char service_exe_dir[MAX_PATH];
+    platform_strncpy_s(service_exe_dir, sizeof(service_exe_dir), client_exe_path);
+    char *last_sep = strrchr(service_exe_dir, '\\');
+    if (last_sep) *(last_sep + 1) = '\0';
+    else service_exe_dir[0] = '\0';
+    
     ncd_println("");
     ncd_println("==================================================");
     if (client_newer) {
@@ -739,9 +794,11 @@ static bool check_service_version(bool *out_service_was_stopped, bool *out_servi
         ncd_println("VERSION MISMATCH - Client outdated");
     }
     ncd_println("==================================================");
-    ncd_printf("Client:  %s (built %s)\r\n", 
+    ncd_printf("Client  binary: %s\r\n", client_exe_path);
+    ncd_printf("Client  version: %s (built %s)\r\n", 
                result.client_version, result.client_build);
-    ncd_printf("Service: %s (built %s)\r\n",
+    ncd_printf("Service binary: %sNCDService.exe\r\n", service_exe_dir);
+    ncd_printf("Service version: %s (built %s)\r\n",
                result.service_version, result.service_build);
     ncd_println("");
     

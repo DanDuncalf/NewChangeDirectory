@@ -972,6 +972,19 @@ DriveData *db_find_drive(NcdDatabase *db, char letter)
 int db_add_dir(DriveData *drv, const char *name, int32_t parent,
                bool is_hidden, bool is_system)
 {
+    /* Check for an existing entry with the same (parent, name).
+     * On case-insensitive filesystems (Windows), this prevents
+     * duplicate entries from case variations of the same directory. */
+    for (int i = 0; i < drv->dir_count; i++) {
+        if (drv->dirs[i].parent != parent) continue;
+        const char *existing = drv->name_pool + drv->dirs[i].name_off;
+#if NCD_PLATFORM_WINDOWS
+        if (_stricmp(existing, name) == 0) return i;
+#else
+        if (strcmp(existing, name) == 0) return i;
+#endif
+    }
+
     /* ---- append name to the per-drive string pool ---- */
     size_t nlen = strlen(name) + 1;          /* include NUL terminator */
 

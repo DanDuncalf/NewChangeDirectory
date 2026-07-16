@@ -156,6 +156,7 @@ bool find_is_reparse(const PlatformFindData *fd)
 
 /* Fire the progress callback after every Nth directory found per mount. */
 #define PROGRESS_INTERVAL  NCD_SCAN_PROGRESS_INTERVAL  /* from ncd.h */
+#define PROGRESS_MIN_MS     NCD_SCAN_PROGRESS_MIN_MS    /* min ms between display updates */
 
 /*
  * Activity-based timeout: milliseconds of inactivity before considering
@@ -179,6 +180,7 @@ struct ScanCtx {
     int         dir_count;        /* local counter (mirrors status->dir_count)*/
     ScanProgressFn progress_fn;
     void       *progress_user_data;
+    unsigned long last_progress_ms;   /* timestamp of last progress callback fire (throttle) */
 #if NCD_PLATFORM_LINUX
     DirIdSet   *visited;          /* Track visited (dev,ino) for cycle detection */
 #endif
@@ -695,7 +697,7 @@ int scan_mounts(NcdDatabase *db,
 
         if (all_done || any_timed_out)
             break;
-        platform_sleep_ms(100);
+        platform_sleep_ms(NCD_SCAN_PROGRESS_MIN_MS);
     }
 
     if (has_con) {
@@ -985,8 +987,13 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
             /* Update progress */
             platform_atomic_inc(&ctx->status->dir_count);
             snprintf(ctx->status->current_path, sizeof(ctx->status->current_path), "%s", child);
-            if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1)
-                ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
+            if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1) {
+                unsigned long now_ms = platform_tick_ms();
+                if (now_ms - ctx->last_progress_ms >= PROGRESS_MIN_MS) {
+                    ctx->last_progress_ms = now_ms;
+                    ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
+                }
+            }
             
             /* Push child frame */
             if (stack_top + 1 >= stack_cap) {
@@ -1140,8 +1147,13 @@ static int platform_scan_directory(ScanCtx *ctx, const char *mount_path, int32_t
         /* Update progress */
         platform_atomic_inc(&ctx->status->dir_count);
         snprintf(ctx->status->current_path, sizeof(ctx->status->current_path), "%s", child);
-        if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1)
-            ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
+        if (ctx->progress_fn && (ctx->dir_count % PROGRESS_INTERVAL) == 1) {
+            unsigned long now_ms = platform_tick_ms();
+            if (now_ms - ctx->last_progress_ms >= PROGRESS_MIN_MS) {
+                ctx->last_progress_ms = now_ms;
+                ctx->progress_fn(ctx->drv->letter, child, ctx->progress_user_data);
+            }
+        }
         
         /* Push child frame */
         if (stack_top + 1 >= stack_cap) {

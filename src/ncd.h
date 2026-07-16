@@ -226,6 +226,7 @@ typedef struct {
 
 /* Scanner constants */
 #define NCD_SCAN_PROGRESS_INTERVAL  100     /* dirs between progress updates */
+#define NCD_SCAN_PROGRESS_MIN_MS    200     /* min milliseconds between progress/display updates (5 fps) */
 #define NCD_SCAN_TIMEOUT_MS         300000  /* 5 minute default timeout */
 #define NCD_SCAN_INACTIVITY_MS      60000   /* 1 minute inactivity timeout */
 #define NCD_SCAN_MAX_DEPTH          65536   /* maximum directory nesting */

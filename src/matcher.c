@@ -460,7 +460,31 @@ NcdMatch *matcher_find(NcdDatabase *db,
         return NULL;
     }
 
-    *out_count = count;
+    /* Deduplicate by full_path (case-insensitive on Windows).
+     * The database may contain duplicate entries for the same directory
+     * (e.g., case variations on case-insensitive filesystems). */
+    int dedup_count = 0;
+    for (int i = 0; i < count; i++) {
+        bool is_dup = false;
+        for (int j = 0; j < dedup_count; j++) {
+#if NCD_PLATFORM_WINDOWS
+            if (_stricmp(results[i].full_path, results[j].full_path) == 0) {
+#else
+            if (strcmp(results[i].full_path, results[j].full_path) == 0) {
+#endif
+                is_dup = true;
+                break;
+            }
+        }
+        if (!is_dup) {
+            if (i != dedup_count) {
+                results[dedup_count] = results[i];
+            }
+            dedup_count++;
+        }
+    }
+
+    *out_count = dedup_count;
     return results;
 }
 
