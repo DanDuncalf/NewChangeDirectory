@@ -247,6 +247,7 @@ python test\runner.py --repair       # Fix corrupted test environment
 - Set `NCD_TEST_MODE=1` to disable background rescans during tests
 - **Always show the test runner output** — do not suppress or truncate
 - **Act on background task notifications immediately**
+- **Pre-existing failures are not acceptable.** After running comprehensive tests, any failures (including pre-existing ones) MUST be investigated and fixed. Do not ship code with known test failures. If a test is genuinely no longer applicable, it must be updated or removed — not ignored.
 
 ### Release Policy
 
