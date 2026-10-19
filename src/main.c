@@ -860,14 +860,17 @@ static uint8_t resolve_text_encoding(const NcdOptions *opts)
         NcdIpcClient *client = ipc_client_connect();
         if (client) {
             NcdIpcStateInfo info;
+            uint8_t service_encoding = 0;
             if (ipc_client_get_state_info(client, &info) == NCD_IPC_OK) {
-                ipc_client_disconnect(client);
                 if (info.text_encoding == NCD_TEXT_UTF8 || 
                     info.text_encoding == NCD_TEXT_UTF16LE) {
-                    return (uint8_t)info.text_encoding;
+                    service_encoding = (uint8_t)info.text_encoding;
                 }
             }
             ipc_client_disconnect(client);
+            if (service_encoding != 0) {
+                return service_encoding;
+            }
         }
     }
     
