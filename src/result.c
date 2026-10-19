@@ -328,36 +328,20 @@ void heur_sort_by_frequency(NcdMatch *matches, int count)
         }
     }
     
-    /* Now reorder matches in-place using cycle detection.
-     * We want matches[i] = matches[indices[i]], but we need to do it in-place.
-     * The permutation is: final_matches[i] = original_matches[indices[i]]
-     * We follow cycles in the permutation. */
-    bool *visited = (bool *)calloc((size_t)count, sizeof(bool));
-    if (!visited) {
+    /* Reorder matches via a temporary buffer:
+     * final_matches[i] = original_matches[indices[i]].
+     * The temp buffer avoids an in-place cycle-following reorder reading
+     * from slots it has already overwritten, which duplicated one entry
+     * and dropped another whenever the permutation had a cycle. */
+    NcdMatch *reordered = (NcdMatch *)malloc((size_t)count * sizeof(NcdMatch));
+    if (!reordered) {
         free(indices);
         return;
     }
-    
     for (int i = 0; i < count; i++) {
-        if (visited[i]) continue;
-        
-        int j = i;
-        NcdMatch save = matches[i];
-        
-        while (!visited[j]) {
-            visited[j] = true;
-            int k = indices[j];
-            
-            if (k != j) {
-                matches[j] = matches[k];
-                j = k;
-            } else {
-                matches[j] = save;
-                break;
-            }
-        }
+        reordered[i] = matches[indices[i]];
     }
-    
-    free(visited);
+    memcpy(matches, reordered, (size_t)count * sizeof(NcdMatch));
+    free(reordered);
     free(indices);
 }

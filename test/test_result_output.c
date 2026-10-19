@@ -133,6 +133,47 @@ TEST(heur_promote_match_null_or_empty) {
     return 0;
 }
 
+TEST(heur_sort_by_frequency_two_element_swap) {
+    /* Minimal reproducer for the cycle-reorder corruption: sorting [A,B]
+     * into [B,A] is a single 2-cycle permutation. A buggy in-place reorder
+     * overwrites one slot twice, producing [B,B] and losing A. */
+    NcdMatch matches[2];
+    memset(matches, 0, sizeof(matches));
+    strcpy(matches[0].full_path, "C:\\A");
+    matches[0].frequency = 0;
+    strcpy(matches[1].full_path, "C:\\B");
+    matches[1].frequency = 5;
+
+    heur_sort_by_frequency(matches, 2);
+
+    ASSERT_EQ_STR("C:\\B", matches[0].full_path);
+    ASSERT_EQ_STR("C:\\A", matches[1].full_path);
+
+    return 0;
+}
+
+TEST(heur_sort_by_frequency_full_reversal) {
+    /* Ascending frequencies force a complete reversal (one large cycle).
+     * Asserts the exact sorted order, which also fails if the reorder
+     * duplicates one entry and drops another. */
+    NcdMatch matches[5];
+    memset(matches, 0, sizeof(matches));
+    for (int i = 0; i < 5; i++) {
+        snprintf(matches[i].full_path, sizeof(matches[i].full_path), "C:\\p%d", i);
+        matches[i].frequency = (uint32_t)i;   /* p0=0 ... p4=4, ascending */
+    }
+
+    heur_sort_by_frequency(matches, 5);
+
+    for (int i = 0; i < 5; i++) {
+        char expected[16];
+        snprintf(expected, sizeof(expected), "C:\\p%d", 4 - i);
+        ASSERT_EQ_STR(expected, matches[i].full_path);
+    }
+
+    return 0;
+}
+
 /* ================================================================ Test Suite */
 
 void suite_result_output(void) {
@@ -149,6 +190,8 @@ void suite_result_output(void) {
     RUN_TEST(heur_promote_match_moves_to_top);
     RUN_TEST(heur_promote_match_no_match_found);
     RUN_TEST(heur_promote_match_null_or_empty);
+    RUN_TEST(heur_sort_by_frequency_two_element_swap);
+    RUN_TEST(heur_sort_by_frequency_full_reversal);
 }
 
 TEST_MAIN(
