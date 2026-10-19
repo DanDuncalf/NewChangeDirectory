@@ -31,9 +31,11 @@ struct SnapshotPublisher {
     uint64_t meta_generation;
     uint64_t db_generation;
     
-    /* Names */
+    /* Names: current (advertised) snapshot names and stable base names */
     char meta_name[256];
     char db_name[256];
+    char meta_base[256];
+    char db_base[256];
 };
 
 /* --------------------------------------------------------- helper functions   */
@@ -489,22 +491,39 @@ SnapshotPublisher *snapshot_publisher_init(void) {
         return NULL;
     }
     
-    /* Get shared memory names */
-    if (!shm_make_meta_name(pub->meta_name, sizeof(pub->meta_name))) {
+    /* Get stable base names. Snapshots are published under unique
+     * generation-suffixed names so readers never see an unlink/recreate gap
+     * and a failed publish can never destroy a live snapshot. */
+    if (!shm_make_meta_name(pub->meta_base, sizeof(pub->meta_base))) {
         shm_platform_cleanup();
         free(pub);
         return NULL;
     }
     
-    if (!shm_make_db_name(pub->db_name, sizeof(pub->db_name))) {
+    if (!shm_make_db_name(pub->db_base, sizeof(pub->db_base))) {
         shm_platform_cleanup();
         free(pub);
         return NULL;
     }
     
-    /* Try to unlink any old shared memory objects */
-    shm_remove(pub->meta_name);
-    shm_remove(pub->db_name);
+    platform_strncpy_s(pub->meta_name, sizeof(pub->meta_name), pub->meta_base);
+    platform_strncpy_s(pub->db_name, sizeof(pub->db_name), pub->db_base);
+    
+    /* Try to unlink any stale objects left by a previous (crashed) run --
+     * both the base names (pre-generation-suffix format) and a bounded set
+     * of generation-suffixed names this process may republish.  shm_remove
+     * is side-effect free for objects still owned by a live process. */
+    shm_remove(pub->meta_base);
+    shm_remove(pub->db_base);
+    for (uint64_t g = 1; g <= 64; g++) {
+        char stale[300];
+        snprintf(stale, sizeof(stale), "%s.%llu", pub->meta_base,
+                 (unsigned long long)g);
+        shm_remove(stale);
+        snprintf(stale, sizeof(stale), "%s.%llu", pub->db_base,
+                 (unsigned long long)g);
+        shm_remove(stale);
+    }
     
     return pub;
 }
@@ -544,6 +563,43 @@ void snapshot_publisher_cleanup(SnapshotPublisher *pub) {
 
 /* --------------------------------------------------------- publication        */
 
+/* Create a generation-suffixed snapshot object, recovering from a stale
+ * object that still occupies the target name (e.g. left by an interrupted
+ * previous run whose cleanup never ran).  *gen_io is the requested generation
+ * on entry and the generation actually used on exit, so the snapshot header
+ * and the object name always agree. */
+static ShmResult create_generation_shm(const char *base, uint64_t *gen_io,
+                                       size_t size, char *out_name, size_t out_name_size,
+                                       ShmHandle **out_handle) {
+    uint64_t gen = *gen_io;
+    for (int attempt = 0; attempt < 8; attempt++) {
+        snprintf(out_name, out_name_size, "%s.%llu", base, (unsigned long long)gen);
+        ShmResult result = shm_create(out_name, size, out_handle);
+        if (result == SHM_OK) {
+            *gen_io = gen;
+            return SHM_OK;
+        }
+        if (result != SHM_ERROR_EXISTS) {
+            return result;
+        }
+        /* Name occupied: drop any stale object and retry.  shm_remove() is
+         * side-effect free for an object still owned by a live process. */
+        shm_remove(out_name);
+        result = shm_create(out_name, size, out_handle);
+        if (result == SHM_OK) {
+            *gen_io = gen;
+            return SHM_OK;
+        }
+        if (result != SHM_ERROR_EXISTS) {
+            return result;
+        }
+        /* Genuinely in use by a live owner -- step to a fresh generation
+         * rather than fight over its snapshot name. */
+        gen++;
+    }
+    return SHM_ERROR_EXISTS;
+}
+
 bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
                                        const ServiceState *state) {
     if (!pub || !state) {
@@ -564,96 +620,80 @@ bool snapshot_publisher_publish_meta(SnapshotPublisher *pub,
         return false;
     }
     
-    /* Build snapshot */
+    /* Publish under a unique generation-suffixed name. The previous object is
+     * only removed after the new one is complete, so a reader holding the old
+     * mapping keeps a consistent view and a failed create never destroys the
+     * live snapshot (fixes the unlink/recreate gap that could leave
+     * Global\NCD_SYSTEM_metadata permanently missing).  Creation recovers
+     * from a stale name left by an interrupted run. */
     uint64_t new_gen = service_state_get_meta_generation(state) + 1;
-    if (!build_metadata_snapshot(temp_buf, new_size, meta, new_gen)) {
-        free(temp_buf);
-        return false;
-    }
-    
-    /* Create NEW shared memory BEFORE removing old — no gap window.
-     * Build a temp name so old SHM stays live until new one is ready. */
-    char temp_name[288];
-    snprintf(temp_name, sizeof(temp_name), "%s.new", pub->meta_name);
-    
-    /* Round up to page size */
     size_t shm_size = shm_round_up_size(new_size);
     
-    /* Create temp SHM */
+    char new_name[288];
     ShmHandle *shm;
-    ShmResult result = shm_create(temp_name, shm_size, &shm);
+    ShmResult result = create_generation_shm(pub->meta_base, &new_gen, shm_size,
+                                             new_name, sizeof(new_name), &shm);
     if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for metadata temp: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        fprintf(stderr, "NCD Service: shm_create failed for metadata '%s': %s (size=%zu)\n",
+                new_name, shm_error_string(result), shm_size);
         free(temp_buf);
         return false;
     }
     
-    /* Map temp SHM */
+    /* Build the snapshot with the generation actually acquired so the header
+     * and the object name always agree. */
+    if (!build_metadata_snapshot(temp_buf, new_size, meta, new_gen)) {
+        shm_close(shm);
+        shm_remove(new_name);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Map and copy snapshot data */
     void *addr;
     size_t mapped_size;
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
-    if (result != SHM_OK) {
+    if (result != SHM_OK || mapped_size < new_size) {
+        if (result == SHM_OK) {
+            shm_unmap(addr, mapped_size);
+        }
         shm_close(shm);
-        shm_remove(temp_name);
-        free(temp_buf);
-        return false;
-    }
-    
-    /* Copy data to temp SHM */
-    memcpy(addr, temp_buf, new_size);
-    
-    /* Unmap temp */
-    shm_unmap(addr, mapped_size);
-    
-    /* Now remove old SHM — gap-free because new SHM is ready */
-    if (pub->meta_addr) {
-        shm_unmap(pub->meta_addr, pub->meta_size);
-        pub->meta_addr = NULL;
-    }
-    if (pub->meta_shm) {
-        shm_close(pub->meta_shm);
-        shm_remove(pub->meta_name);
-        pub->meta_shm = NULL;
-    }
-    shm_close(shm);
-    
-    /* Create canonical SHM and copy data from temp */
-    result = shm_create(pub->meta_name, shm_size, &shm);
-    if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for metadata canonical: %s (size=%zu)\n", shm_error_string(result), shm_size);
-        shm_remove(temp_name);
-        free(temp_buf);
-        return false;
-    }
-    
-    result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
-    if (result != SHM_OK) {
-        shm_close(shm);
-        shm_remove(pub->meta_name);
-        shm_remove(temp_name);
+        shm_remove(new_name);
         free(temp_buf);
         return false;
     }
     memcpy(addr, temp_buf, new_size);
     shm_unmap(addr, mapped_size);
     
-    /* Remap read-only */
+    /* Remap read-only (service holds a read-only view). */
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
-        shm_remove(pub->meta_name);
-        shm_remove(temp_name);
+        shm_remove(new_name);
         free(temp_buf);
         return false;
     }
     
-    /* Clean up temp */
-    shm_remove(temp_name);
+    /* Swap in the new snapshot, then drop the previous one. */
+    char old_name[256];
+    platform_strncpy_s(old_name, sizeof(old_name), pub->meta_name);
+    ShmHandle *old_shm = pub->meta_shm;
+    void *old_addr = pub->meta_addr;
+    size_t old_size = pub->meta_size;
     
-    /* Update publisher state */
     pub->meta_shm = shm;
     pub->meta_addr = addr;
     pub->meta_size = mapped_size;
     pub->meta_generation = new_gen;
+    platform_strncpy_s(pub->meta_name, sizeof(pub->meta_name), new_name);
+    
+    /* Best-effort cleanup of the previous snapshot (may be held by readers). */
+    if (old_shm) {
+        if (old_addr) {
+            shm_unmap(old_addr, old_size);
+        }
+        shm_close(old_shm);
+        shm_remove(old_name);
+    }
     
     free(temp_buf);
     return true;
@@ -679,73 +719,41 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
         return false;
     }
     
-    /* Build snapshot */
+    /* Publish under a unique generation-suffixed name (same atomic-swap
+     * strategy as the metadata snapshot, including stale-name recovery). */
     uint64_t new_gen = service_state_get_db_generation(state) + 1;
-    if (!build_database_snapshot(temp_buf, new_size, db, new_gen)) {
-        free(temp_buf);
-        return false;
-    }
-    
-    /* Create NEW shared memory BEFORE removing old — no gap window.
-     * Build a temp name so old SHM stays live until new one is ready. */
-    char temp_name[288];
-    snprintf(temp_name, sizeof(temp_name), "%s.new", pub->db_name);
-    
-    /* Round up to page size */
     size_t shm_size = shm_round_up_size(new_size);
     
-    /* Create temp SHM */
+    char new_name[288];
     ShmHandle *shm;
-    ShmResult result = shm_create(temp_name, shm_size, &shm);
+    ShmResult result = create_generation_shm(pub->db_base, &new_gen, shm_size,
+                                             new_name, sizeof(new_name), &shm);
     if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for database temp: %s (size=%zu)\n", shm_error_string(result), shm_size);
+        fprintf(stderr, "NCD Service: shm_create failed for database '%s': %s (size=%zu)\n",
+                new_name, shm_error_string(result), shm_size);
         free(temp_buf);
         return false;
     }
     
-    /* Map temp SHM */
+    /* Build the snapshot with the generation actually acquired so the header
+     * and the object name always agree. */
+    if (!build_database_snapshot(temp_buf, new_size, db, new_gen)) {
+        shm_close(shm);
+        shm_remove(new_name);
+        free(temp_buf);
+        return false;
+    }
+    
+    /* Map and copy snapshot data */
     void *addr;
     size_t mapped_size;
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
-    if (result != SHM_OK) {
+    if (result != SHM_OK || mapped_size < new_size) {
+        if (result == SHM_OK) {
+            shm_unmap(addr, mapped_size);
+        }
         shm_close(shm);
-        shm_remove(temp_name);
-        free(temp_buf);
-        return false;
-    }
-    
-    /* Copy data to temp SHM */
-    memcpy(addr, temp_buf, new_size);
-    
-    /* Unmap temp */
-    shm_unmap(addr, mapped_size);
-    
-    /* Now remove old SHM — gap-free because new SHM is ready */
-    if (pub->db_addr) {
-        shm_unmap(pub->db_addr, pub->db_size);
-        pub->db_addr = NULL;
-    }
-    if (pub->db_shm) {
-        shm_close(pub->db_shm);
-        shm_remove(pub->db_name);
-        pub->db_shm = NULL;
-    }
-    shm_close(shm);
-    
-    /* Create canonical SHM and copy data from temp */
-    result = shm_create(pub->db_name, shm_size, &shm);
-    if (result != SHM_OK) {
-        fprintf(stderr, "NCD Service: shm_create failed for database canonical: %s (size=%zu)\n", shm_error_string(result), shm_size);
-        shm_remove(temp_name);
-        free(temp_buf);
-        return false;
-    }
-    
-    result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
-    if (result != SHM_OK) {
-        shm_close(shm);
-        shm_remove(pub->db_name);
-        shm_remove(temp_name);
+        shm_remove(new_name);
         free(temp_buf);
         return false;
     }
@@ -755,20 +763,32 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     /* Remap read-only */
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
-        shm_remove(pub->db_name);
-        shm_remove(temp_name);
+        shm_remove(new_name);
         free(temp_buf);
         return false;
     }
     
-    /* Clean up temp */
-    shm_remove(temp_name);
+    /* Swap in the new snapshot, then drop the previous one. */
+    char old_name[256];
+    platform_strncpy_s(old_name, sizeof(old_name), pub->db_name);
+    ShmHandle *old_shm = pub->db_shm;
+    void *old_addr = pub->db_addr;
+    size_t old_size = pub->db_size;
     
-    /* Update publisher state */
     pub->db_shm = shm;
     pub->db_addr = addr;
     pub->db_size = mapped_size;
     pub->db_generation = new_gen;
+    platform_strncpy_s(pub->db_name, sizeof(pub->db_name), new_name);
+    
+    /* Best-effort cleanup of the previous snapshot (may be held by readers). */
+    if (old_shm) {
+        if (old_addr) {
+            shm_unmap(old_addr, old_size);
+        }
+        shm_close(old_shm);
+        shm_remove(old_name);
+    }
     
     free(temp_buf);
     return true;
