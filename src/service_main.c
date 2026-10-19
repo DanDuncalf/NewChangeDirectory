@@ -2755,6 +2755,7 @@ int main(int argc, char *argv[]) {
             return 0;
         }
         else if (strcmp(cmd, "-?") == 0 ||
+            strcmp(cmd, "/?") == 0 ||
             strcmp(cmd, "-h") == 0 ||
             strcmp(cmd, "--help") == 0 ||
             strcmp(cmd, "help") == 0) {
