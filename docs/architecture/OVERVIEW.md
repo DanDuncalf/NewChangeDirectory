@@ -183,8 +183,14 @@ const NcdDatabase *state_view_database(const NcdStateView *view);
 - `service_publish.c` - Snapshot publication to shared memory
 
 **IPC Protocol:**
-- Windows: Named pipes (`\\.\pipe\NCDService`)
-- Linux: Unix domain sockets (`/tmp/ncd_service.sock`)
+- Windows system service: fixed named pipe (`\\.\pipe\NCD_SYSTEM_CONTROL`)
+- Linux system service: fixed Unix socket (`/run/ncd/ncd_control.sock`)
+- Per-user services use a user/session-scoped address instead.
+
+System mode describes the shared IPC/storage namespace, not the client's
+privilege level. The service runs elevated so it can create and update shared
+state; ordinary clients remain unelevated and connect to that shared service.
+Only an explicit `--user-mode` selects the per-user namespace.
 
 ### 8. Shared Memory (`src/shm_platform_*.c`)
 

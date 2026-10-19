@@ -45,7 +45,15 @@ if /i "%~1"=="/v" set "NCD_INFO_CMD=1"
 if /i "%~1"=="--help" set "NCD_INFO_CMD=1"
 if /i "%~1"=="-?"   set "NCD_INFO_CMD=1"
 if /i "%~1"=="/?"   set "NCD_INFO_CMD=1"
-echo %1 | findstr /I /B "--agent:" >nul 2>&1 && set "NCD_INFO_CMD=1"
+:: Detect the --agent: prefix in pure batch.  Do NOT use an
+:: `echo ... | findstr` pipeline here: cmd spawns a child cmd.exe for the
+:: left side of the pipe, and if findstr closes the pipe before that child
+:: writes (transient race), cmd prints
+:: "The process tried to write to a nonexistent pipe." to the console.
+set "NCD_ARG1=%~1"
+if not defined NCD_ARG1 goto ncd_after_agent_check
+if /i "%NCD_ARG1:~0,8%"=="--agent:" set "NCD_INFO_CMD=1"
+:ncd_after_agent_check
 if /i "%~1"=="-l"           set "NCD_INFO_CMD=1"
 if /i "%~1"=="--list"        set "NCD_INFO_CMD=1"
 if /i "%~1"=="--history-list"  set "NCD_INFO_CMD=1"
@@ -56,15 +64,15 @@ if /i "%~1"=="-g" if "%~2"=="" set "NCD_INFO_CMD=1"
 if defined NCD_INFO_CMD set "NCD_MESSAGE="
 
 :: ------------------------------------------------------------------
-:: 2.  Run the executable -- all arguments passed straight through
-::     Default to user-mode (per-user service) unless overridden.
+:: 2.  Run the executable -- all arguments passed straight through.
+::     System mode is the default in NewChangeDirectory.exe (matches
+::     README/AGENTS docs). --user-mode is only needed when a caller
+::     explicitly wants per-user storage; do NOT inject it here, or a
+::     non-admin shell will look for a per-user service that was never
+::     started instead of connecting to the admin-launched system
+::     service via the NULL-DACL NCD_SYSTEM_CONTROL pipe.
 :: ------------------------------------------------------------------
-echo %* | findstr /I "--user-mode" >nul 2>&1
-if "%ERRORLEVEL%"=="0" (
-    NewChangeDirectory.exe %*
-) else (
-    NewChangeDirectory.exe --user-mode %*
-)
+NewChangeDirectory.exe %*
 set "NCD_EXIT_CODE=%ERRORLEVEL%"
 
 :: ------------------------------------------------------------------
@@ -113,3 +121,4 @@ set "NCD_PATH="
 set "NCD_MESSAGE="
 set "NCD_EXIT_CODE="
 set "NCD_INFO_CMD="
+set "NCD_ARG1="

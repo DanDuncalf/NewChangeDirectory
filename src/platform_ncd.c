@@ -64,13 +64,6 @@ bool ncd_is_system_mode(void)
         if (tm && tm[0] && strcmp(tm, "0") != 0) {
             g_ncd_system_mode = false;
         }
-#if NCD_PLATFORM_LINUX
-        /* Non-root users cannot create system directories (/run/ncd, /var/lib/ncd).
-         * Auto-fallback to user mode so the service/client works without root. */
-        if (g_ncd_system_mode && getuid() != 0) {
-            g_ncd_system_mode = false;
-        }
-#endif
     }
     return g_ncd_system_mode;
 }
@@ -124,16 +117,12 @@ bool ncd_platform_db_default_path(char *buf, size_t buf_size)
     if (!buf || buf_size == 0) return false;
     
     if (ncd_is_system_mode()) {
-#if NCD_PLATFORM_WINDOWS
-        /* Non-elevated users cannot write to C:\ProgramData\NCD.
-         * Auto-fallback to user data dir so standalone ncd works. */
-        if (platform_is_admin())
-#endif
-        {
-            platform_create_dir(NCD_SYSTEM_DIR);
-            int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
-            return written > 0 && (size_t)written < buf_size;
-        }
+        /* System mode selects the shared namespace, regardless of the
+         * caller's elevation.  An ordinary client reads these files or,
+         * normally, connects to the elevated service that owns them. */
+        platform_create_dir(NCD_SYSTEM_DIR);
+        int written = snprintf(buf, buf_size, "%s%s%s", NCD_SYSTEM_DIR, NCD_PATH_SEP, NCD_DB_FILENAME);
+        return written > 0 && (size_t)written < buf_size;
     }
     
     char data_dir[MAX_PATH];
@@ -151,20 +140,16 @@ bool ncd_platform_db_drive_path(char letter, char *buf, size_t buf_size)
     if (!buf || buf_size == 0) return false;
     
     if (ncd_is_system_mode()) {
+        /* Namespace selection is independent of privilege.  Only the
+         * service (or an explicitly standalone administrative process)
+         * needs permission to create or update the shared database. */
+        platform_create_dir(NCD_SYSTEM_DIR);
 #if NCD_PLATFORM_WINDOWS
-        /* Non-elevated users cannot write to C:\ProgramData\NCD.
-         * Auto-fallback to user data dir so standalone ncd works. */
-        if (platform_is_admin())
-#endif
-        {
-            platform_create_dir(NCD_SYSTEM_DIR);
-#if NCD_PLATFORM_WINDOWS
-            int w = snprintf(buf, buf_size, "%s%sncd_%c.database", NCD_SYSTEM_DIR, NCD_PATH_SEP, toupper((unsigned char)letter));
+        int w = snprintf(buf, buf_size, "%s%sncd_%c.database", NCD_SYSTEM_DIR, NCD_PATH_SEP, toupper((unsigned char)letter));
 #else
-            int w = snprintf(buf, buf_size, "%s/ncd_%02x.database", NCD_SYSTEM_DIR, (unsigned char)letter);
+        int w = snprintf(buf, buf_size, "%s/ncd_%02x.database", NCD_SYSTEM_DIR, (unsigned char)letter);
 #endif
-            return w > 0 && (size_t)w < buf_size;
-        }
+        return w > 0 && (size_t)w < buf_size;
     }
     
     char data_dir[MAX_PATH];

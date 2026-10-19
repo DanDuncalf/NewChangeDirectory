@@ -261,6 +261,12 @@ Every release must bump the version number in:
 
 After bumping, run `python test/runner.py --quick` to confirm tests pass before pushing.
 
+**Local deploy on version bump (automated):** A tracked `post-commit` git hook (`.githooks/post-commit`, registered via `core.hooksPath=.githooks`) detects commits that change `NCD_APP_VERSION` and runs `deploy.bat` to sync `C:\ProgramData\NCD` automatically. If the built binaries are stale (header newer than the exe), the hook skips the deploy and warns — rebuild with `build.bat`, then run `deploy.bat`. To check version sync across header / built / deployed binaries at any time, run:
+
+```powershell
+python tools\check_deploy_version.py
+```
+
 ### Keystroke Injection for TUI Testing
 
 | Variable | Purpose |

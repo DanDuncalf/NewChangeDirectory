@@ -432,7 +432,7 @@ The `-init` option blocks startup until the scan is complete, preventing clients
 
 ## Database Storage
 
-### Per-User Mode (default)
+### Per-User Storage (`--user-mode`)
 
 **Windows:**
 - Per-drive databases: `%LOCALAPPDATA%\NCD\ncd_X.database`
@@ -444,7 +444,7 @@ The `-init` option blocks startup until the scan is complete, preventing clients
 - Metadata: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd.metadata`
 - Service log: `${XDG_DATA_HOME:-$HOME/.local/share}/ncd/ncd_service.log`
 
-### User Mode (`--user-mode`)
+### System-Wide Storage (default)
 
 **System-wide mode is now the default.** The service uses shared locations
 accessible to all users on the machine:
@@ -463,7 +463,9 @@ When started with `--user-mode`, the service stores data in per-user local
 directories instead. System mode uses fixed IPC and shared memory names (without
 user SID/UID) with relaxed permissions so all local users can connect to a
 single service instance. The service must run with administrator/root privileges
-to write to shared directories. Clients connect with `ncd --user-mode <search>`.
+to write to shared directories. Clients do not need elevation: an ordinary
+`ncd <search>` process connects to the elevated system service. Use
+`ncd --user-mode <search>` only to select a separately running per-user service.
 
 ## License
 
