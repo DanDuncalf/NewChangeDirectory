@@ -390,11 +390,21 @@ static bool history_delete_service_cb(int index, const char *path, void *user_da
     return false;
 }
 
-/* Helper: Ensure metadata is loaded */
+static bool g_metadata_borrowed = false;   /* g_metadata owned by the local state backend */
+
+/* Helper: Ensure metadata is loaded.  In standalone mode the local backend has
+ * already loaded ncd.metadata -- borrow it instead of reading the file again. */
 static NcdMetadata* get_metadata(void)
 {
     if (!g_metadata) {
-        g_metadata = db_metadata_load();
+        if (g_state_view && !g_state_info.from_service) {
+            g_metadata = (NcdMetadata *)state_view_metadata(g_state_view);
+            g_metadata_borrowed = (g_metadata != NULL);
+        }
+        if (!g_metadata) {
+            g_metadata = db_metadata_load();
+            g_metadata_borrowed = false;
+        }
     }
     return g_metadata;
 }
@@ -4485,8 +4495,14 @@ static int run_requested_rescan(NcdDatabase *db, const NcdOptions *opts,
 
 /* ================================================================= main   */
 
+static void report_metadata_loads(void)
+{
+    fprintf(stderr, "NCD_TEST_METADATA_LOADS=%d\n", db_metadata_load_call_count());
+}
+
 int main(int argc, char *argv[])
 {
+    if (getenv("NCD_TEST_REPORT_LOADS")) atexit(report_metadata_loads);
     /* Open a direct console handle as early as possible so all subsequent
      * ncd_print / ncd_printf calls bypass CRT buffering.                  */
     con_init();
@@ -6007,12 +6023,9 @@ int main(int argc, char *argv[])
     }
 
     /* Load metadata to get exclusion list for filtering search results */
-    NcdMetadata *search_meta = NULL;
-    if (is_service_backend()) {
-        search_meta = (NcdMetadata *)get_state_metadata();
-    } else {
-        search_meta = db_metadata_load();
-    }
+    /* Owned by the service or local backend (or g_metadata); never freed here. */
+    NcdMetadata *search_meta = (NcdMetadata *)get_state_metadata();
+    if (!search_meta) search_meta = get_metadata();
     
     /* 
      * Filter excluded directories from the loaded database.
@@ -6156,11 +6169,6 @@ int main(int argc, char *argv[])
     /* Sort matches by frequency (descending) - most selected directories first */
     heur_sort_by_frequency(matches, match_count);
     
-    /* Free locally loaded metadata (not needed anymore) */
-    if (search_meta && !is_service_backend()) {
-        db_metadata_free(search_meta);
-        search_meta = NULL;
-    }
 
     if (!matches || match_count == 0) {
         NCD_DEBUG_LOG("NCD DEBUG: No matches found. primary_db=%p, using_service_db=%d\n",
@@ -6255,7 +6263,7 @@ int main(int argc, char *argv[])
     int rescan_interval = NCD_RESCAN_HOURS_DEFAULT;  /* default 24 hours */
     
     /* Load configured rescan interval from metadata */
-    NcdMetadata *rescan_meta = db_metadata_load();
+    const NcdMetadata *rescan_meta = get_metadata();   /* read-only; not freed */
     if (rescan_meta) {
         if (rescan_meta->cfg.rescan_interval_hours == NCD_RESCAN_NEVER) {
             /* Auto-rescan disabled */
@@ -6264,7 +6272,6 @@ int main(int argc, char *argv[])
             /* Use configured interval (already validated to be within bounds) */
             rescan_interval = rescan_meta->cfg.rescan_interval_hours;
         }
-        db_metadata_free(rescan_meta);
     }
     
     if (primary_db && primary_db->last_scan > 0 && rescan_interval > 0) {
@@ -6280,8 +6287,9 @@ int main(int argc, char *argv[])
     /* Cleanup global metadata before exit */
     save_metadata_if_dirty();
     if (g_metadata) {
-        db_metadata_free(g_metadata);
+        if (!g_metadata_borrowed) db_metadata_free(g_metadata);
         g_metadata = NULL;
+        g_metadata_borrowed = false;
     }
 
     con_close();

@@ -348,6 +348,27 @@ TEST(it_rescan_honors_large_exclusion_list) {
     return 0;
 }
 
+/* ---------------------------------------------------------------- Task 5 */
+
+TEST(it_standalone_search_loads_metadata_once) {
+    ItEnv e; it_env_init(&e, "it_meta");
+    it_write_case_variant_db(&e, agent_test_drive_letter(), 0);
+    ASSERT_TRUE(it_write_initial_metadata(&e));
+    char out[8192];
+    it_run_ncd(&e, NULL, "-x filler_meta_excl", out, sizeof(out));   /* exclusions -> filter path runs */
+    ASSERT_STR_CONTAINS(out, "Added exclusion");
+#if NCD_PLATFORM_WINDOWS
+    it_run_ncd(&e, "set NCD_TEST_REPORT_LOADS=1", "it_deep_leaf_k5", out, sizeof(out));
+#else
+    it_run_ncd(&e, "NCD_TEST_REPORT_LOADS=1", "it_deep_leaf_k5", out, sizeof(out));
+#endif
+    ASSERT_STR_CONTAINS(out, "NCD_TEST_METADATA_LOADS=1");
+    char res[4096]; ASSERT_TRUE(it_read_result(&e, res, sizeof(res)));
+    ASSERT_STR_CONTAINS(res, "it_deep_leaf_k5");   /* search still works */
+    it_env_cleanup(&e);
+    return 0;
+}
+
 TEST_MAIN(
     agent_kill_any_service();
     RUN_TEST(it_crc_db_file_checksum_unchanged_and_loads);
@@ -355,4 +376,5 @@ TEST_MAIN(
     RUN_TEST(it_service_merge_keeps_parents_and_is_fast);
     RUN_TEST(it_subdir_rescan_twice_no_duplicates);
     RUN_TEST(it_rescan_honors_large_exclusion_list);
+    RUN_TEST(it_standalone_search_loads_metadata_once);
 )

@@ -3130,8 +3130,12 @@ bool db_metadata_save(NcdMetadata *meta)
     return true;
 }
 
+static volatile long g_metadata_load_calls = 0;
+int db_metadata_load_call_count(void) { return (int)g_metadata_load_calls; }
+
 NcdMetadata *db_metadata_load(void)
 {
+    g_metadata_load_calls++;
     NcdMetadata *meta = db_metadata_create();
     
     char path[MAX_PATH];

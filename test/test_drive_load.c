@@ -238,6 +238,15 @@ TEST(local_backend_loader_preserves_case_variant_parents) {
     return 0;
 }
 
+TEST(metadata_load_counter_counts_calls) {
+    env_setup("metacount");
+    int before = db_metadata_load_call_count();
+    NcdMetadata *m = db_metadata_load();
+    if (m) db_metadata_free(m);
+    ASSERT_EQ_INT(before + 1, db_metadata_load_call_count());
+    return 0;
+}
+
 TEST_MAIN(
     RUN_TEST(adopt_drive_copies_entries_verbatim);
     RUN_TEST(adopt_drive_preserves_case_variant_parents);
@@ -247,4 +256,5 @@ TEST_MAIN(
     RUN_TEST(load_all_drives_into_reports_progress);
     RUN_TEST(service_loader_preserves_case_variant_parents);
     RUN_TEST(local_backend_loader_preserves_case_variant_parents);
+    RUN_TEST(metadata_load_counter_counts_calls);
 )

@@ -364,6 +364,9 @@ void db_metadata_free(NcdMetadata *meta);
  */
 NcdMetadata *db_metadata_load(void);
 
+/* Number of db_metadata_load() calls in this process (diagnostics/tests). */
+int db_metadata_load_call_count(void);
+
 /*
  * Save metadata to disk (atomic rename).
  * Returns true on success.
