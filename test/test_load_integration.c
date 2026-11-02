@@ -48,6 +48,7 @@ static inline void it_set_process_env(const ItEnv *e)
     _putenv_s("NCD_TEST_MODE", "1");
 #else
     setenv("XDG_DATA_HOME", e->base, 1);
+    setenv("XDG_RUNTIME_DIR", e->tmp, 1);   /* IPC socket dir must match it_run_ncd */
     setenv("NCD_TEST_MODE", "1", 1);
 #endif
 }
@@ -141,7 +142,104 @@ TEST(it_crc_db_file_checksum_unchanged_and_loads) {
     return 0;
 }
 
+/* ---------------------------------------------------------------- Task 2 */
+
+static int it_raw_add(DriveData *drv, const char *name, int parent)
+{
+    size_t nl = strlen(name) + 1;
+    if (drv->name_pool_len + nl > drv->name_pool_cap) {
+        drv->name_pool_cap = (drv->name_pool_cap ? drv->name_pool_cap * 2 : 4096) + nl;
+        drv->name_pool = realloc(drv->name_pool, drv->name_pool_cap);
+    }
+    memcpy(drv->name_pool + drv->name_pool_len, name, nl);
+    if (drv->dir_count >= drv->dir_capacity) {
+        drv->dir_capacity = drv->dir_capacity ? drv->dir_capacity * 2 : 64;
+        drv->dirs = realloc(drv->dirs, sizeof(DirEntry) * (size_t)drv->dir_capacity);
+    }
+    DirEntry *d = &drv->dirs[drv->dir_count];
+    memset(d, 0, sizeof(*d));
+    d->parent = parent;
+    d->name_off = (uint32_t)drv->name_pool_len;
+    drv->name_pool_len += nl;
+    return drv->dir_count++;
+}
+
+/* Case-variant siblings + 200K filler dirs. */
+static void it_write_case_variant_db(const ItEnv *e, char letter, int filler)
+{
+    NcdDatabase *db = db_create();
+    DriveData *drv = db_add_drive(db, letter);
+    int root = it_raw_add(drv, "itroot", -1);
+    int up   = it_raw_add(drv, "Foo", root);
+    int lo   = it_raw_add(drv, "foo", root);
+    it_raw_add(drv, "it_upper_child_q8", up);
+    int lc   = it_raw_add(drv, "it_lower_child_w4", lo);
+    it_raw_add(drv, "it_deep_leaf_k5", lc);
+    char name[32];
+    for (int i = 0; i < filler; i++) {
+        snprintf(name, sizeof(name), "f%07d", i);
+        it_raw_add(drv, name, i < 64 ? root : 6 + (i / 64) - 1);
+    }
+    char path[NCD_MAX_PATH]; it_db_path(e, letter, path, sizeof(path));
+    db_save_binary_single(db, 0, path);
+    db_free(db);
+}
+
+TEST(it_standalone_merge_keeps_parents_and_is_fast) {
+    ItEnv e; it_env_init(&e, "it_merge");
+    it_write_case_variant_db(&e, agent_test_drive_letter(), 200000);
+    char out[8192];
+    time_t t0 = time(NULL);
+    it_run_ncd(&e, NULL, "it_deep_leaf_k5", out, sizeof(out));
+    double secs = difftime(time(NULL), t0);
+    char res[4096]; ASSERT_TRUE(it_read_result(&e, res, sizeof(res)));
+    ASSERT_STR_CONTAINS(res, "it_lower_child_w4");
+    ASSERT_STR_CONTAINS(res, "it_deep_leaf_k5");
+    printf("  standalone search over 200K dirs: %.0f s\n", secs);
+    ASSERT_TRUE(secs <= 5.0);   /* old O(n^2) merge: ~15 s */
+    it_env_cleanup(&e);
+    return 0;
+}
+
+static bool it_wait_service_ready(const ItEnv *e, int timeout_s)
+{
+    char out[4096];
+    for (int i = 0; i < timeout_s * 4; i++) {
+        it_run_ncd(e, NULL, "--agent:check --service-status", out, sizeof(out));
+        if (strstr(out, "READY")) return true;
+        platform_sleep_ms(250);
+    }
+    return false;
+}
+
+TEST(it_service_merge_keeps_parents_and_is_fast) {
+    ItEnv e; it_env_init(&e, "it_svc");
+    it_write_case_variant_db(&e, agent_test_drive_letter(), 200000);
+    it_set_process_env(&e);
+    agent_kill_any_service();
+    char out[8192];
+    run_service_command("start", out, sizeof(out));
+    time_t t0 = time(NULL);
+    bool ready = it_wait_service_ready(&e, 20);
+    double secs = difftime(time(NULL), t0);
+    printf("  service READY after %.0f s\n", secs);
+    ASSERT_TRUE(ready);
+    ASSERT_TRUE(secs <= 5.0);   /* old: ~15 s for 200K dirs */
+
+    it_run_ncd(&e, NULL, "it_deep_leaf_k5", out, sizeof(out));
+    char res[4096]; ASSERT_TRUE(it_read_result(&e, res, sizeof(res)));
+    ASSERT_STR_CONTAINS(res, "it_lower_child_w4");
+    ASSERT_STR_CONTAINS(res, "it_deep_leaf_k5");
+
+    run_service_command("stop", out, sizeof(out));
+    ensure_service_stopped();
+    it_env_cleanup(&e);
+    return 0;
+}
+
 TEST_MAIN(
     agent_kill_any_service();
     RUN_TEST(it_crc_db_file_checksum_unchanged_and_loads);
+    RUN_TEST(it_standalone_merge_keeps_parents_and_is_fast);
+    RUN_TEST(it_service_merge_keeps_parents_and_is_fast);
 )

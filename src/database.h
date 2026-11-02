@@ -161,6 +161,23 @@ DriveData *db_add_drive(NcdDatabase *db, char letter);
 /* Find a DriveData by letter; return NULL if not present. */
 DriveData *db_find_drive(NcdDatabase *db, char letter);
 
+/*
+ * Copy a fully-formed drive (dirs[] + name pool, verbatim) into dst as a new
+ * drive.  O(dir_count) memcpy, no duplicate checks: positions -- and therefore
+ * parent links -- are preserved exactly.  Returns NULL (dst unchanged) if dst
+ * already has a drive with src->letter.
+ */
+DriveData *db_adopt_drive(NcdDatabase *dst, const DriveData *src);
+
+/* Progress callback for db_load_all_drives_into: index is 1-based. */
+typedef void (*DbLoadProgressFn)(char drive_letter, int index, int total, void *user_data);
+
+/*
+ * Load the per-drive database file of every drive present on this machine
+ * and adopt its drives into dst.  Returns the number of files loaded.
+ */
+int db_load_all_drives_into(NcdDatabase *dst, DbLoadProgressFn progress, void *user_data);
+
 /* --------------------------------------------------------- dir helpers    */
 
 /*

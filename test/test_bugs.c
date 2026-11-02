@@ -57,6 +57,33 @@
  * bounds check doesn't account for i.
  * ================================================================ */
 
+/*
+ * Shrink the declared size of metadata section `id` so only one entry fits,
+ * walking the real section headers ([id:1][size:4][pad:1] after MetaFileHdr)
+ * instead of byte-scanning (a scan can match a 0x02/0x03 byte inside the
+ * header checksum or another section, making the test nondeterministic).
+ * section_count is cut to end at the patched section so the leftover bytes
+ * are never parsed as further sections.  Returns 1 if patched.
+ */
+static int meta_shrink_section(unsigned char *data, long file_size, uint8_t id,
+                               uint32_t min_size, uint32_t new_size)
+{
+    MetaFileHdr *hdr = (MetaFileHdr *)data;
+    long pos = (long)sizeof(MetaFileHdr);
+    for (int s = 0; s < hdr->section_count && pos + 6 <= file_size; s++) {
+        uint32_t size;
+        memcpy(&size, data + pos + 1, 4);
+        if (data[pos] == id) {
+            if (size < min_size) return 0;
+            memcpy(data + pos + 1, &new_size, 4);
+            hdr->section_count = (uint8_t)(s + 1);
+            return 1;
+        }
+        pos += 6 + (long)size;
+    }
+    return 0;
+}
+
 TEST(metadata_heuristics_bounds_check) {
     /*
      * Strategy: Create metadata, add multiple heuristic entries, save it.
@@ -105,25 +132,10 @@ TEST(metadata_heuristics_bounds_check) {
      * (the count field + one entry), so entries 1 and 2 should be rejected.
      */
 
-    /* Find the heuristics section by scanning for section_id == 0x03 */
-    int found = 0;
-    for (long off = 0; off < file_size - 5; off++) {
-        if (data[off] == NCD_META_SECTION_HEURISTICS) {
-            /* Potential section header - read the current section_size */
-            uint32_t current_size;
-            memcpy(&current_size, data + off + 1, 4);
-
-            /* Verify this looks like a real section (size should accommodate 3 entries) */
-            uint32_t expected_min = 4 + 3 * sizeof(NcdHeurEntryV2);
-            if (current_size >= expected_min) {
-                /* Patch section_size to only fit 1 entry */
-                uint32_t new_size = 4 + (uint32_t)sizeof(NcdHeurEntryV2);
-                memcpy(data + off + 1, &new_size, 4);
-                found = 1;
-                break;
-            }
-        }
-    }
+    /* Find the heuristics section by walking the section headers */
+    int found = meta_shrink_section(data, file_size, NCD_META_SECTION_HEURISTICS,
+                                    (uint32_t)(4 + 3 * sizeof(NcdHeurEntryV2)),
+                                    (uint32_t)(4 + sizeof(NcdHeurEntryV2)));
     if (!found) {
         free(data);
         ASSERT_TRUE(found);  /* Will fail and return 1 */
@@ -493,22 +505,9 @@ TEST(metadata_groups_bounds_check) {
     fclose(f);
 
     /* Find groups section (id = 0x02) and truncate its declared size */
-    int found = 0;
-    for (long off = 0; off < file_size - 5; off++) {
-        if (data[off] == NCD_META_SECTION_GROUPS) {
-            uint32_t current_size;
-            memcpy(&current_size, data + off + 1, 4);
-
-            uint32_t expected_min = 4 + 3 * sizeof(NcdGroupEntry);
-            if (current_size >= expected_min) {
-                /* Patch to only fit 1 entry */
-                uint32_t new_size = 4 + (uint32_t)sizeof(NcdGroupEntry);
-                memcpy(data + off + 1, &new_size, 4);
-                found = 1;
-                break;
-            }
-        }
-    }
+    int found = meta_shrink_section(data, file_size, NCD_META_SECTION_GROUPS,
+                                    (uint32_t)(4 + 3 * sizeof(NcdGroupEntry)),
+                                    (uint32_t)(4 + sizeof(NcdGroupEntry)));
     if (!found) {
         free(data);
         ASSERT_TRUE(found);  /* Will fail and return 1 */

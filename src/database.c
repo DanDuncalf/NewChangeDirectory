@@ -967,6 +967,54 @@ DriveData *db_find_drive(NcdDatabase *db, char letter)
     return NULL;
 }
 
+DriveData *db_adopt_drive(NcdDatabase *dst, const DriveData *src)
+{
+    if (!dst || !src) return NULL;
+    if (db_find_drive(dst, src->letter)) return NULL;
+    db_make_mutable(dst);
+
+    DriveData *drv = db_add_drive(dst, src->letter);   /* invalidates caches */
+    *drv = *src;                        /* letter, label, mount_point, volume_label, type */
+    drv->dirs = NULL;
+    drv->dir_count = drv->dir_capacity = 0;
+    drv->name_pool = NULL;
+    drv->name_pool_len = drv->name_pool_cap = 0;
+
+    if (src->dir_count > 0 && src->dirs) {
+        size_t bytes = sizeof(DirEntry) * (size_t)src->dir_count;
+        drv->dirs = ncd_malloc(bytes);
+        memcpy(drv->dirs, src->dirs, bytes);
+        drv->dir_count = drv->dir_capacity = src->dir_count;
+    }
+    if (src->name_pool_len > 0 && src->name_pool) {
+        drv->name_pool = ncd_malloc(src->name_pool_len);
+        memcpy(drv->name_pool, src->name_pool, src->name_pool_len);
+        drv->name_pool_len = drv->name_pool_cap = src->name_pool_len;
+    }
+    return drv;
+}
+
+int db_load_all_drives_into(NcdDatabase *dst, DbLoadProgressFn progress, void *user_data)
+{
+    if (!dst) return 0;
+    char drives[32];
+    int drive_count = platform_get_available_drives(drives, 27);
+    int loaded = 0;
+    for (int i = 0; i < drive_count; i++) {
+        if (progress) progress(drives[i], i + 1, drive_count, user_data);
+        char path[NCD_MAX_PATH];
+        if (!db_drive_path(drives[i], path, sizeof(path))) continue;
+        if (!platform_file_exists(path)) continue;
+        NcdDatabase *one = db_load_auto(path);
+        if (!one) continue;
+        for (int d = 0; d < one->drive_count; d++)
+            db_adopt_drive(dst, &one->drives[d]);
+        db_free(one);
+        loaded++;
+    }
+    return loaded;
+}
+
 /* ============================================================== dir mgmt  */
 
 int db_add_dir(DriveData *drv, const char *name, int32_t parent,

@@ -167,6 +167,14 @@ ServiceState *service_state_init(void) {
     return state;
 }
 
+static void service_load_progress(char letter, int index, int total, void *user_data)
+{
+    ServiceState *state = (ServiceState *)user_data;
+    char status[256];
+    snprintf(status, sizeof(status), "Loading drive %c: (%d/%d)...", letter, index, total);
+    service_state_set_status_message(state, status);
+}
+
 /*
  * service_state_load_databases  --  Load all drive databases
  *
@@ -174,95 +182,27 @@ ServiceState *service_state_init(void) {
  */
 bool service_state_load_databases(ServiceState *state) {
     if (!state) return false;
-    
+
     service_state_set_runtime_state(state, SERVICE_STATE_LOADING);
     service_state_set_status_message(state, "Loading databases...");
-    
-    /* Load per-drive databases */
-    char drives[26];
-    int drive_count = platform_get_available_drives(drives, 26);
-    NCD_DEBUG_LOG("DEBUG: Loading databases for %d drives\n", drive_count);
-    int loaded_count = 0;
-    
-    for (int i = 0; i < drive_count; i++) {
-        char path[MAX_PATH];
-        if (!ncd_platform_db_drive_path(drives[i], path, sizeof(path))) {
-            NCD_DEBUG_LOG("DEBUG: db_drive_path failed for drive %c:\n", drives[i]);
-            continue;
-        }
-        
-        /* Update status with progress */
-        char status[256];
-        snprintf(status, sizeof(status), "Loading drive %c: (%d/%d)...", 
-                 drives[i], i + 1, drive_count);
-        service_state_set_status_message(state, status);
-        
-        /* Check if file exists */
-        FILE *f = fopen(path, "rb");
-        if (!f) {
-            NCD_DEBUG_LOG("DEBUG: Database file not found for drive %c: (%s)\n", drives[i], path);
-            continue;
-        }
-        fclose(f);
-        
-        /* Load this drive's database */
-        NcdDatabase *drive_db = db_load_auto(path);
-        if (!drive_db) {
-            NCD_DEBUG_LOG("DEBUG: Failed to load database for drive %c:\n", drives[i]);
-            continue;
-        }
-        
-        NCD_DEBUG_LOG("DEBUG: Successfully loaded drive %c: database (%d drives, %d dirs)\n", 
-                      drives[i], drive_db->drive_count, 
-                      drive_db->drive_count > 0 ? drive_db->drives[0].dir_count : 0);
-        
-        /* Merge into main database */
-        for (int d = 0; d < drive_db->drive_count; d++) {
-            DriveData *src = &drive_db->drives[d];
-            NCD_DEBUG_LOG("DEBUG: Merging drive %c: (type=%d, dirs=%d)\n", 
-                          src->letter, src->type, src->dir_count);
-            DriveData *dst = db_add_drive(state->database, src->letter);
-            if (!dst) {
-                NCD_DEBUG_LOG("DEBUG: Failed to add drive %c: to main database\n", src->letter);
-                continue;
-            }
-            
-            dst->type = src->type;
-            memcpy(dst->label, src->label, sizeof(dst->label));
-            
-            /* Copy all directories */
-            NCD_DEBUG_LOG("DEBUG: Copying %d directories from drive %c:\n", src->dir_count, src->letter);
-            for (int dir_idx = 0; dir_idx < src->dir_count; dir_idx++) {
-                DirEntry *entry = &src->dirs[dir_idx];
-                const char *name = src->name_pool + entry->name_off;
-                db_add_dir(dst, name, entry->parent,
-                          entry->is_hidden, entry->is_system);
-            }
-            NCD_DEBUG_LOG("DEBUG: Finished copying directories for drive %c:\n", src->letter);
-        }
-        
-        db_free(drive_db);
-        loaded_count++;
-        NCD_DEBUG_LOG("DEBUG: Drive %c: loaded successfully (%d/%d)\n", drives[i], loaded_count, drive_count);
-    }
-    
-    /* Filter excluded directories from the loaded database */
+
+    char drives[32];
+    int drive_count = platform_get_available_drives(drives, 27);
+    int loaded_count = db_load_all_drives_into(state->database, service_load_progress, state);
+    NCD_DEBUG_LOG("DEBUG: Loaded %d drive database file(s) of %d drives\n", loaded_count, drive_count);
+
     if (state->metadata && state->metadata->exclusions.count > 0) {
         int removed = db_filter_excluded(state->database, state->metadata);
         if (removed > 0) {
             NCD_DEBUG_LOG("DEBUG: Filtered %d excluded dirs from service database\n", removed);
         }
     }
-    
+
     state->last_rescan = state->database->last_scan;
-    
+
     char status[256];
     snprintf(status, sizeof(status), "Loaded %d drives", loaded_count);
     service_state_set_status_message(state, status);
-    
-    NCD_DEBUG_LOG("DEBUG: service_state_load_databases completed. loaded_count=%d, drive_count=%d\n", 
-                  loaded_count, drive_count);
-    
     return loaded_count > 0 || drive_count == 0;
 }
 

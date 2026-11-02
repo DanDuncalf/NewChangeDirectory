@@ -64,56 +64,7 @@ static NcdDatabase *load_all_drive_databases(void) {
         set_error("Failed to create database");
         return NULL;
     }
-
-    /* Get available drives */
-    char drives[26];
-    int drive_count = platform_get_available_drives(drives, 26);
-    
-    for (int i = 0; i < drive_count; i++) {
-        char path[MAX_PATH];
-        if (!ncd_platform_db_drive_path(drives[i], path, sizeof(path))) {
-            continue;
-        }
-
-        /* Check if file exists by trying to open it */
-        FILE *f = fopen(path, "rb");
-        if (!f) {
-            continue;  /* No database for this drive */
-        }
-        fclose(f);
-
-        /* Load this drive's database */
-        NcdDatabase *drive_db = db_load_auto(path);
-        if (!drive_db) {
-            continue;  /* Failed to load, skip this drive */
-        }
-
-        /* Merge drive data into main database */
-        for (int d = 0; d < drive_db->drive_count; d++) {
-            DriveData *src = &drive_db->drives[d];
-            DriveData *dst = db_add_drive(db, src->letter);
-            if (!dst) {
-                continue;
-            }
-
-            /* Copy drive properties */
-            dst->type = src->type;
-            memcpy(dst->label, src->label, sizeof(dst->label));
-
-            /* Copy all directories */
-            for (int dir_idx = 0; dir_idx < src->dir_count; dir_idx++) {
-                DirEntry *entry = &src->dirs[dir_idx];
-                const char *name = src->name_pool + entry->name_off;
-                db_add_dir(dst, name, entry->parent, 
-                          entry->is_hidden, entry->is_system);
-            }
-        }
-
-        /* Free the temporary drive database */
-        /* Note: drive_db may have blob_buf, so use db_free */
-        db_free(drive_db);
-    }
-
+    db_load_all_drives_into(db, NULL, NULL);
     return db;
 }
 
