@@ -23,6 +23,7 @@
 #include "../src/scanner.h"
 #include "../src/ui.h"
 #include "../src/ncd.h"
+#include "../src/platform.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -363,10 +364,10 @@ TEST(p0_3_volatile_flags_atomicity) {
 }
 
 /* --------------------------------------------------------- P0.4               */
-/* CRC64 init race:
- * crc64_init() uses a check-then-set pattern on g_crc64_initialized
- * without any mutex or atomic. Multiple threads initializing simultaneously
- * can interleave writes to the CRC table. */
+/* CRC64 init race (historical):
+ * the old shm_crc64 lazily built its table with a racy check-then-set.
+ * The single platform_crc64 now uses compile-time constant tables, so the
+ * race is structurally impossible; the 8-thread test remains as a guard. */
 
 typedef struct {
     int thread_id;
@@ -379,7 +380,7 @@ static THREAD_RET p0_4_crc_worker(THREAD_ARG arg) {
 
     /* Compute CRC64 of known data */
     const char *test_data = "The quick brown fox jumps over the lazy dog";
-    uint64_t crc = shm_crc64(test_data, strlen(test_data));
+    uint64_t crc = platform_crc64(test_data, strlen(test_data));
 
     if (ctx->thread_id == 0) {
         ctx->first_crc = crc;
@@ -387,7 +388,7 @@ static THREAD_RET p0_4_crc_worker(THREAD_ARG arg) {
 
     /* Verify consistency: repeated calls should produce same result */
     for (int i = 0; i < 100; i++) {
-        uint64_t crc2 = shm_crc64(test_data, strlen(test_data));
+        uint64_t crc2 = platform_crc64(test_data, strlen(test_data));
         if (crc2 != crc) {
             ctx->errors++;
             break;
@@ -400,7 +401,7 @@ static THREAD_RET p0_4_crc_worker(THREAD_ARG arg) {
 TEST(p0_4_crc64_init_race) {
     printf("[P0.4 BUG CHECK] crc64_init double-check without locking\n");
 
-    /* Run 8 threads calling shm_crc64 simultaneously to stress
+    /* Run 8 threads calling platform_crc64 simultaneously to stress
      * the crc64_init() race window. */
 #define P0_4_THREADS 8
     P0_4_ThreadCtx ctx[P0_4_THREADS];

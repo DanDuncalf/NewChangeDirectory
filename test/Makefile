@@ -48,7 +48,7 @@ TESTS = test_database test_matcher test_history test_config \
         test_service_stress test_service_rescan test_service_init_db test_ipc_extended test_shm_stress fuzz_ipc \
         test_cli_edge_cases test_scanner_extended test_matcher_extended \
         test_result_edge_cases test_stress \
-        test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify
+        test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify test_crc64 test_load_integration
 
 .PHONY: all test clean fuzz bench corruption bugs recursive-mount features service-test all-environments all-environments-standalone alt_services
 
@@ -235,6 +235,15 @@ test_agent_mv: test_agent_mv.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
 test_agent_verify: test_agent_verify.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Slice-by-8 CRC64 functional tests
+test_crc64: test_crc64.c test_framework.c ../src/platform_ncd.c $(SHARED_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Load-path integration tests (real binaries, isolated data dir)
+LOAD_INTEGRATION_SOURCES = agent_test_common.c service_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
+test_load_integration: test_load_integration.c test_framework.c $(LOAD_INTEGRATION_SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # Tier 3 tests - Result output
 # Uses extracted result.c module
 RESULT_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
@@ -403,7 +412,7 @@ fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
 	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
 
-test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify
+test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify test_crc64 test_load_integration
 	@echo "Running strbuilder tests..."
 	@./test_strbuilder
 	@echo ""

@@ -5,6 +5,7 @@
 #include "test_framework.h"
 #include "../src/ncd.h"
 #include "../src/shared_state.h"
+#include "../src/platform.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -71,51 +72,27 @@ TEST(validate_header_db) {
     return 0;
 }
 
-/* Test CRC64 computation */
+/* Test CRC64 computation (platform_crc64 is the single CRC implementation) */
 TEST(crc64_basic) {
-    /* Test with known input */
     const char *test_data = "123456789";
-    uint64_t crc = shm_crc64(test_data, 9);
-    
-    /* CRC64-ECMA of "123456789" should be 0x6C40DF5F0B497347 */
-    /* Note: This is a well-known test vector */
-    ASSERT_TRUE(crc != 0);  /* Just check it's computed */
-    
-    /* Same data should give same CRC */
-    uint64_t crc2 = shm_crc64(test_data, 9);
-    ASSERT_EQ_INT((int)(crc >> 32), (int)(crc2 >> 32));
-    ASSERT_EQ_INT((int)(crc & 0xFFFFFFFF), (int)(crc2 & 0xFFFFFFFF));
-    
-    /* Different data should likely give different CRC */
-    const char *test_data2 = "987654321";
-    uint64_t crc3 = shm_crc64(test_data2, 9);
-    ASSERT_TRUE(crc != crc3);
-    
+    uint64_t crc = platform_crc64(test_data, 9);
+    ASSERT_TRUE(crc == 0xB86883E6FA710A9FULL);
+    ASSERT_TRUE(platform_crc64(test_data, 9) == crc);
+    ASSERT_TRUE(platform_crc64("123456780", 9) != crc);
     return 0;
 }
 
 TEST(crc64_empty) {
-    /* Empty data should give CRC of 0 */
-    uint64_t crc = shm_crc64("", 0);
-    ASSERT_EQ_INT(0, (int)crc);
+    ASSERT_TRUE(platform_crc64("", 0) == 0ULL);
     return 0;
 }
 
 TEST(crc64_incremental) {
-    const char *part1 = "Hello ";
-    const char *part2 = "World!";
     const char *combined = "Hello World!";
-    
-    /* Compute as one block */
-    uint64_t crc_full = shm_crc64(combined, 12);
-    
-    /* Compute incrementally */
-    uint64_t crc_inc = shm_crc64_update(0, part1, 6);
-    crc_inc = shm_crc64_update(crc_inc, part2, 6);
-    
-    ASSERT_EQ_INT((int)(crc_full >> 32), (int)(crc_inc >> 32));
-    ASSERT_EQ_INT((int)(crc_full & 0xFFFFFFFF), (int)(crc_inc & 0xFFFFFFFF));
-    
+    uint64_t crc_full = platform_crc64(combined, 12);
+    uint64_t crc_inc = platform_crc64_update(0, "Hello ", 6);
+    crc_inc = platform_crc64_update(crc_inc, "World!", 6);
+    ASSERT_TRUE(crc_full == crc_inc);
     return 0;
 }
 

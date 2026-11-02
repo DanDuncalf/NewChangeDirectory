@@ -1,6 +1,7 @@
 /* test_shared_state_extended.c -- Extended tests for shared state (Tier 4) */
 #include "test_framework.h"
 #include "../src/shared_state.h"
+#include "../src/platform.h"
 #include "../src/shm_platform.h"
 #include <string.h>
 #include <stdlib.h>
@@ -19,7 +20,7 @@ static void init_valid_snapshot(uint8_t *buf, size_t size, uint32_t magic, uint3
     hdr->section_count = section_count;
     hdr->text_encoding = NCD_SHM_ENCODING_UTF8;
     hdr->flags = NCD_SHM_FLAG_COMPLETE;
-    hdr->checksum = shm_crc64(buf + hdr->header_size, size - hdr->header_size);
+    hdr->checksum = platform_crc64(buf + hdr->header_size, size - hdr->header_size);
 }
 
 TEST(shm_compute_checksum_returns_deterministic_value) {
@@ -28,8 +29,8 @@ TEST(shm_compute_checksum_returns_deterministic_value) {
     size_t len = sizeof(data) - 1; /* Exclude null terminator */
     
     /* Compute checksum twice */
-    uint64_t checksum1 = shm_crc64(data, len);
-    uint64_t checksum2 = shm_crc64(data, len);
+    uint64_t checksum1 = platform_crc64(data, len);
+    uint64_t checksum2 = platform_crc64(data, len);
     
     /* Should be identical */
     ASSERT_EQ_INT((int)(checksum1 >> 32), (int)(checksum2 >> 32));

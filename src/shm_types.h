@@ -25,7 +25,7 @@ extern "C" {
 
 /* --------------------------------------------------------- magic & version  */
 
-#define NCD_SHM_TYPES_VERSION   2       /* Version for new offset-based format */
+#define NCD_SHM_TYPES_VERSION   3       /* v3: checksum = platform_crc64 (init/xorout ~0) */
 
 /* Legacy compatibility version number */
 #define NCD_SHM_VERSION         NCD_SHM_TYPES_VERSION

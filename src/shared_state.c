@@ -3,84 +3,8 @@
  */
 
 #include "shared_state.h"
+#include "platform.h"
 #include <string.h>
-
-#if !NCD_PLATFORM_WINDOWS
-#include <stdatomic.h>
-#endif
-
-/* --------------------------------------------------------- CRC64 implementation */
-
-/* CRC64-ECMA polynomial: 0x42F0E1EBA9EA3693 */
-#define CRC64_POLY 0x42F0E1EBA9EA3693ULL
-
-/* Precomputed CRC64 table */
-static uint64_t g_crc64_table[256];
-
-#if NCD_PLATFORM_WINDOWS
-static INIT_ONCE g_crc64_init_once = INIT_ONCE_STATIC_INIT;
-static BOOL CALLBACK crc64_init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx) {
-    (void)once; (void)param; (void)ctx;
-    for (int i = 0; i < 256; i++) {
-        uint64_t crc = i;
-        for (int j = 0; j < 8; j++) {
-            if (crc & 1) {
-                crc = (crc >> 1) ^ CRC64_POLY;
-            } else {
-                crc >>= 1;
-            }
-        }
-        g_crc64_table[i] = crc;
-    }
-    MemoryBarrier();
-    return TRUE;
-}
-static void crc64_init(void) {
-    InitOnceExecuteOnce(&g_crc64_init_once, crc64_init_cb, NULL, NULL);
-    /* Read barrier: ensure this core sees the initialized table.
-     * InitOnceExecuteOnce guarantees the callback ran-before-return
-     * but does NOT publish store visibility across cores.
-     * The MemoryBarrier in the callback pairs with this one. */
-    MemoryBarrier();
-}
-#else
-#include <pthread.h>
-static pthread_once_t g_crc64_init_once = PTHREAD_ONCE_INIT;
-static void crc64_init_impl(void) {
-    for (int i = 0; i < 256; i++) {
-        uint64_t crc = i;
-        for (int j = 0; j < 8; j++) {
-            if (crc & 1) {
-                crc = (crc >> 1) ^ CRC64_POLY;
-            } else {
-                crc >>= 1;
-            }
-        }
-        g_crc64_table[i] = crc;
-    }
-    atomic_thread_fence(memory_order_seq_cst);
-}
-static void crc64_init(void) {
-    pthread_once(&g_crc64_init_once, crc64_init_impl);
-}
-#endif
-
-uint64_t shm_crc64(const void *data, size_t len) {
-    crc64_init();
-    return shm_crc64_update(0, data, len);
-}
-
-uint64_t shm_crc64_update(uint64_t crc, const void *data, size_t len) {
-    crc64_init();
-    const uint8_t *bytes = (const uint8_t *)data;
-    
-    for (size_t i = 0; i < len; i++) {
-        uint8_t idx = (uint8_t)(crc ^ bytes[i]);
-        crc = (crc >> 8) ^ g_crc64_table[idx];
-    }
-    
-    return crc;
-}
 
 /* --------------------------------------------------------- validation          */
 
@@ -146,7 +70,7 @@ uint64_t shm_compute_checksum(const void *base, size_t size) {
     const uint8_t *data_start = (const uint8_t *)base + hdr->header_size;
     size_t data_size = hdr->total_size - hdr->header_size;
     
-    return shm_crc64(data_start, data_size);
+    return (uint64_t)platform_crc64(data_start, data_size);
 }
 
 bool shm_validate_checksum(const void *base, size_t size) {

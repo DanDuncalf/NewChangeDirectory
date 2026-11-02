@@ -101,10 +101,7 @@ const void *shm_get_section_ptr(const void *base, const ShmSectionDesc *desc);
 
 bool shm_get_info(const void *base, size_t size, ShmSnapshotInfo *info);
 
-/* --------------------------------------------------------- utility            */
-
-uint64_t shm_crc64(const void *data, size_t len);
-uint64_t shm_crc64_update(uint64_t crc, const void *data, size_t len);
+/* Checksums use platform_crc64() (platform.h). */
 
 #ifdef __cplusplus
 }

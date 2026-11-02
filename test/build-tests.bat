@@ -464,6 +464,16 @@ echo Building test_p0_regression.exe...
 cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_p0_regression.exe test_p0_regression.c %OBJDIR%\test_framework.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\ui.obj %OBJDIR%\service_state.obj %OBJDIR%\service_publish.obj %OBJDIR%\shared_state.obj %OBJDIR%\shm_platform_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
 if errorlevel 1 goto :error
 
+:: CRC64 slice-by-8 functional tests
+echo Building test_crc64.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_crc64.exe test_crc64.c %OBJDIR%\test_framework.obj %OBJDIR%\platform.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
+:: Load-path integration tests (real binaries, isolated data dir)
+echo Building test_load_integration.exe...
+cl /nologo /W3 /O2 /I%SRCDIR% /I%SHARED% /I. /DPLATFORM_WINDOWS=1 /Fe:test_load_integration.exe test_load_integration.c %OBJDIR%\test_framework.obj %OBJDIR%\agent_test_common.obj %OBJDIR%\service_test_common.obj %OBJDIR%\database.obj %OBJDIR%\scanner.obj %OBJDIR%\matcher.obj %OBJDIR%\platform.obj %OBJDIR%\control_ipc_common.obj %OBJDIR%\control_ipc_win.obj %OBJDIR%\sh_platform.obj %OBJDIR%\sh_strbuilder.obj %OBJDIR%\sh_common.obj kernel32.lib user32.lib shlwapi.lib advapi32.lib
+if errorlevel 1 goto :error
+
 echo.
 echo Build successful!
 echo.
