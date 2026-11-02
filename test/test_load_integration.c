@@ -76,7 +76,8 @@ static inline void it_set_process_env(const ItEnv *e)
 #endif
 }
 
-/* Run the real client with raw args; captures stdout+stderr. Returns exit code. */
+/* Run the real client with raw args; captures stdout+stderr. Returns exit code.
+ * stdin is empty so an unexpected interactive prompt fails fast instead of hanging. */
 static inline int it_run_ncd(const ItEnv *e, const char *extra_env, const char *args,
                       char *out, size_t out_size)
 {
@@ -85,11 +86,11 @@ static inline int it_run_ncd(const ItEnv *e, const char *extra_env, const char *
     char cmd[NCD_MAX_PATH * 6];
 #if NCD_PLATFORM_WINDOWS
     snprintf(cmd, sizeof(cmd),
-        "set \"LOCALAPPDATA=%s\" && set \"TEMP=%s\" && set \"TMP=%s\" && set NCD_TEST_MODE=1 && %s%s\"%s\" %s 2>&1",
+        "set \"LOCALAPPDATA=%s\" && set \"TEMP=%s\" && set \"TMP=%s\" && set NCD_TEST_MODE=1 && %s%s\"%s\" %s <nul 2>&1",
         e->base, e->tmp, e->tmp, extra_env ? extra_env : "", extra_env ? " && " : "", exe, args);
 #else
     snprintf(cmd, sizeof(cmd),
-        "XDG_DATA_HOME='%s' XDG_RUNTIME_DIR='%s' NCD_TEST_MODE=1 %s '%s' %s 2>&1",
+        "XDG_DATA_HOME='%s' XDG_RUNTIME_DIR='%s' NCD_TEST_MODE=1 %s '%s' %s </dev/null 2>&1",
         e->base, e->tmp, extra_env ? extra_env : "", exe, args);
 #endif
     FILE *fp = AGENT_POPEN(cmd, "r");
@@ -294,10 +295,64 @@ TEST(it_subdir_rescan_twice_no_duplicates) {
     return 0;
 }
 
+/* ---------------------------------------------------------------- Task 4 */
+
+/* Write an initial ncd.metadata into the isolated data dir so CLI commands
+ * like -x do not stop at the interactive first-run setup prompt. */
+static bool it_write_initial_metadata(const ItEnv *e)
+{
+    char path[NCD_MAX_PATH];
+    snprintf(path, sizeof(path), "%s%sncd.metadata", e->data, NCD_PATH_SEP);
+    NcdMetadata *meta = db_metadata_create();
+    db_metadata_set_override(path);
+    bool ok = db_metadata_save(meta);
+    db_metadata_set_override(NULL);
+    db_metadata_free(meta);
+    return ok;
+}
+
+TEST(it_rescan_honors_large_exclusion_list) {
+    ItEnv e; it_env_init(&e, "it_excl");
+    it_mk(&e, "keep_dir_e1");
+    it_mk(&e, "keep_dir_e1" NCD_PATH_SEP "keep_leaf_e2");
+    it_mk(&e, "skip_lit_e3");
+    it_mk(&e, "skip_lit_e3" NCD_PATH_SEP "skip_inner_e4");
+    it_mk(&e, "wild_e5.tmpx");
+    ASSERT_TRUE(it_write_initial_metadata(&e));
+    char out[65536], args[NCD_MAX_PATH * 2];
+    /* Over the hash threshold: one rooted literal (exercises the hash sets;
+     * rooted because the unified rules match bare non-root literals only at
+     * the drive root), one wildcard (linear part), and 8 fillers. */
+    snprintf(args, sizeof(args), "-x \"%s%s%sskip_lit_e3\"",
+             NCD_PATH_SEP, db_exclusion_rel_path(e.fs), NCD_PATH_SEP);
+    it_run_ncd(&e, NULL, args, out, sizeof(out));
+    ASSERT_STR_CONTAINS(out, "Added exclusion");
+    it_run_ncd(&e, NULL, "-x \"*.tmpx\"", out, sizeof(out));
+    ASSERT_STR_CONTAINS(out, "Added exclusion");
+    for (int i = 0; i < 8; i++) {
+        snprintf(args, sizeof(args), "-x filler_excl_%d", i);
+        it_run_ncd(&e, NULL, args, out, sizeof(out));
+    }
+    snprintf(args, sizeof(args), "-r \"%s\"", e.fs);
+    it_run_ncd(&e, NULL, args, out, sizeof(out));
+
+    it_run_ncd(&e, NULL, "--agent:query keep_leaf_e2 --json", out, sizeof(out));
+    ASSERT_EQ_INT(1, it_count(out, "\"path\":"));
+    it_run_ncd(&e, NULL, "--agent:query skip_inner_e4 --json", out, sizeof(out));
+    ASSERT_EQ_INT(0, it_count(out, "\"path\":"));   /* child of excluded literal */
+    it_run_ncd(&e, NULL, "--agent:query skip_lit_e3 --json", out, sizeof(out));
+    ASSERT_EQ_INT(0, it_count(out, "\"path\":"));
+    it_run_ncd(&e, NULL, "--agent:query wild_e5 --json", out, sizeof(out));
+    ASSERT_EQ_INT(0, it_count(out, "\"path\":"));   /* wildcard *.tmpx */
+    it_env_cleanup(&e);
+    return 0;
+}
+
 TEST_MAIN(
     agent_kill_any_service();
     RUN_TEST(it_crc_db_file_checksum_unchanged_and_loads);
     RUN_TEST(it_standalone_merge_keeps_parents_and_is_fast);
     RUN_TEST(it_service_merge_keeps_parents_and_is_fast);
     RUN_TEST(it_subdir_rescan_twice_no_duplicates);
+    RUN_TEST(it_rescan_honors_large_exclusion_list);
 )

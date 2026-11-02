@@ -185,117 +185,16 @@ struct ScanCtx {
     DirIdSet   *visited;          /* Track visited (dev,ino) for cycle detection */
 #endif
     const NcdExclusionList *exclusions;  /* Exclusion list for filtering */
+    const NcdExclusionIndex *excl_index; /* compiled form of exclusions (owned by caller) */
 };
 typedef struct ScanCtx ScanCtx;
 
-/* Check if a directory matches an exclusion pattern */
-static bool match_exclusion_pattern(const char *pattern, const char *dir_path, bool match_from_root)
-{
-    if (!pattern || !dir_path) {
-        return false;
-    }
-    /* Simple wildcard matching (* and ?) */
-    const char *p = pattern;
-    const char *d = dir_path;
-    
-    /* Skip leading separators in pattern for non-root matches */
-    if (!match_from_root && (p[0] == '\\' || p[0] == '/')) {
-        p++;
-    }
-    
-    while (*p && *d) {
-        if (*p == '*') {
-            /* Try to match the rest of the pattern against the rest of the path */
-            p++;
-            if (!*p) {
-                return true;  /* Pattern ends with *, matches everything */
-            }
-            
-            while (*d) {
-                if (match_exclusion_pattern(p, d, match_from_root)) {
-                    return true;
-                }
-                d++;
-            }
-            return false;
-        } else if (*p == '?') {
-            p++;
-            d++;
-        } else if (tolower((unsigned char)*p) == tolower((unsigned char)*d)) {
-            p++;
-            d++;
-        } else {
-            return false;
-        }
-    }
-    
-    /* Skip trailing wildcards */
-    while (*p == '*') p++;
-    
-    bool result = *p == '\0' && (*d == '\0' || *d == '\\' || *d == '/');
-    return result;
-}
-
-/* Check if a directory should be excluded based on the exclusion list in context */
+/* Exclusion check: same rules as the load filter (db_exclusion_check) applied
+ * to the drive-relative path, via the compiled index. */
 static bool scan_ctx_is_excluded(struct ScanCtx *ctx, char drive_letter, const char *dir_path)
 {
-    if (!ctx || !ctx->exclusions || ctx->exclusions->count == 0) {
-        return false;
-    }
-    
-    for (int i = 0; i < ctx->exclusions->count; i++) {
-        NcdExclusionEntry *entry = &ctx->exclusions->entries[i];
-        
-        /* Check drive match (0 means all drives) */
-#if NCD_PLATFORM_WINDOWS
-        if (entry->drive != 0) {
-            char d = (char)toupper((unsigned char)drive_letter);
-            if (entry->drive != d) {
-                continue;
-            }
-        }
-#else
-        (void)drive_letter;
-#endif
-        
-        /* Get pattern without drive specifier */
-        const char *pattern = entry->pattern;
-#if NCD_PLATFORM_WINDOWS
-        if (pattern[1] == ':') {
-            pattern += 2;
-        }
-#endif
-        
-        /* For root-only matches, check if path starts from root */
-        if (entry->match_from_root) {
-            /* Must match from the beginning of the path */
-            if (match_exclusion_pattern(pattern, dir_path, true)) {
-                return true;
-            }
-        } else {
-            /* Check if pattern matches anywhere in the path */
-            if (match_exclusion_pattern(pattern, dir_path, false)) {
-                return true;
-            }
-            
-            /* For patterns with parent\child syntax, check each path component */
-            if (entry->has_parent_match) {
-                const char *sep = dir_path;
-                while (1) {
-                    const char *bs = strchr(sep, '\\');
-                    const char *fs = strchr(sep, '/');
-                    sep = bs ? (fs && fs < bs ? fs : bs) : fs;
-                    if (!sep) break;
-                    sep++;
-                    if (match_exclusion_pattern(pattern, sep, false)) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    
-    return false;
+    if (!ctx || !ctx->excl_index) return false;
+    return db_exclusion_index_check(ctx->excl_index, drive_letter, db_exclusion_rel_path(dir_path));
 }
 
 /* ============================================================= threading  */
@@ -313,6 +212,7 @@ typedef struct {
     DriveStatus *status;         /* shared with main-thread display loop    */
     int          dirs_found;     /* written on completion                   */
     const NcdExclusionList *exclusions; /* exclusion list for filtering     */
+    const NcdExclusionIndex *excl_index; /* compiled exclusions (owned by caller) */
 } ScanThreadData;
 
 /* Platform-specific implementation of recursive directory scan.
@@ -341,6 +241,7 @@ static unsigned long worker_thread(void *param)
         .visited        = diridset_create(),
 #endif
         .exclusions     = td->exclusions,
+        .excl_index     = td->excl_index,
     };
 
     /* Perform platform-specific scan. */
@@ -371,6 +272,8 @@ int scan_mount(NcdDatabase   *db,
     (void)user_data;
 
     if (!mount || !mount[0]) return -1;
+
+    NcdExclusionIndex *excl_index = db_exclusion_index_build(exclusions);
 
     /* Validate mount string and derive drive letter for status display. */
     char drive_letter = platform_get_drive_letter(mount);
@@ -439,6 +342,7 @@ int scan_mount(NcdDatabase   *db,
                 .visited        = diridset_create(),
 #endif
                 .exclusions     = exclusions,
+                .excl_index     = excl_index,
             };
             total_count += platform_scan_directory(&ctx, root_dirs[i], (int32_t)dir_id);
 #if NCD_PLATFORM_LINUX
@@ -451,6 +355,7 @@ int scan_mount(NcdDatabase   *db,
         /* Invalidate cached name_index: the DB changed, matcher must rebuild. */
         if (db->name_index_generation == 0) db->name_index_generation = 1;
         else db->name_index_generation++;
+        db_exclusion_index_free(excl_index);
         return total_count;
     }
 #endif
@@ -463,6 +368,7 @@ int scan_mount(NcdDatabase   *db,
     td.status = &local_status;
     td.dirs_found = 0;
     td.exclusions = exclusions;
+    td.excl_index = excl_index;
 
     PlatformHandle h = platform_thread_create(worker_thread, &td);
     if (h) {
@@ -477,6 +383,7 @@ int scan_mount(NcdDatabase   *db,
     if (db->name_index_generation == 0) db->name_index_generation = 1;
     else db->name_index_generation++;
 
+    db_exclusion_index_free(excl_index);
     return td.dirs_found;
 }
 
@@ -519,6 +426,8 @@ int scan_mounts(NcdDatabase *db,
 
     /* Empty mount list - nothing to scan */
     if (count == 0) return 0;
+
+    NcdExclusionIndex *excl_index = db_exclusion_index_build(exclusions);
 
     /* Compute max mount name length for aligned bracket display */
     size_t max_mount_len = 0;
@@ -602,6 +511,7 @@ int scan_mounts(NcdDatabase *db,
         td[i].status = &statuses[i];
         td[i].dirs_found = 0;
         td[i].exclusions = exclusions;
+        td[i].excl_index = excl_index;
         handles[nhandles] = platform_thread_create(worker_thread, &td[i]);
         if (handles[nhandles])
             nhandles++;
@@ -719,6 +629,7 @@ int scan_mounts(NcdDatabase *db,
     if (db->name_index_generation == 0) db->name_index_generation = 1;
     else db->name_index_generation++;
 
+    db_exclusion_index_free(excl_index);
     return total;
 }
 
@@ -863,9 +774,12 @@ int scan_subdirectory(NcdDatabase   *db,
     ctx.visited = diridset_create();
 #endif
     ctx.exclusions = exclusions;
+    NcdExclusionIndex *excl_index = db_exclusion_index_build(exclusions);
+    ctx.excl_index = excl_index;
 
     /* Scan */
     int result = platform_scan_directory(&ctx, norm_path, subdir_id);
+    db_exclusion_index_free(excl_index);
 #if NCD_PLATFORM_LINUX
     diridset_free(ctx.visited);
 #endif

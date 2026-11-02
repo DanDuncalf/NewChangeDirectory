@@ -411,136 +411,27 @@ static void save_metadata_if_dirty(void)
     }
 }
 
-/* Helper: Check if a path matches an exclusion pattern */
-static bool match_path_exclusion(const char *path, const NcdExclusionEntry *entry)
-{
-    if (!path || !entry || !entry->pattern[0]) return false;
-    
-    char norm_path[NCD_MAX_PATH];
-    char norm_pattern[NCD_MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), path);
-    platform_strncpy_s(norm_pattern, sizeof(norm_pattern), entry->pattern);
-#if NCD_PLATFORM_WINDOWS
-    for (char *p = norm_path; *p; p++) {
-        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-    }
-    for (char *p = norm_pattern; *p; p++) {
-        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-    }
-#endif
-    
-    const char *pattern = norm_pattern;
-    
-    /* For root-only matches, check if pattern matches from the beginning */
-    if (entry->match_from_root) {
-        /* Must match from the beginning of the path */
-        size_t pat_len = strlen(pattern);
-        size_t path_len = strlen(norm_path);
-        
-        if (path_len < pat_len) return false;
-        
-        /* Check if path starts with pattern (case-insensitive) */
-#if NCD_PLATFORM_WINDOWS
-        if (_strnicmp(norm_path, pattern, pat_len) == 0) return true;
-#else
-        if (strncasecmp(norm_path, pattern, pat_len) == 0) return true;
-#endif
-        return false;
-    }
-    
-    /* For non-root patterns, check if pattern appears anywhere in path */
-    /* Simple wildcard matching for * and ? */
-    const char *p = pattern;
-    const char *s = norm_path;
-    const char *star = NULL;
-    const char *ss = s;
-    
-    while (*s) {
-        if (*p == '*') {
-            star = p++;
-            ss = s;
-        } else if (*p == '?') {
-            p++;
-            s++;
-        } else if (*p && (tolower((unsigned char)*p) == tolower((unsigned char)*s))) {
-            p++;
-            s++;
-        } else if (star) {
-            p = star + 1;
-            ss++;
-            s = ss;
-        } else {
-            break;
-        }
-    }
-    
-    /* Check if we consumed the entire pattern */
-    while (*p == '*') p++;
-    return (*p == '\0');
-}
-
-/* Helper: Check if a directory should be excluded */
-static bool is_path_excluded(char drive_letter, const char *path, const NcdExclusionList *exclusions)
-{
-    if (!exclusions || exclusions->count == 0 || !path) return false;
-    
-    for (int i = 0; i < exclusions->count; i++) {
-        NcdExclusionEntry *entry = &exclusions->entries[i];
-        
-        /* Check drive match (0 means all drives) */
-#if NCD_PLATFORM_WINDOWS
-        if (entry->drive != 0) {
-            char d = (char)toupper((unsigned char)drive_letter);
-            if (d != entry->drive) continue;
-        }
-#else
-        (void)drive_letter;
-#endif
-        
-        /* Check if path matches the exclusion pattern */
-        if (match_path_exclusion(path, entry)) {
-            return true;
-        }
-        
-        /* For patterns with parent\child syntax, check each path component */
-        if (entry->has_parent_match) {
-            const char *sep = path;
-            while (*sep) {
-                /* Find next path separator */
-                const char *bs = strchr(sep, '\\');
-                const char *fs = strchr(sep, '/');
-                sep = bs ? (fs && fs < bs ? fs : bs) : fs;
-                if (!sep) break;
-                sep++;
-                if (match_path_exclusion(sep, entry)) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-/* Helper: Filter matches based on exclusion list */
+/* Helper: drop search results that match the exclusion list.  Uses the same
+ * compiled index (and therefore the same rules) as the scanner and the load
+ * filter, applied to each result's drive-relative path. */
 static int filter_matches_by_exclusions(NcdMatch *matches, int match_count, const NcdExclusionList *exclusions)
 {
     if (!matches || match_count <= 0 || !exclusions || exclusions->count == 0) {
         return match_count;
     }
-    
+    NcdExclusionIndex *idx = db_exclusion_index_build(exclusions);
     int write_idx = 0;
     for (int read_idx = 0; read_idx < match_count; read_idx++) {
-        NcdMatch *m = &matches[read_idx];
-        if (!is_path_excluded(m->drive_letter, m->full_path, exclusions)) {
-            /* Keep this match - move it to write position if needed */
-            if (write_idx != read_idx) {
-                matches[write_idx] = matches[read_idx];
-            }
-            write_idx++;
+        const NcdMatch *m = &matches[read_idx];
+        if (db_exclusion_index_check(idx, m->drive_letter, db_exclusion_rel_path(m->full_path))) {
+            continue;  /* excluded: drop (NcdMatch owns no heap memory) */
         }
-        /* If excluded, simply don't copy it (effectively removing it) */
+        if (write_idx != read_idx) {
+            matches[write_idx] = matches[read_idx];
+        }
+        write_idx++;
     }
-    
+    db_exclusion_index_free(idx);
     return write_idx;  /* New count */
 }
 

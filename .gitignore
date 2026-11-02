@@ -437,3 +437,4 @@ duncalf-com.key.pub
 # Scratch trees created by test_rescan_dedup / test_load_integration
 /test/trd_tree/
 /test/it_fs_*/
+/test/tei_tree/

@@ -1360,54 +1360,20 @@ char *db_full_path(const DriveData *drv, int dir_index,
 #endif
 
     /*
-     * First pass: Count depth and detect cycles using a visited bit vector.
-     * A cycle exists if we visit the same index twice.
-     * 
-     * PERFORMANCE: Use stack allocation for small visited bitsets (up to 1024 dirs).
-     * This avoids heap allocation churn on the hot path.
+     * First pass: count depth and detect corruption.  A parent chain longer
+     * than dir_count must revisit an index, so the depth bound alone proves a
+     * cycle -- no per-call visited bitset (which cost a heap allocation plus a
+     * memset of dir_count/8 bytes on every call for large drives).
      */
     int depth = 0;
     int cur = dir_index;
     bool has_cycle = false;
-    
-    /* Bit vector for visited tracking - use stack for small drives, heap for large */
-    int visited_words = (drv->dir_count + 63) / 64;
-    if (visited_words < 1) visited_words = 1;
-    
-    /* Stack allocation for up to 1024 directories (16 x 64-bit words = 128 bytes) */
-    uint64_t visited_stack[16];
-    uint64_t *visited;
-    bool visited_on_stack = (visited_words <= 16);
-    
-    if (visited_on_stack) {
-        visited = visited_stack;
-        memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
-    } else {
-        visited = ncd_malloc_array((size_t)visited_words, sizeof(uint64_t));
-        memset(visited, 0, (size_t)visited_words * sizeof(uint64_t));
-    }
-    
     while (cur >= 0) {
-        /* Check if already visited (cycle detection) */
-        int word_idx = cur / 64;
-        int bit_idx = cur % 64;
-        if (visited[word_idx] & ((uint64_t)1 << bit_idx)) {
-            has_cycle = true;
-            break;
-        }
-        visited[word_idx] |= ((uint64_t)1 << bit_idx);
-        
-        depth++;
-        if (depth > drv->dir_count) {
-            /* Sanity check: depth can't exceed total directories */
-            has_cycle = true;
+        if (cur >= drv->dir_count || ++depth > drv->dir_count) {
+            has_cycle = true;      /* corrupt parent link or cycle */
             break;
         }
         cur = drv->dirs[cur].parent;
-    }
-    
-    if (!visited_on_stack) {
-        free(visited);
     }
     
     if (has_cycle) {
@@ -1498,71 +1464,45 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
 {
     if (!db || !meta || meta->exclusions.count == 0) return 0;
     
-    if (db->is_blob) db_make_mutable(db);
-    
+    NcdExclusionIndex *idx = db_exclusion_index_build(&meta->exclusions);
     int total_removed = 0;
-    
-    /* Process each drive in the database */
+    char full_path[NCD_MAX_PATH];
+
     for (int d = 0; d < db->drive_count; d++) {
         DriveData *drv = &db->drives[d];
         if (drv->dir_count == 0) continue;
-        
-        /* 
-         * Build a mapping table: old_index -> new_index (or -1 if excluded).
-         * Also mark which directories are excluded.
-         */
-        int *index_map = ncd_malloc_array((size_t)drv->dir_count, sizeof(int));
         bool *is_excluded = ncd_calloc((size_t)drv->dir_count, sizeof(bool));
-        
-        /* First pass: identify excluded directories */
+        int removed_here = 0;
+
+        /* Parents are always stored before children (scanner and loader both
+         * append parent-first), so one forward pass propagates exclusion. */
         for (int i = 0; i < drv->dir_count; i++) {
-            char full_path[MAX_PATH];
-            db_full_path(drv, i, full_path, sizeof(full_path));
-            
-            /* 
-             * db_exclusion_check expects path relative to drive root.
-             * db_full_path returns "C:\Windows\System32" on Windows.
-             * Skip past the "C:\" to get "Windows\System32".
-             */
-            const char *rel_path = full_path;
-#if NCD_PLATFORM_WINDOWS
-            if (rel_path[1] == ':') {
-                rel_path += 2;  /* Skip "C:" */
-                if (rel_path[0] == '\\' || rel_path[0] == '/') {
-                    rel_path++;  /* Skip leading backslash */
-                }
+            int parent = drv->dirs[i].parent;
+            if (parent >= 0 && parent < i && is_excluded[parent]) {
+                is_excluded[i] = true; removed_here++; continue;
             }
-#else
-            /* Linux: full_path is the absolute path starting with / */
-            if (rel_path[0] == '/') {
-                rel_path++;  /* Skip leading slash */
-            }
-#endif
-            
-            /* Check if this directory matches any exclusion pattern */
-            if (db_exclusion_check(meta, drv->letter, rel_path)) {
-                is_excluded[i] = true;
-                total_removed++;
+            if (!db_full_path(drv, i, full_path, sizeof(full_path))) continue;
+            if (db_exclusion_index_check(idx, drv->letter, db_exclusion_rel_path(full_path))) {
+                is_excluded[i] = true; removed_here++;
             }
         }
-        
-        /* Second pass: mark children of excluded directories as excluded */
+        /* Safety net for any out-of-order parent links (none expected). */
         bool changed = true;
         while (changed) {
             changed = false;
             for (int i = 0; i < drv->dir_count; i++) {
-                if (is_excluded[i]) continue;
-                
-                /* Check if parent is excluded */
                 int parent = drv->dirs[i].parent;
-                if (parent >= 0 && parent < drv->dir_count && is_excluded[parent]) {
-                    is_excluded[i] = true;
-                    total_removed++;
-                    changed = true;
+                if (!is_excluded[i] && parent >= 0 && parent < drv->dir_count && is_excluded[parent]) {
+                    is_excluded[i] = true; removed_here++; changed = true;
                 }
             }
         }
-        
+        if (removed_here == 0) { free(is_excluded); continue; }
+
+        if (db->is_blob) db_make_mutable(db);   /* copy only when something is removed */
+        drv = &db->drives[d];
+        int *index_map = ncd_malloc_array((size_t)drv->dir_count, sizeof(int));
+
         /* Build index mapping: calculate new index for each kept directory */
         int new_count = 0;
         for (int i = 0; i < drv->dir_count; i++) {
@@ -1572,15 +1512,8 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
                 index_map[i] = new_count++;
             }
         }
-        
-        /* If nothing excluded, skip to next drive */
-        if (new_count == drv->dir_count) {
-            free(index_map);
-            free(is_excluded);
-            continue;
-        }
-        
-        /* 
+
+        /*
          * Second pass: rebuild the directory array.
          * We need to preserve the order and update parent indices.
          */
@@ -1645,8 +1578,10 @@ int db_filter_excluded(NcdDatabase *db, NcdMetadata *meta)
         
         free(index_map);
         free(is_excluded);
+        total_removed += removed_here;
     }
-    
+
+    db_exclusion_index_free(idx);
     return total_removed;
 }
 
@@ -2591,6 +2526,270 @@ static bool wildcard_match(const char *pattern, const char *text)
     return *p == '\0';
 }
 
+/* One entry vs one drive-relative path: the exact historical db_exclusion_check
+ * rules.  path_to_match: normalized ('/' -> '\' on Windows), no drive prefix,
+ * no leading separator.  drive: normalized drive letter (0 on Linux). */
+static bool exclusion_entry_matches(const NcdExclusionEntry *entry, char drive, const char *path_to_match)
+{
+    /* Check drive match (0 means all drives) */
+    if (entry->drive != 0 && entry->drive != drive) {
+        return false;
+    }
+
+    /* Get the pattern path (skip drive letter if present) and normalize */
+    char norm_pattern[NCD_MAX_PATH];
+    const char *pattern_start = entry->pattern;
+#if NCD_PLATFORM_WINDOWS
+    if (pattern_start[0] && pattern_start[1] == ':') {
+        pattern_start += 2;  /* Skip "C:" */
+    }
+#endif
+    platform_strncpy_s(norm_pattern, sizeof(norm_pattern), pattern_start);
+#if NCD_PLATFORM_WINDOWS
+    for (char *p = norm_pattern; *p; p++) {
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
+    }
+#endif
+    const char *pattern = norm_pattern;
+
+    if (entry->match_from_root) {
+        /* Skip leading separator in pattern for matching */
+        if (pattern[0] == '\\' || pattern[0] == '/') {
+            pattern++;
+        }
+        if (wildcard_match(pattern, path_to_match)) {
+            return true;
+        }
+        /* Directory prefix (e.g., "Windows" matches "Windows\System32") */
+        size_t pattern_len = strlen(pattern);
+        if (pattern_len > 0 && _strnicmp(path_to_match, pattern, pattern_len) == 0) {
+            char next_char = path_to_match[pattern_len];
+            if (next_char == '\\' || next_char == '/' || next_char == '\0') {
+                return true;
+            }
+        }
+    } else {
+        /* First try matching the full remaining path */
+        if (wildcard_match(pattern, path_to_match)) {
+            return true;
+        }
+        /* "*\dir\*.ext" also matches root-level "dir\x.ext" */
+        if (pattern[0] == '*' && (pattern[1] == '\\' || pattern[1] == '/')) {
+            if (wildcard_match(pattern + 2, path_to_match)) {
+                return true;
+            }
+        }
+        /* parent\child patterns: try every suffix after a backslash */
+        if (entry->has_parent_match) {
+            const char *sep = path_to_match;
+            while ((sep = strchr(sep, '\\')) != NULL) {
+                sep++;  /* Skip the separator */
+                if (wildcard_match(pattern, sep)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+#define EXCL_KEY_MAX NCD_MAX_PATH
+
+typedef struct { uint64_t hash; char *key; } ExclSlot;
+typedef struct { ExclSlot *slots; int cap; int count; } ExclSet;
+
+struct NcdExclusionIndex {
+    const NcdExclusionEntry *entries;   /* borrowed: list must outlive index */
+    int  count;
+    bool hashed;
+    ExclSet root_set, exact_set, suffix_set;
+    const NcdExclusionEntry **wild;     /* wildcard entries when hashed */
+    int  wild_count;
+};
+
+static uint64_t excl_hash(char drive, const char *s, size_t n)
+{
+    uint64_t h = 14695981039346656037ULL;
+    h ^= (unsigned char)drive; h *= 1099511628211ULL;
+    for (size_t i = 0; i < n; i++) { h ^= (unsigned char)tolower((unsigned char)s[i]); h *= 1099511628211ULL; }
+    return h;
+}
+
+static void excl_set_init(ExclSet *s, int expected)
+{
+    s->cap = 16; while (s->cap < expected * 2) s->cap <<= 1;
+    s->slots = ncd_calloc((size_t)s->cap, sizeof(ExclSlot));
+    s->count = 0;
+}
+
+static void excl_set_free(ExclSet *s)
+{
+    if (!s->slots) return;
+    for (int i = 0; i < s->cap; i++) free(s->slots[i].key);
+    free(s->slots);
+    s->slots = NULL;
+}
+
+/* key layout: [drive byte][lowercase pattern] */
+static void excl_set_add(ExclSet *s, char drive, const char *pat)
+{
+    size_t n = strlen(pat);
+    uint64_t h = excl_hash(drive, pat, n);
+    int i = (int)(h & (uint64_t)(s->cap - 1));
+    while (s->slots[i].key) i = (i + 1) & (s->cap - 1);
+    char *k = ncd_malloc(n + 2);
+    k[0] = drive ? drive : '*';
+    for (size_t j = 0; j < n; j++) k[j + 1] = (char)tolower((unsigned char)pat[j]);
+    k[n + 1] = '\0';
+    s->slots[i].hash = h;
+    s->slots[i].key = k;
+    s->count++;
+}
+
+static bool excl_set_has(const ExclSet *s, char drive, const char *str, size_t n)
+{
+    if (!s->slots || s->count == 0) return false;
+    uint64_t h = excl_hash(drive, str, n);
+    int i = (int)(h & (uint64_t)(s->cap - 1));
+    char want = drive ? drive : '*';
+    while (s->slots[i].key) {
+        const char *k = s->slots[i].key;
+        if (s->slots[i].hash == h && k[0] == want && strlen(k + 1) == n &&
+            _strnicmp(k + 1, str, n) == 0)
+            return true;
+        i = (i + 1) & (s->cap - 1);
+    }
+    return false;
+}
+
+static bool excl_set_has_any_drive(const ExclSet *s, char drive, const char *str, size_t n)
+{
+    return excl_set_has(s, 0, str, n) || (drive && excl_set_has(s, drive, str, n));
+}
+
+/* Normalize a pattern the same way exclusion_entry_matches does. */
+static void excl_norm_pattern(const NcdExclusionEntry *e, char *out, size_t out_size)
+{
+    const char *p = e->pattern;
+#if NCD_PLATFORM_WINDOWS
+    if (p[0] && p[1] == ':') p += 2;
+#endif
+    platform_strncpy_s(out, out_size, p);
+#if NCD_PLATFORM_WINDOWS
+    for (char *q = out; *q; q++) if (*q == '/') *q = NCD_PATH_SEP_CHAR;
+#endif
+    if (e->match_from_root && (out[0] == '\\' || out[0] == '/'))
+        memmove(out, out + 1, strlen(out));
+}
+
+static bool excl_is_literal(const char *p) { return strpbrk(p, "*?") == NULL; }
+
+NcdExclusionIndex *db_exclusion_index_build(const NcdExclusionList *list)
+{
+    NcdExclusionIndex *idx = ncd_calloc(1, sizeof(*idx));
+    if (!list || list->count == 0) return idx;
+    idx->entries = list->entries;
+    idx->count = list->count;
+    idx->hashed = list->count > NCD_EXCLUSION_HASH_THRESHOLD;
+    if (!idx->hashed) return idx;
+
+    excl_set_init(&idx->root_set, list->count);
+    excl_set_init(&idx->exact_set, list->count);
+    excl_set_init(&idx->suffix_set, list->count);
+    idx->wild = ncd_malloc_array((size_t)list->count, sizeof(*idx->wild));
+    char norm[EXCL_KEY_MAX];
+    for (int i = 0; i < list->count; i++) {
+        const NcdExclusionEntry *e = &list->entries[i];
+        excl_norm_pattern(e, norm, sizeof(norm));
+        if (!excl_is_literal(norm)) { idx->wild[idx->wild_count++] = e; continue; }
+        char drive = e->drive;
+#if !NCD_PLATFORM_WINDOWS
+        drive = 0;
+#endif
+        if (e->match_from_root) {
+            excl_set_add(&idx->root_set, drive, norm);
+        } else {
+            excl_set_add(&idx->exact_set, drive, norm);
+            if (e->has_parent_match) excl_set_add(&idx->suffix_set, drive, norm);
+        }
+    }
+    return idx;
+}
+
+void db_exclusion_index_free(NcdExclusionIndex *idx)
+{
+    if (!idx) return;
+    excl_set_free(&idx->root_set);
+    excl_set_free(&idx->exact_set);
+    excl_set_free(&idx->suffix_set);
+    free(idx->wild);
+    free(idx);
+}
+
+bool db_exclusion_index_is_hashed(const NcdExclusionIndex *idx) { return idx && idx->hashed; }
+
+const char *db_exclusion_rel_path(const char *full_path)
+{
+    if (!full_path) return "";
+    const char *p = full_path;
+#if NCD_PLATFORM_WINDOWS
+    if (p[0] && p[1] == ':') p += 2;
+#endif
+    if (*p == '\\' || *p == '/') p++;
+    return p;
+}
+
+bool db_exclusion_index_check(const NcdExclusionIndex *idx, char drive_letter, const char *rel_path)
+{
+    if (!idx || idx->count == 0 || !rel_path) return false;
+#if NCD_PLATFORM_WINDOWS
+    char drive = drive_letter ? (char)toupper((unsigned char)drive_letter) : 0;
+#else
+    (void)drive_letter;
+    char drive = 0;
+#endif
+    char norm[NCD_MAX_PATH];
+    platform_strncpy_s(norm, sizeof(norm), rel_path);
+#if NCD_PLATFORM_WINDOWS
+    for (char *q = norm; *q; q++) if (*q == '/') *q = NCD_PATH_SEP_CHAR;
+#endif
+    const char *path = norm;
+    if (path[0] == '\\' || path[0] == '/') path++;
+
+    if (!idx->hashed) {
+        for (int i = 0; i < idx->count; i++)
+            if (exclusion_entry_matches(&idx->entries[i], drive, path)) return true;
+        return false;
+    }
+
+    size_t len = strlen(path);
+    /* exact (non-root literals) and root literals matching the whole path */
+    if (excl_set_has_any_drive(&idx->exact_set, drive, path, len)) return true;
+    if (excl_set_has_any_drive(&idx->root_set, drive, path, len)) return true;
+    /* root literals as directory prefixes (non-empty: linear rule needs len > 0) */
+    for (size_t i = 1; i < len; i++) {
+        if ((path[i] == '\\' || path[i] == '/') &&
+            excl_set_has_any_drive(&idx->root_set, drive, path, i)) return true;
+    }
+    /* parent\child literals against every suffix after a backslash */
+    for (size_t i = 0; i < len; i++) {
+        if (path[i] == '\\' &&
+            excl_set_has_any_drive(&idx->suffix_set, drive, path + i + 1, len - i - 1)) return true;
+    }
+    for (int i = 0; i < idx->wild_count; i++)
+        if (exclusion_entry_matches(idx->wild[i], drive, path)) return true;
+    return false;
+}
+
+bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path)
+{
+    if (!meta || !dir_path) return false;
+    NcdExclusionIndex *idx = db_exclusion_index_build(&meta->exclusions);
+    bool r = db_exclusion_index_check(idx, drive_letter, dir_path);
+    db_exclusion_index_free(idx);
+    return r;
+}
+
 bool db_exclusion_add(NcdMetadata *meta, const char *pattern)
 {
     if (!meta || !pattern) return false;
@@ -2653,116 +2852,6 @@ bool db_exclusion_remove(NcdMetadata *meta, const char *pattern)
     meta->exclusions_dirty = true;
     
     return true;
-}
-
-bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path)
-{
-    if (!meta || !dir_path) return false;
-    
-    /* Normalize drive letter */
-#if NCD_PLATFORM_WINDOWS
-    char drive = drive_letter ? (char)toupper((unsigned char)drive_letter) : 0;
-#else
-    (void)drive_letter;
-    char drive = 0;
-#endif
-    
-    /* Normalize path for matching (use backslash on Windows, forward on Linux) */
-    char norm_path[NCD_MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), dir_path);
-#if NCD_PLATFORM_WINDOWS
-    for (char *p = norm_path; *p; p++) {
-        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-    }
-#endif
-    
-    /* Remove leading separator for comparison */
-    char *path_to_match = norm_path;
-    if (path_to_match[0] == '\\' || path_to_match[0] == '/') {
-        path_to_match++;
-    }
-    
-
-    
-    for (int i = 0; i < meta->exclusions.count; i++) {
-        NcdExclusionEntry *entry = &meta->exclusions.entries[i];
-        
-        /* Check drive match (0 means all drives) */
-        if (entry->drive != 0 && entry->drive != drive) {
-            continue;
-        }
-        
-        /* Get the pattern path (skip drive letter if present) and normalize */
-        char norm_pattern[NCD_MAX_PATH];
-        const char *pattern_start = entry->pattern;
-#if NCD_PLATFORM_WINDOWS
-        if (pattern_start[1] == ':') {
-            pattern_start += 2;  /* Skip "C:" */
-        }
-#endif
-        platform_strncpy_s(norm_pattern, sizeof(norm_pattern), pattern_start);
-#if NCD_PLATFORM_WINDOWS
-        /* Normalize forward slashes to backslashes on Windows */
-        for (char *p = norm_pattern; *p; p++) {
-            if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-        }
-#endif
-        const char *pattern = norm_pattern;
-        
-        /* Handle root-only matches */
-        if (entry->match_from_root) {
-            /* Skip leading separator in pattern for matching */
-            if (pattern[0] == '\\' || pattern[0] == '/') {
-                pattern++;
-            }
-            
-            if (wildcard_match(pattern, path_to_match)) {
-                return true;
-            }
-            
-            /* Check if pattern matches as a directory prefix (e.g., "Windows" matches "Windows\System32") */
-            size_t pattern_len = strlen(pattern);
-#if NCD_PLATFORM_WINDOWS
-            if (pattern_len > 0 && _strnicmp(path_to_match, pattern, pattern_len) == 0) {
-#else
-            if (pattern_len > 0 && strncasecmp(path_to_match, pattern, pattern_len) == 0) {
-#endif
-                /* Pattern matches the start of path - check if it's a directory boundary */
-                char next_char = path_to_match[pattern_len];
-                if (next_char == '\\' || next_char == '/' || next_char == '\0') {
-                    return true;
-                }
-            }
-        } else {
-            /* Check if pattern matches this path component or any parent */
-            /* First try matching the full remaining path */
-            if (wildcard_match(pattern, path_to_match)) {
-                return true;
-            }
-            
-            /* For patterns like "*\dir\*.ext", also try matching without the leading "*\"
-             * This handles root-level directories like "build\test.obj" matching "*\build\*.obj"
-             */
-            if (pattern[0] == '*' && (pattern[1] == '\\' || pattern[1] == '/')) {
-                if (wildcard_match(pattern + 2, path_to_match)) {
-                    return true;
-                }
-            }
-            
-            /* For parent\child patterns, check if any path component matches */
-            if (entry->has_parent_match) {
-                char *sep = path_to_match;
-                while ((sep = strchr(sep, '\\')) != NULL) {
-                    sep++;  /* Skip the separator */
-                    if (wildcard_match(pattern, sep)) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    
-    return false;
 }
 
 void db_exclusion_print(NcdMetadata *meta)

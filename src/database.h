@@ -449,6 +449,24 @@ bool db_exclusion_remove(NcdMetadata *meta, const char *pattern);
 bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path);
 
 /*
+ * Compiled exclusion index -- the one matcher used by the scanner, the load
+ * filter (db_filter_excluded) and the search-result filter.  Same answers as
+ * db_exclusion_check.  With more than NCD_EXCLUSION_HASH_THRESHOLD entries,
+ * literal patterns are looked up in hash sets; otherwise matching is linear.
+ * The index borrows list->entries: the list must outlive the index.
+ */
+#define NCD_EXCLUSION_HASH_THRESHOLD 8
+typedef struct NcdExclusionIndex NcdExclusionIndex;
+NcdExclusionIndex *db_exclusion_index_build(const NcdExclusionList *list);  /* NULL/empty list -> valid empty index */
+void db_exclusion_index_free(NcdExclusionIndex *idx);
+bool db_exclusion_index_is_hashed(const NcdExclusionIndex *idx);
+/* rel_path: path relative to the drive root (see db_exclusion_rel_path). */
+bool db_exclusion_index_check(const NcdExclusionIndex *idx, char drive_letter, const char *rel_path);
+/* Drive-relative form of an absolute path: skips "X:" (Windows) and one
+ * leading separator.  Returns a pointer into full_path. */
+const char *db_exclusion_rel_path(const char *full_path);
+
+/*
  * Print all exclusion patterns.
  */
 void db_exclusion_print(NcdMetadata *meta);
