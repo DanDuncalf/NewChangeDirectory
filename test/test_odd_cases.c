@@ -153,27 +153,31 @@ TEST(odd_case_sensitivity_on_case_insensitive_fs) {
 
     DriveData *drv = db_add_drive(db, 'C');
 
-    /* Add directories with different cases.
-     * On case-insensitive filesystems (Windows), db_add_dir
-     * deduplicates by (parent, name) using case-insensitive comparison,
-     * so only the first entry is stored and subsequent calls return
-     * the existing index.
-     * On case-sensitive filesystems (Linux), all three are distinct. */
+    /* db_add_dir is append-only: every call stores a new entry on every
+     * platform.  Case rules are applied by the path index, which rescans and
+     * agent mkdir consult before inserting. */
     int id1 = db_add_dir(drv, "Documents", -1, false, false);
     int id2 = db_add_dir(drv, "DOCUMENTS", -1, false, false);
     int id3 = db_add_dir(drv, "documents", -1, false, false);
-
-#if NCD_PLATFORM_WINDOWS
-    /* On Windows: all three case variants resolve to the same entry */
-    ASSERT_EQ_INT(1, drv->dir_count);
-    ASSERT_EQ_INT(id1, id2);
-    ASSERT_EQ_INT(id1, id3);
-#else
-    /* On Linux: each case variant is a distinct entry */
     ASSERT_EQ_INT(3, drv->dir_count);
-    ASSERT_TRUE(id1 != id2);
-    ASSERT_TRUE(id1 != id3);
-    ASSERT_TRUE(id2 != id3);
+    ASSERT_TRUE(id1 != id2 && id1 != id3 && id2 != id3);
+
+    char p1[NCD_MAX_PATH], p2[NCD_MAX_PATH], p3[NCD_MAX_PATH];
+    ASSERT_NOT_NULL(db_full_path(drv, id1, p1, sizeof(p1)));
+    ASSERT_NOT_NULL(db_full_path(drv, id2, p2, sizeof(p2)));
+    ASSERT_NOT_NULL(db_full_path(drv, id3, p3, sizeof(p3)));
+#if NCD_PLATFORM_WINDOWS
+    /* Case-insensitive: all three spellings name the same path, and a lookup
+     * with any casing finds one of the stored entries. */
+    int hit = db_path_index_get(db, p2);
+    ASSERT_TRUE(hit == id1 || hit == id2 || hit == id3);
+    ASSERT_EQ_INT(hit, db_path_index_get(db, p1));
+    ASSERT_EQ_INT(hit, db_path_index_get(db, p3));
+#else
+    /* Case-sensitive: each spelling is its own path. */
+    ASSERT_EQ_INT(id1, db_path_index_get(db, p1));
+    ASSERT_EQ_INT(id2, db_path_index_get(db, p2));
+    ASSERT_EQ_INT(id3, db_path_index_get(db, p3));
 #endif
 
     db_free(db);

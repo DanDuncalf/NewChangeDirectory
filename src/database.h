@@ -181,8 +181,10 @@ int db_load_all_drives_into(NcdDatabase *dst, DbLoadProgressFn progress, void *u
 /* --------------------------------------------------------- dir helpers    */
 
 /*
- * Add a directory entry to a drive.
- * Returns the assigned id (== current dir_count - 1 after insertion).
+ * Append a directory entry to a drive.  O(1) amortized; performs NO duplicate
+ * check -- bulk scans and loads never produce duplicates, and callers that
+ * insert into an existing tree (rescans, agent mkdir) look the path up with
+ * db_path_index_get() first.  Returns the new id (== dir_count - 1).
  */
 int db_add_dir(DriveData *drv,
                const char *name,
@@ -543,6 +545,19 @@ void db_unlock(NcdDatabase *db);
 /* --------------------------------------------------------- path map cache (P1.16) */
 
 void db_invalidate_path_map(NcdDatabase *db);
+
+/* Directory index for an absolute path, or -1.  Builds and caches the index
+ * on first use (O(n)); later lookups are O(1). */
+int db_path_index_get(NcdDatabase *db, const char *full_path);
+
+/* Per-directory child lists (O(n) to build). */
+typedef struct {
+    int *children;
+    int  child_count;
+    int  child_capacity;
+} DirChildren;
+DirChildren *db_build_children_index(const DriveData *drv);
+void db_free_children_index(DirChildren *children, int dir_count);
 
 #ifdef __cplusplus
 }

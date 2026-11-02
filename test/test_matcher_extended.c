@@ -638,37 +638,23 @@ TEST(match_dedup_duplicate_paths) {
 }
 
 /*
- * P0 regression: db_add_dir returns existing index on duplicate.
- * When a directory with the same parent and name (case-insensitive
- * on Windows) already exists, db_add_dir must return the existing
- * index instead of creating a new entry.
+ * db_add_dir is append-only (startup-load-performance plan, Task 3).
+ * Duplicate prevention lives in the rescan path (path index) and the
+ * matcher's full-path dedup (match_dedup_duplicate_paths above).
  */
-TEST(match_db_add_dir_rejects_duplicate) {
+TEST(match_db_add_dir_appends) {
     NcdDatabase *db = db_create();
     DriveData *drv = db_add_drive(db, 'C');
-    
     int users = db_add_dir(drv, "Users", -1, false, false);
     int first = db_add_dir(drv, "Documents", users, false, false);
-    int dir_count_before = drv->dir_count;
-    
-    /* Try to add the same directory again (exact case) */
     int second = db_add_dir(drv, "Documents", users, false, false);
-    
-    /* Should return the same index, not create a new entry */
-    ASSERT_EQ_INT(first, second);
-    ASSERT_EQ_INT(dir_count_before, drv->dir_count);
-    
-    /* Try with different case (Windows: case-insensitive match) */
-    int third = db_add_dir(drv, "documents", users, false, false);
-#if NCD_PLATFORM_WINDOWS
-    ASSERT_EQ_INT(first, third);
-    ASSERT_EQ_INT(dir_count_before, drv->dir_count);
-#else
-    /* On Linux, "documents" != "Documents", so a new entry is created */
-    ASSERT_TRUE(third != first);
-    ASSERT_TRUE(drv->dir_count > dir_count_before);
-#endif
-    
+    ASSERT_TRUE(second == first + 1);
+    ASSERT_EQ_INT(3, drv->dir_count);
+    int count = 0;
+    NcdMatch *m = matcher_find(db, "Documents", false, false, &count);
+    ASSERT_NOT_NULL(m);
+    ASSERT_EQ_INT(1, count);     /* matcher still collapses identical paths */
+    free(m);
     db_free(db);
     return 0;
 }
@@ -718,7 +704,7 @@ void suite_matcher_extended(void) {
     
     /* Dedup Regression (2 tests) */
     RUN_TEST(match_dedup_duplicate_paths);
-    RUN_TEST(match_db_add_dir_rejects_duplicate);
+    RUN_TEST(match_db_add_dir_appends);
 }
 
 TEST_MAIN(

@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if !NCD_PLATFORM_WINDOWS
+#include <unistd.h>
+#endif
 
 typedef struct {
     char base[NCD_MAX_PATH];   /* LOCALAPPDATA / XDG_DATA_HOME value */
@@ -27,13 +30,33 @@ static inline void it_env_init(ItEnv *e, const char *suffix)
     it_mkdir(e->base);
     agent_build_ncd_dir(e->data, sizeof(e->data), e->base);
     it_mkdir(e->data);
+#if NCD_PLATFORM_WINDOWS
     snprintf(e->tmp, sizeof(e->tmp), "%s%stmp", e->base, NCD_PATH_SEP);
+#else
+    /* XDG_RUNTIME_DIR holds the service's AF_UNIX socket: it must be on a
+     * native Linux filesystem (WSL2 /mnt/<x> mounts do not support sockets)
+     * and short enough for sun_path (108 bytes).  The harness's TEMP is a
+     * long /mnt/c/... path, so use /tmp. */
+    snprintf(e->tmp, sizeof(e->tmp), "/tmp/ncd_it_%s_%d", suffix, (int)getpid());
+    agent_rm_rf(e->tmp);
+#endif
     it_mkdir(e->tmp);
-    snprintf(e->fs, sizeof(e->fs), "%s%sfs", e->base, NCD_PATH_SEP);
+    /* The scratch tree lives under the test's cwd, not TEMP: --agent:query
+     * loads only the cwd drive's database, so rescanned dirs must be on the
+     * same drive (agent_test_drive_letter()) to be visible to it. */
+    char cwd[NCD_MAX_PATH];
+    platform_get_current_dir(cwd, sizeof(cwd));
+    snprintf(e->fs, sizeof(e->fs), "%s%sit_fs_%s", cwd, NCD_PATH_SEP, suffix);
+    agent_rm_rf(e->fs);
     it_mkdir(e->fs);
 }
 
-static inline void it_env_cleanup(ItEnv *e) { agent_rm_rf(e->base); }
+static inline void it_env_cleanup(ItEnv *e)
+{
+    agent_rm_rf(e->fs);
+    agent_rm_rf(e->tmp);   /* separate dir on Linux; inside base on Windows */
+    agent_rm_rf(e->base);
+}
 
 static inline void it_db_path(const ItEnv *e, char letter, char *buf, size_t n)
 {
@@ -237,9 +260,44 @@ TEST(it_service_merge_keeps_parents_and_is_fast) {
     return 0;
 }
 
+/* ---------------------------------------------------------------- Task 3 */
+
+static void it_mk(const ItEnv *e, const char *rel)
+{
+    char p[NCD_MAX_PATH];
+    snprintf(p, sizeof(p), "%s%s%s", e->fs, NCD_PATH_SEP, rel);
+    it_mkdir(p);
+}
+
+static int it_count(const char *hay, const char *needle)
+{
+    int n = 0;
+    for (const char *p = strstr(hay, needle); p; p = strstr(p + 1, needle)) n++;
+    return n;
+}
+
+TEST(it_subdir_rescan_twice_no_duplicates) {
+    ItEnv e; it_env_init(&e, "it_rescan");
+    it_mk(&e, "proj_r1");
+    it_mk(&e, "proj_r1" NCD_PATH_SEP "rescan_unique_leaf_m9");
+    char args[NCD_MAX_PATH * 2], out[65536];
+    snprintf(args, sizeof(args), "-r \"%s\"", e.fs);
+    it_run_ncd(&e, NULL, args, out, sizeof(out));
+    snprintf(args, sizeof(args), "-r \"%s%sproj_r1\"", e.fs, NCD_PATH_SEP);
+    it_run_ncd(&e, NULL, args, out, sizeof(out));
+    it_run_ncd(&e, NULL, args, out, sizeof(out));
+    it_run_ncd(&e, NULL, "--agent:query rescan_unique_leaf_m9 --json --limit 50", out, sizeof(out));
+    /* JSON echoes the query, so count result objects rather than the name. */
+    ASSERT_STR_CONTAINS(out, "rescan_unique_leaf_m9");
+    ASSERT_EQ_INT(1, it_count(out, "\"path\":"));
+    it_env_cleanup(&e);
+    return 0;
+}
+
 TEST_MAIN(
     agent_kill_any_service();
     RUN_TEST(it_crc_db_file_checksum_unchanged_and_loads);
     RUN_TEST(it_standalone_merge_keeps_parents_and_is_fast);
     RUN_TEST(it_service_merge_keeps_parents_and_is_fast);
+    RUN_TEST(it_subdir_rescan_twice_no_duplicates);
 )

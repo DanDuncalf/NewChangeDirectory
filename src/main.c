@@ -1757,250 +1757,6 @@ static int agent_mode_ls(const NcdOptions *opts)
     return entry_count;
 }
 
-/* Simple hash map for path -> dir_index lookup */
-typedef struct {
-    uint64_t hash;
-    int dir_index;
-    char *path;  /* owned by map */
-} PathMapEntry;
-
-typedef struct {
-    PathMapEntry *entries;
-    int count;
-    int capacity;
-} PathMap;
-
-static uint64_t hash_path(const char *path)
-{
-    /* FNV-1a hash */
-    uint64_t h = 14695981039346656037ULL;
-    while (*path) {
-        h ^= (unsigned char)(*path++);
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
-
-static void path_map_init(PathMap *map, int expected_size)
-{
-    map->capacity = expected_size * 2;  /* 0.5 load factor */
-    if (map->capacity < 16) map->capacity = 16;
-    map->entries = ncd_calloc((size_t)map->capacity, sizeof(PathMapEntry));
-    map->count = 0;
-}
-
-static void path_map_put(PathMap *map, const char *path, int dir_index)
-{
-    uint64_t h = hash_path(path);
-    int idx = (int)(h % (uint64_t)map->capacity);
-    
-    while (map->entries[idx].path != NULL) {
-        idx = (idx + 1) % map->capacity;
-    }
-    
-    map->entries[idx].hash = h;
-    map->entries[idx].dir_index = dir_index;
-    map->entries[idx].path = ncd_strdup(path);
-    map->count++;
-}
-
-static int path_map_get(PathMap *map, const char *path)
-{
-    uint64_t h = hash_path(path);
-    int idx = (int)(h % (uint64_t)map->capacity);
-    
-    while (map->entries[idx].path != NULL) {
-        if (map->entries[idx].hash == h && _stricmp(map->entries[idx].path, path) == 0)
-            return map->entries[idx].dir_index;
-        idx = (idx + 1) % map->capacity;
-    }
-    return -1;
-}
-
-/* Forward declaration for build_path_map (defined later in this file) */
-static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter);
-
-/*
- * Ensure the cached PathMap is built on db (P1.16).
- * Returns pointer to PathMap (never NULL if db is non-NULL).
- */
-static PathMap *db_ensure_path_map(NcdDatabase *db)
-{
-    if (db->path_map)
-        return (PathMap *)db->path_map;
-    
-    PathMap *map = ncd_malloc(sizeof(PathMap));
-    int total_dirs = 0;
-    for (int d = 0; d < db->drive_count; d++)
-        total_dirs += db->drives[d].dir_count;
-    path_map_init(map, total_dirs);
-    
-    for (int d = 0; d < db->drive_count; d++)
-        build_path_map(map, &db->drives[d], db->drives[d].letter);
-    
-    db->path_map = map;
-    return map;
-}
-
-/* Children index: for each dir, store list of child indices */
-typedef struct {
-    int *children;      /* Array of child dir indices */
-    int child_count;
-    int child_capacity;
-} DirChildren;
-
-/* Build children index for a drive - O(n) time, O(n) space */
-static DirChildren *build_children_index(const DriveData *drv)
-{
-    DirChildren *children = ncd_calloc((size_t)drv->dir_count, sizeof(DirChildren));
-    
-    /* First pass: count children per parent */
-    for (int i = 0; i < drv->dir_count; i++) {
-        int parent = drv->dirs[i].parent;
-        if (parent >= 0 && parent < drv->dir_count)
-            children[parent].child_count++;
-    }
-    
-    /* Allocate arrays */
-    for (int i = 0; i < drv->dir_count; i++) {
-        if (children[i].child_count > 0) {
-            children[i].children = ncd_malloc_array((size_t)children[i].child_count, sizeof(int));
-            children[i].child_capacity = children[i].child_count;
-            children[i].child_count = 0;  /* Reset for second pass */
-        }
-    }
-    
-    /* Second pass: fill arrays */
-    for (int i = 0; i < drv->dir_count; i++) {
-        int parent = drv->dirs[i].parent;
-        if (parent >= 0 && parent < drv->dir_count) {
-            DirChildren *pc = &children[parent];
-            pc->children[pc->child_count++] = i;
-        }
-    }
-    
-    return children;
-}
-
-static void free_children_index(DirChildren *children, int dir_count)
-{
-    for (int i = 0; i < dir_count; i++) {
-        if (children[i].children)
-            free(children[i].children);
-    }
-    free(children);
-}
-
-/* Build path map for a drive - optimized iterative path building.
- * Uses explicit stack to avoid recursion depth issues on deeply nested trees.
- */
-typedef struct { int dir; int path_len_before_name; } PathMapStackItem;
-
-static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter)
-{
-#if !NCD_PLATFORM_WINDOWS
-    (void)drive_letter; /* Unused on Linux - mount point comes from drv->label */
-#else
-    (void)drive_letter; /* Mark as used to avoid warning */
-#endif
-    /* Stack needs to handle worst case: all dirs are root-level and have children.
-     * Allocate 2x dir_count for safety (root dirs + their children on stack).
-     */
-    int stack_capacity = drv->dir_count * 2;
-    if (stack_capacity < 256) stack_capacity = 256;
-    
-    PathMapStackItem *stack = ncd_malloc_array((size_t)stack_capacity, sizeof(PathMapStackItem));
-    int stack_top = 0;
-    
-    char path[NCD_MAX_PATH];
-    int root_len;
-    
-    /* Initialize with drive root - ensure it ends with separator */
-#if NCD_PLATFORM_WINDOWS
-    if (drv->label[0] && strstr(drv->label, ":\\")) {
-        root_len = snprintf(path, sizeof(path), "%s", drv->label);
-        if (root_len > 0 && path[root_len-1] != NCD_PATH_SEP[0]) {
-            path[root_len] = NCD_PATH_SEP[0];
-            path[++root_len] = '\0';
-        }
-    } else {
-        root_len = snprintf(path, sizeof(path), "%c:%c", drive_letter, NCD_PATH_SEP[0]);
-    }
-#else
-    root_len = snprintf(path, sizeof(path), "%s", drv->label);
-    if (root_len > 0 && path[root_len-1] != NCD_PATH_SEP[0]) {
-        path[root_len] = NCD_PATH_SEP[0];
-        path[++root_len] = '\0';
-    }
-#endif
-    /* root_len now includes the separator */
-    
-    /* Pre-build children index */
-    DirChildren *children = build_children_index(drv);
-    
-    /* Start with root-level directories (parent == -1) */
-    for (int i = 0; i < drv->dir_count; i++) {
-        if (drv->dirs[i].parent == -1) {
-            const char *name = drv->name_pool + drv->dirs[i].name_off;
-            int name_len = (int)strlen(name);
-            
-            /* Build path: root already ends with separator, just add name */
-            if (root_len + name_len >= (int)sizeof(path))
-                continue;
-            
-            memcpy(path + root_len, name, name_len + 1);
-            int path_len = root_len + name_len;
-            
-            /* Add to map */
-            path_map_put(map, path, i);
-            
-            /* Push children */
-            DirChildren *dc = &children[i];
-            for (int j = dc->child_count - 1; j >= 0; j--) {
-                int child_idx = dc->children[j];
-                if (stack_top < stack_capacity) {
-                    /* Child will restore to this path_len before adding its name */
-                    stack[stack_top++] = (PathMapStackItem){child_idx, path_len};
-                }
-            }
-        }
-    }
-    
-    /* Process remaining stack items */
-    while (stack_top > 0) {
-        PathMapStackItem cur = stack[--stack_top];
-        
-        /* Restore path to parent length */
-        path[cur.path_len_before_name] = '\0';
-        
-        const char *name = drv->name_pool + drv->dirs[cur.dir].name_off;
-        int name_len = (int)strlen(name);
-        
-        /* Build path: parent + separator + name */
-        int path_len = cur.path_len_before_name;
-        if (path_len + 1 + name_len >= (int)sizeof(path))
-            continue;
-        
-        path[path_len] = NCD_PATH_SEP[0];
-        memcpy(path + path_len + 1, name, name_len + 1);
-        path_len += 1 + name_len;
-        
-        /* Add to map */
-        path_map_put(map, path, cur.dir);
-        
-        /* Push children */
-        DirChildren *dc = &children[cur.dir];
-        for (int j = dc->child_count - 1; j >= 0; j--) {
-            int child_idx = dc->children[j];
-            if (stack_top < stack_capacity) {
-                stack[stack_top++] = (PathMapStackItem){child_idx, path_len};
-            }
-        }
-    }
-    
-    free_children_index(children, drv->dir_count);
-    free(stack);
-}
 
 /* Agent mode: tree - Show directory structure from DB */
 static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
@@ -2041,7 +1797,6 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
 #endif
     
     /* Use cached path map for O(1) lookup (P1.16) */
-    PathMap *path_map = db_ensure_path_map(db);
     
     /* O(1) lookup instead of O(n) scan */
     int found_drive_idx = -1;
@@ -2062,7 +1817,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
         
         if (_strnicmp(search_path, drive_root, strlen(drive_root)) == 0) {
             found_drive_idx = d;
-            found_dir_idx = path_map_get(path_map, search_path);
+            found_dir_idx = db_path_index_get(db, search_path);
             /* If search path is exactly the drive root, use sentinel */
             if (found_dir_idx < 0 && _stricmp(search_path, drive_root) == 0) {
                 found_dir_idx = -2;
@@ -2084,7 +1839,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     }
     
     /* Build children index once for O(1) child access */
-    DirChildren *children_idx = build_children_index(&db->drives[found_drive_idx]);
+    DirChildren *children_idx = db_build_children_index(&db->drives[found_drive_idx]);
     
     /* For drive root searches, build a virtual root children list */
     DriveData *drive = &db->drives[found_drive_idx];
@@ -2120,7 +1875,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     int max_queue_size = db->drives[found_drive_idx].dir_count + 1;
     QueueItem *queue = (QueueItem *)malloc(max_queue_size * sizeof(QueueItem));
     if (!queue) {
-        free_children_index(children_idx, db->drives[found_drive_idx].dir_count);
+        db_free_children_index(children_idx, db->drives[found_drive_idx].dir_count);
         return 0;
     }
     
@@ -2195,7 +1950,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     }
     
     free(queue);
-    free_children_index(children_idx, drive->dir_count);
+    db_free_children_index(children_idx, drive->dir_count);
     free(root_children);
     
     if (opts->agent_json) {
@@ -2304,8 +2059,7 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
 #endif
             
             /* Use cached path map for O(1) lookup (P1.16) */
-            PathMap *path_map = db_ensure_path_map(db);
-            in_db = path_map_get(path_map, search_path) >= 0;
+            in_db = db_path_index_get(db, search_path) >= 0;
         }
         
         if (opts->agent_json) {
@@ -2569,14 +2323,13 @@ static bool add_path_to_database(const char *path)
     /* Use cached path map for O(1) lookups (P1.16) */
     bool in_db = false;
     if (drv->dir_count > 0) {
-        PathMap *path_map = db_ensure_path_map(db);
-        
+            
         if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-            parent_idx = path_map_get(path_map, parent_path);
+            parent_idx = db_path_index_get(db, parent_path);
         }
         
         /* Check if directory already exists in database - O(1) lookup */
-        in_db = path_map_get(path_map, norm_path) >= 0;
+        in_db = db_path_index_get(db, norm_path) >= 0;
     } else {
         parent_idx = -1;
         in_db = false;
@@ -2587,6 +2340,7 @@ static bool add_path_to_database(const char *path)
         db_make_mutable(db);
         drv = db_find_drive(db, target_drive);
         db_add_dir(drv, leaf_name, parent_idx, false, false);
+        db_invalidate_path_map(db);   /* cache must include the new entry */
         
         /* Mark database as dirty for deferred save */
         char drv_path[NCD_MAX_PATH];

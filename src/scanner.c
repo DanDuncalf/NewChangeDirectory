@@ -792,32 +792,14 @@ int scan_subdirectory(NcdDatabase   *db,
             drv->name_pool_len = 0;
             drv->name_pool_cap = 0;
         } else {
-            /* Try to find the existing entry for this path in the database */
-            char full_path[NCD_MAX_PATH];
-            int existing_idx = -1;
-            for (int i = 0; i < drv->dir_count; i++) {
-                if (!db_full_path(drv, i, full_path, sizeof(full_path))) continue;
-                if (_stricmp(full_path, norm_path) == 0) {
-                    existing_idx = i;
-                    break;
-                }
-            }
-
+            /* Duplicate check for rescans: one O(n) index build, O(1) lookups. */
+            int existing_idx = db_path_index_get(db, norm_path);
             if (existing_idx >= 0) {
-                /* Remove the existing subtree before rescanning */
-                db_drive_remove_subtree(db, drv, existing_idx);
+                db_drive_remove_subtree(db, drv, existing_idx);  /* invalidates the index */
             }
-
-            /* Find the parent directory to attach to */
             char parent_path[MAX_PATH];
             if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-                for (int i = 0; i < drv->dir_count; i++) {
-                    if (!db_full_path(drv, i, full_path, sizeof(full_path))) continue;
-                    if (_stricmp(full_path, parent_path) == 0) {
-                        parent_id = i;
-                        break;
-                    }
-                }
+                parent_id = db_path_index_get(db, parent_path);  /* rebuilt post-removal */
             }
         }
     } else {
@@ -835,17 +817,19 @@ int scan_subdirectory(NcdDatabase   *db,
         }
 #else
         drv->type = 0;
-        if (drive_letter == 0) {
-            char parent_path[MAX_PATH];
-            if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
-                platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
-            } else {
-                platform_strncpy_s(drv->label, sizeof(drv->label), "/");
-            }
-        } else {
+        /* Root the new drive at the subdirectory's parent (as on Windows) so
+         * db_full_path() of the new entry equals subdir_path.  Using the
+         * "/mnt/<letter>" mount root here stored /mnt/c/a/b/x as /mnt/c/x,
+         * which no later rescan or lookup could find. */
+        char parent_path[MAX_PATH];
+        if (path_parent(subdir_path, parent_path, sizeof(parent_path))) {
+            platform_strncpy_s(drv->label, sizeof(drv->label), parent_path);
+        } else if (drive_letter != 0) {
             char mount_path[MAX_PATH];
             snprintf(mount_path, sizeof(mount_path), "/mnt/%c", tolower((unsigned char)drive_letter));
             platform_strncpy_s(drv->label, sizeof(drv->label), mount_path);
+        } else {
+            platform_strncpy_s(drv->label, sizeof(drv->label), "/");
         }
 #endif
     }
@@ -885,6 +869,7 @@ int scan_subdirectory(NcdDatabase   *db,
 #if NCD_PLATFORM_LINUX
     diridset_free(ctx.visited);
 #endif
+    db_invalidate_path_map(db);   /* new entries were appended */
     return result;
 }
 
