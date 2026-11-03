@@ -19,6 +19,19 @@ extern "C" {
 
 extern int g_ipc_debug_mode;
 
+/* --------------------------------------------------------- framing helpers    */
+
+/*
+ * ipc_is_async_notification  --  True for server-pushed messages that are
+ * never a reply to a request (rescan progress / completion).  A client
+ * waiting for a reply must skip these, since the service may queue one
+ * on the connection ahead of the reply.
+ */
+static inline int ipc_is_async_notification(const NcdIpcHeader *hdr) {
+    return hdr->type == NCD_MSG_RESCAN_PROGRESS ||
+           hdr->type == NCD_MSG_RESCAN_COMPLETE;
+}
+
 /* --------------------------------------------------------- platform hooks     */
 
 /*

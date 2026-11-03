@@ -7,7 +7,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#if !NCD_PLATFORM_WINDOWS
+#if NCD_PLATFORM_WINDOWS
+#include <windows.h>
+#else
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -104,7 +106,222 @@ static bool run_fake_state_info_call(const uint8_t *response, size_t response_le
 }
 #endif
 
+/* ------------------------------------------------------------------------
+ * Scripted fake server: accepts one client, reads its request, then writes
+ * a scripted list of chunks (each optionally preceded by a delay).  Used to
+ * reproduce what the real service does after accepting a rescan: it pushes
+ * RESCAN_COMPLETE on the same connection, which can land ahead of the reply
+ * to the client's next request.  On POSIX the socket is a byte stream, so a
+ * chunk may also be part of a message; on Windows each chunk is one pipe
+ * message.
+ * ------------------------------------------------------------------------ */
+#define FAKE_MAX_CHUNKS 4
+
+typedef struct {
+    char address[256];
+    uint8_t data[FAKE_MAX_CHUNKS][NCD_IPC_MAX_MSG_SIZE];
+    size_t len[FAKE_MAX_CHUNKS];
+    int delay_ms[FAKE_MAX_CHUNKS];
+    int count;
+    volatile int ready;
+} ScriptedServerCtx;
+
+static size_t make_frame(uint8_t *buf, uint16_t type, uint32_t seq,
+                         const void *payload, uint32_t payload_len) {
+    NcdIpcHeader *hdr = (NcdIpcHeader *)buf;
+    hdr->magic = NCD_IPC_MAGIC;
+    hdr->version = NCD_IPC_VERSION;
+    hdr->type = type;
+    hdr->sequence = seq;
+    hdr->payload_len = payload_len;
+    if (payload_len) memcpy(buf + sizeof(NcdIpcHeader), payload, payload_len);
+    return sizeof(NcdIpcHeader) + payload_len;
+}
+
+static void script_add(ScriptedServerCtx *ctx, const uint8_t *bytes, size_t len, int delay_ms) {
+    int i = ctx->count++;
+    memcpy(ctx->data[i], bytes, len);
+    ctx->len[i] = len;
+    ctx->delay_ms[i] = delay_ms;
+}
+
+#if NCD_PLATFORM_WINDOWS
+static DWORD WINAPI scripted_server_thread(LPVOID arg) {
+    ScriptedServerCtx *ctx = (ScriptedServerCtx *)arg;
+    HANDLE pipe = CreateNamedPipeA(ctx->address, PIPE_ACCESS_DUPLEX,
+                                   PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                                   1, NCD_IPC_MAX_MSG_SIZE, NCD_IPC_MAX_MSG_SIZE, 0, NULL);
+    if (pipe == INVALID_HANDLE_VALUE) { ctx->ready = -1; return 0; }
+    ctx->ready = 1;
+    BOOL ok = ConnectNamedPipe(pipe, NULL) || GetLastError() == ERROR_PIPE_CONNECTED;
+    if (ok) {
+        uint8_t req[NCD_IPC_MAX_MSG_SIZE];
+        DWORD n = 0;
+        (void)ReadFile(pipe, req, sizeof(req), &n, NULL);
+        for (int i = 0; i < ctx->count; i++) {
+            if (ctx->delay_ms[i] > 0) Sleep((DWORD)ctx->delay_ms[i]);
+            DWORD w = 0;
+            (void)WriteFile(pipe, ctx->data[i], (DWORD)ctx->len[i], &w, NULL);
+        }
+        FlushFileBuffers(pipe);
+        Sleep(200);   /* let the client read before the pipe goes away */
+        DisconnectNamedPipe(pipe);
+    }
+    CloseHandle(pipe);
+    return 0;
+}
+#else
+static void *scripted_server_thread(void *arg) {
+    ScriptedServerCtx *ctx = (ScriptedServerCtx *)arg;
+    unlink(ctx->address);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) { ctx->ready = -1; return NULL; }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, ctx->address, sizeof(addr.sun_path) - 1);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 1) != 0) {
+        close(fd);
+        ctx->ready = -1;
+        return NULL;
+    }
+    ctx->ready = 1;
+    int conn = accept(fd, NULL, NULL);
+    if (conn >= 0) {
+        uint8_t req[NCD_IPC_MAX_MSG_SIZE];
+        (void)recv(conn, req, sizeof(req), 0);
+        for (int i = 0; i < ctx->count; i++) {
+            if (ctx->delay_ms[i] > 0) usleep((useconds_t)ctx->delay_ms[i] * 1000);
+            (void)send(conn, ctx->data[i], ctx->len[i], 0);
+        }
+        usleep(200000);
+        close(conn);
+    }
+    close(fd);
+    unlink(ctx->address);
+    return NULL;
+}
+#endif
+
+/* Runs ipc_client_ping() against the scripted server.  Returns false if the
+ * fake server could not be set up. */
+static bool run_scripted_ping(ScriptedServerCtx *ctx, NcdIpcResult *out_result) {
+    if (!ipc_make_address(ctx->address, sizeof(ctx->address))) return false;
+    ctx->ready = 0;
+#if NCD_PLATFORM_WINDOWS
+    HANDLE th = CreateThread(NULL, 0, scripted_server_thread, ctx, 0, NULL);
+    if (!th) return false;
+#else
+    pthread_t th;
+    if (pthread_create(&th, NULL, scripted_server_thread, ctx) != 0) return false;
+#endif
+    for (int i = 0; i < 200 && ctx->ready == 0; i++) platform_sleep_ms(10);
+
+    bool ok = false;
+    if (ctx->ready == 1 && ipc_client_init() == 0) {
+        NcdIpcClient *client = ipc_client_connect();
+        if (client) {
+            *out_result = ipc_client_ping(client);
+            ipc_client_disconnect(client);
+            ok = true;
+        }
+        ipc_client_cleanup();
+    }
+#if NCD_PLATFORM_WINDOWS
+    WaitForSingleObject(th, 10000);
+    CloseHandle(th);
+#else
+    pthread_join(th, NULL);
+#endif
+    return ok;
+}
+
 /* ================================================================ Tier 4: IPC Tests */
+
+/* Regression: after accepting a rescan the service pushes RESCAN_COMPLETE on
+ * the connection.  If it is queued ahead of the reply to the next request,
+ * the client used to take it as the reply and fail that request. */
+TEST(ipc_reply_skips_queued_rescan_complete) {
+    if (ipc_service_exists()) {
+        SKIP_TEST("Service is running; fake server test requires free IPC path");
+    }
+    static ScriptedServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    uint8_t frame[NCD_IPC_MAX_MSG_SIZE];
+    size_t n = make_frame(frame, NCD_MSG_RESCAN_COMPLETE, 0, NULL, 0);
+    script_add(&ctx, frame, n, 0);
+    n = make_frame(frame, NCD_MSG_RESPONSE, 1, NULL, 0);
+    script_add(&ctx, frame, n, 50);
+
+    NcdIpcResult result = NCD_IPC_ERROR_GENERIC;
+    ASSERT_TRUE(run_scripted_ping(&ctx, &result));
+    ASSERT_EQ_INT(NCD_IPC_OK, result);
+    return 0;
+}
+
+/* Progress notifications are skipped the same way, including several in a row. */
+TEST(ipc_reply_skips_queued_rescan_progress) {
+    if (ipc_service_exists()) {
+        SKIP_TEST("Service is running; fake server test requires free IPC path");
+    }
+    static ScriptedServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    NcdRescanProgressPayload prog;
+    memset(&prog, 0, sizeof(prog));
+    uint8_t frame[NCD_IPC_MAX_MSG_SIZE];
+    size_t n = make_frame(frame, NCD_MSG_RESCAN_PROGRESS, 0, &prog, (uint32_t)sizeof(prog));
+    script_add(&ctx, frame, n, 0);
+    script_add(&ctx, frame, n, 0);
+    n = make_frame(frame, NCD_MSG_RESCAN_COMPLETE, 0, NULL, 0);
+    script_add(&ctx, frame, n, 0);
+    n = make_frame(frame, NCD_MSG_RESPONSE, 1, NULL, 0);
+    script_add(&ctx, frame, n, 0);
+
+    NcdIpcResult result = NCD_IPC_ERROR_GENERIC;
+    ASSERT_TRUE(run_scripted_ping(&ctx, &result));
+    ASSERT_EQ_INT(NCD_IPC_OK, result);
+    return 0;
+}
+
+#if !NCD_PLATFORM_WINDOWS
+/* Stream framing: a notification and the reply arriving in ONE send() must
+ * still be read as two messages. */
+TEST(ipc_reply_framed_when_coalesced_with_notification) {
+    if (ipc_service_exists()) {
+        SKIP_TEST("Service is running; fake server test requires free IPC path");
+    }
+    static ScriptedServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    uint8_t both[NCD_IPC_MAX_MSG_SIZE];
+    size_t a = make_frame(both, NCD_MSG_RESCAN_COMPLETE, 0, NULL, 0);
+    size_t b = make_frame(both + a, NCD_MSG_RESPONSE, 1, NULL, 0);
+    script_add(&ctx, both, a + b, 0);
+
+    NcdIpcResult result = NCD_IPC_ERROR_GENERIC;
+    ASSERT_TRUE(run_scripted_ping(&ctx, &result));
+    ASSERT_EQ_INT(NCD_IPC_OK, result);
+    return 0;
+}
+
+/* Stream framing: a reply split across two send()s (header delivered in two
+ * pieces with a pause between) must be reassembled, not rejected as short. */
+TEST(ipc_reply_reassembled_when_split_across_sends) {
+    if (ipc_service_exists()) {
+        SKIP_TEST("Service is running; fake server test requires free IPC path");
+    }
+    static ScriptedServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    uint8_t frame[NCD_IPC_MAX_MSG_SIZE];
+    size_t n = make_frame(frame, NCD_MSG_RESPONSE, 1, NULL, 0);
+    script_add(&ctx, frame, 6, 0);
+    script_add(&ctx, frame + 6, n - 6, 100);
+
+    NcdIpcResult result = NCD_IPC_ERROR_GENERIC;
+    ASSERT_TRUE(run_scripted_ping(&ctx, &result));
+    ASSERT_EQ_INT(NCD_IPC_OK, result);
+    return 0;
+}
+#endif
 
 TEST(ipc_client_init_succeeds) {
     int result = ipc_client_init();
@@ -361,7 +578,11 @@ void suite_ipc(void) {
     RUN_TEST(ipc_service_exists_returns_false_when_stopped);
     RUN_TEST(ipc_header_size_correct);
     RUN_TEST(ipc_payload_structures_sizes);
+    RUN_TEST(ipc_reply_skips_queued_rescan_complete);
+    RUN_TEST(ipc_reply_skips_queued_rescan_progress);
 #if !NCD_PLATFORM_WINDOWS
+    RUN_TEST(ipc_reply_framed_when_coalesced_with_notification);
+    RUN_TEST(ipc_reply_reassembled_when_split_across_sends);
     RUN_TEST(ipc_rejects_truncated_payload_length_in_response);
     RUN_TEST(ipc_rejects_oversized_state_info_name_lengths);
 #endif

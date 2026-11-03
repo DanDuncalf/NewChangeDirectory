@@ -286,7 +286,8 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
     /* Wait up to 5 seconds for response (prevents indefinite hang on service shutdown) */
     int timeout_ms = 5000;
     int waited_ms = 0;
-    
+
+read_next_message:
     while (waited_ms < timeout_ms) {
         if (PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
             if (bytes_available >= sizeof(NcdIpcHeader)) {
@@ -335,7 +336,15 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
     NcdIpcHeader *resp_hdr = (NcdIpcHeader *)resp_buf;
     size_t hdr_size = sizeof(NcdIpcHeader);
     size_t available_payload = (size_t)read - hdr_size;
-    
+
+    /* The service pushes RESCAN_PROGRESS / RESCAN_COMPLETE notifications on
+     * the same connection after accepting a rescan.  If one is queued ahead
+     * of the reply to this request, it is not the reply: skip it. */
+    if (ipc_is_async_notification(resp_hdr)) {
+        IPC_DBG("IPC: Skipping async notification type=%d\n", resp_hdr->type);
+        goto read_next_message;
+    }
+
     IPC_DBG("IPC: Response header: magic=%X version=%d type=%d seq=%u payload=%u\n",
             resp_hdr->magic, resp_hdr->version, resp_hdr->type, resp_hdr->sequence, resp_hdr->payload_len);
     

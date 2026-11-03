@@ -181,6 +181,53 @@ void ipc_client_disconnect(NcdIpcClient *client) {
  * control_ipc_common.c.
  */
 
+/*
+ * recv_exact  --  Read exactly len bytes from a stream socket.
+ * Returns NCD_IPC_OK, or an error (timeout / peer closed / errno).
+ */
+static NcdIpcResult recv_exact(int fd, uint8_t *buf, size_t len) {
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = recv(fd, buf + got, len - got, 0);
+        if (n == 0) {
+            return NCD_IPC_ERROR_INVALID;          /* peer closed mid-message */
+        }
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return errno_to_ipc(errno);
+        }
+        got += (size_t)n;
+    }
+    return NCD_IPC_OK;
+}
+
+/*
+ * recv_frame  --  Read one complete message (header + payload) into buf.
+ *
+ * The control socket is SOCK_STREAM, so a single recv() may return part of
+ * a message or several messages at once.  Messages are framed by the header's
+ * payload_len; read exactly that much so the next message stays queued.
+ */
+static NcdIpcResult recv_frame(int fd, uint8_t *buf, size_t cap, size_t *out_len) {
+    const size_t hdr_size = sizeof(NcdIpcHeader);
+    NcdIpcResult r = recv_exact(fd, buf, hdr_size);
+    if (r != NCD_IPC_OK) return r;
+
+    const NcdIpcHeader *hdr = (const NcdIpcHeader *)buf;
+    if (hdr->magic != NCD_IPC_MAGIC || hdr->version != NCD_IPC_VERSION) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    if (hdr->payload_len > cap - hdr_size) {
+        return NCD_IPC_ERROR_INVALID;
+    }
+    if (hdr->payload_len > 0) {
+        r = recv_exact(fd, buf + hdr_size, hdr->payload_len);
+        if (r != NCD_IPC_OK) return r;
+    }
+    *out_len = hdr_size + hdr->payload_len;
+    return NCD_IPC_OK;
+}
+
 NcdIpcResult ipc_send_receive(NcdIpcClient *client,
                               NcdMessageType type,
                               const void *payload,
@@ -229,23 +276,23 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
     tv.tv_usec = 0;
     setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     
-    /* Read response */
+    /* Read the reply, skipping any rescan progress/complete notifications the
+     * service queued on this connection ahead of it. */
     uint8_t resp_buf[NCD_IPC_MAX_MSG_SIZE];
-    ssize_t received = recv(client->fd, resp_buf, NCD_IPC_MAX_MSG_SIZE, 0);
-    
-    if (received < 0) {
-        IPC_DBG("IPC: recv failed, errno=%d\n", errno);
-        return errno_to_ipc(errno);
-    }
-    
-    IPC_DBG("IPC: recv succeeded, received=%zd bytes\n", received);
-    
-    if ((size_t)received < sizeof(NcdIpcHeader)) {
-        IPC_DBG("IPC: Response too small, received=%zd\n", received);
-        return NCD_IPC_ERROR_INVALID;
-    }
-    
+    size_t received = 0;
     NcdIpcHeader *resp_hdr = (NcdIpcHeader *)resp_buf;
+    for (;;) {
+        NcdIpcResult rr = recv_frame(client->fd, resp_buf, sizeof(resp_buf), &received);
+        if (rr != NCD_IPC_OK) {
+            IPC_DBG("IPC: recv failed, result=%d errno=%d\n", (int)rr, errno);
+            return rr;
+        }
+        if (!ipc_is_async_notification(resp_hdr)) break;
+        IPC_DBG("IPC: Skipping async notification type=%d\n", resp_hdr->type);
+    }
+
+    IPC_DBG("IPC: recv succeeded, received=%zu bytes\n", received);
+
     size_t hdr_size = sizeof(NcdIpcHeader);
     size_t available_payload = (size_t)received - hdr_size;
     
@@ -612,28 +659,16 @@ NcdIpcResult ipc_platform_recv_with_timeout(NcdIpcClient *client,
         return NCD_IPC_ERROR_NOT_FOUND;
     }
     
-    /* Read the message */
+    /* Read exactly one framed message */
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
-    ssize_t received = recv(client->fd, msg_buf, NCD_IPC_MAX_MSG_SIZE, 0);
-    
-    if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return NCD_IPC_ERROR_NOT_FOUND;
-        }
-        return errno_to_ipc(errno);
+    size_t received = 0;
+    NcdIpcResult rr = recv_frame(client->fd, msg_buf, sizeof(msg_buf), &received);
+    if (rr != NCD_IPC_OK) {
+        return rr;
     }
-    
-    if ((size_t)received < sizeof(NcdIpcHeader)) {
-        return NCD_IPC_ERROR_INVALID;
-    }
-    
+
     NcdIpcHeader *hdr = (NcdIpcHeader *)msg_buf;
-    
-    /* Validate header */
-    if (hdr->magic != NCD_IPC_MAGIC || hdr->version != NCD_IPC_VERSION) {
-        return NCD_IPC_ERROR_INVALID;
-    }
-    
+
     *out_type = (NcdMessageType)hdr->type;
     
     /* Copy payload if present */
