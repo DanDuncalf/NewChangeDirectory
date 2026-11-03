@@ -1,5 +1,6 @@
 /* test_platform.c -- Tests for platform abstraction module */
 #include "test_framework.h"
+#include "../src/ncd.h"
 #include "../src/platform.h"
 #include <string.h>
 #include <ctype.h>
@@ -184,6 +185,27 @@ TEST(db_default_path_returns_valid_path) {
     return 0;
 }
 
+TEST(system_mode_paths_do_not_depend_on_elevation) {
+    char default_path[MAX_PATH];
+    char drive_path[MAX_PATH];
+    bool previous_mode = ncd_is_system_mode();
+
+    /* A normal client must use the same shared namespace as the elevated
+     * service.  Privilege affects write access, not namespace selection. */
+    ncd_set_system_mode(true);
+    bool default_ok = ncd_platform_db_default_path(default_path, sizeof(default_path));
+    bool drive_ok = ncd_platform_db_drive_path('C', drive_path, sizeof(drive_path));
+    bool default_is_system = default_ok && strstr(default_path, NCD_SYSTEM_DIR) != NULL;
+    bool drive_is_system = drive_ok && strstr(drive_path, NCD_SYSTEM_DIR) != NULL;
+
+    ncd_set_system_mode(previous_mode);
+    ASSERT_TRUE(default_ok);
+    ASSERT_TRUE(drive_ok);
+    ASSERT_TRUE(default_is_system);
+    ASSERT_TRUE(drive_is_system);
+    return 0;
+}
+
 /* Test suites */
 void suite_platform(void) {
     RUN_TEST(strcasestr_finds_substring);
@@ -198,6 +220,7 @@ void suite_platform(void) {
     RUN_TEST(is_pseudo_fs_matches_known_types);
     RUN_TEST(get_app_title_returns_non_null);
     RUN_TEST(db_default_path_returns_valid_path);
+    RUN_TEST(system_mode_paths_do_not_depend_on_elevation);
 }
 
 /* Main */

@@ -300,6 +300,18 @@ TEST(ln_creates_symlink) {
 SKIP_TEST("NCD executable not found");
     }
 
+#if NCD_PLATFORM_WINDOWS
+    /* Creating symlinks requires elevation or Windows Developer Mode.  The
+     * agent API documents error_unsupported as the correct result when the
+     * current client token has neither capability. */
+    if (status != 0) {
+        ASSERT_EQ_INT(1, status);
+        ASSERT_STR_CONTAINS(out, "\"result\":\"error_unsupported\"");
+        rm_rf(base);
+        return 0;
+    }
+#endif
+
     ASSERT_EQ_INT(0, status);
     ASSERT_STR_CONTAINS(out, "\"result\":\"created\"");
 

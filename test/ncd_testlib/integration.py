@@ -21,6 +21,7 @@ WINDOWS_SUITES = [
     ("NCD Standalone", TEST_DIR / "Test-NCD-Windows-Standalone.bat", 60),
     ("NCD with Service", TEST_DIR / "Test-NCD-Windows-With-Service.bat", 60),
     ("Windows Feature Tests", TEST_DIR / "Win" / "test_features.bat", 1800),
+    ("Windows Wrapper Tests", TEST_DIR / "Win" / "test_wrapper.bat", 30),
     ("Windows Agent Command Tests", TEST_DIR / "Win" / "test_agent_commands.bat", 120),
     ("Service Race Tester", TEST_DIR / "Win" / "test_service_race.bat", 60),
 ]

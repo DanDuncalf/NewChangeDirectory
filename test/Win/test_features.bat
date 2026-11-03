@@ -879,6 +879,7 @@ if exist "%NCD_BAT%" (
     :: Should not crash
     call :pass T3 "Wrapper handles error (no crash)"
     cd /d "%PROJECT_ROOT%"
+
 ) else (
     call :skip T1 "Wrapper changes dir"   "ncd.bat not found"
     call :skip T2 "Wrapper cleans vars"   "ncd.bat not found"
