@@ -4408,6 +4408,7 @@ static void single_scan_progress_cb(char drive_letter, const char *current_path,
 /* Progress callback for service rescan (used when !opts.silent) */
 static void service_rescan_progress_cb(char drive_letter, const char *current_path, void *user_data)
 {
+    (void)drive_letter;
     (void)user_data;
     if (!current_path) return;
     ncd_printf("\r  %s", current_path);

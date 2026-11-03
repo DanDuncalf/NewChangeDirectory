@@ -419,9 +419,11 @@ del "%TEMP%\agent_tree2.txt" 2>nul
 
 "%NCD%" /agent tree "%TESTROOT%." --depth 3 > "%TEMP%\agent_tree3b.txt" 2>&1
 
-for /f %%a in ('type "%TEMP%\agent_tree3a.txt" ^| find /c /v ""') do set T3A=%%a
+:: Use System32 find.exe explicitly: a GNU find earlier on PATH (Git usr\bin)
+:: treats /c as a directory and walks the whole C: drive.
+for /f %%a in ('type "%TEMP%\agent_tree3a.txt" ^| "%SystemRoot%\System32\find.exe" /c /v ""') do set T3A=%%a
 
-for /f %%a in ('type "%TEMP%\agent_tree3b.txt" ^| find /c /v ""') do set T3B=%%a
+for /f %%a in ('type "%TEMP%\agent_tree3b.txt" ^| "%SystemRoot%\System32\find.exe" /c /v ""') do set T3B=%%a
 
 :: DEBUG
 if %T3B% gtr %T3A% (call :pass W12 "tree --depth limits results") else (call :fail W12 "tree --depth limits results")

@@ -2886,8 +2886,9 @@ int main(int argc, char *argv[]) {
             }
             /* Child continues to run service below */
             /* Close stdio to daemonize properly, but keep stderr for logging */
-            freopen("/dev/null", "r", stdin);
-            freopen("/dev/null", "w", stdout);
+            /* Best effort: if /dev/null cannot be opened, keep the old stdio. */
+            if (!freopen("/dev/null", "r", stdin)) { /* ignore */ }
+            if (!freopen("/dev/null", "w", stdout)) { /* ignore */ }
             /* Reopen log file in child to avoid sharing with parent */
             if (g_log_file) {
                 fclose(g_log_file);
