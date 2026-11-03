@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# post-commit hook: auto-deploy locally when NCD_APP_VERSION is bumped.
+#
+# Registered via `git config core.hooksPath .githooks` (tracked in the repo,
+# so every clone on this machine gets it).
+#
+# Behavior:
+#   - If the commit did not change NCD_APP_VERSION in src/control_ipc.h: exit.
+#   - If the built binaries in the repo root do not match the new version:
+#     warn (rebuild first) and skip deploy.
+#   - Otherwise run deploy.bat to sync C:\ProgramData\NCD.
+
+set -u
+
+# Only fire when the version define itself changed in this commit.
+if ! git diff HEAD~1 HEAD -- src/control_ipc.h 2>/dev/null \
+        | grep -q '^[+-]#define NCD_APP_VERSION'; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+NEW_VER="$(git show HEAD:src/control_ipc.h | sed -n 's/^#define NCD_APP_VERSION *"\([^"]*\)".*/\1/p')"
+
+echo "[post-commit] NCD_APP_VERSION changed to ${NEW_VER:-?} -- checking local deploy..."
+
+BUILT_VER="$("$REPO_ROOT/NewChangeDirectory.exe" -v 2>/dev/null | sed -n 's/.*v\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+
+if [ "$BUILT_VER" != "$NEW_VER" ]; then
+    echo "[post-commit] WARNING: built exe reports v${BUILT_VER:-unknown}, header says v$NEW_VER."
+    echo "[post-commit] Rebuild first (build.bat), then run deploy.bat to deploy locally."
+    exit 0
+fi
+
+echo "[post-commit] Deploying v$NEW_VER to C:\ProgramData\NCD ..."
+DEPLOY_BAT="$(cygpath -w "$REPO_ROOT/deploy.bat" 2>/dev/null || echo "$REPO_ROOT/deploy.bat")"
+# NB: `//c` (not `/c`) — MSYS2 converts a bare `/c` into a path.
+cmd //c "$DEPLOY_BAT"
+echo "[post-commit] Local deploy finished."
+exit 0
