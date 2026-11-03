@@ -265,6 +265,19 @@ TEST(service_help_mentions_version_flag) {
     return 0;
 }
 
+TEST(service_help_accepts_windows_question_mark_alias) {
+    if (!service_executable_exists()) {
+        SKIP_TEST("Service executable not found");
+    }
+
+    char output[4096] = {0};
+    int rc = run_service_command("/?", output, sizeof(output));
+    ASSERT_EQ_INT(0, rc);
+    ASSERT_STR_CONTAINS(output, "Usage:");
+    ASSERT_TRUE(strstr(output, "Unknown command") == NULL);
+    return 0;
+}
+
 /* --------------------------------------------------------- alt service tests   */
 
 TEST(alt_service_v13_reports_correct_version) {
@@ -371,7 +384,9 @@ TEST(client_newer_than_service_message) {
 }
 
 TEST(client_older_than_service_mismatch) {
-    /* Client is 1.5, service is 1.7 — client older */
+    /* Simulated client is 1.5, service is 1.7 — client older.  Do not use
+     * NCD_APP_VERSION here: once the product reached 1.7 that stopped
+     * exercising the older-client branch. */
     if (!alt_service_exists(ALT_SERVICE_V17)) {
         SKIP_TEST("Alt service v1.7 not built");
     }
@@ -386,7 +401,7 @@ TEST(client_older_than_service_mismatch) {
     
     NcdIpcVersionCheckResult result;
     memset(&result, 0, sizeof(result));
-    (void)ipc_client_check_version(client, NCD_APP_VERSION,
+    (void)ipc_client_check_version(client, "1.5.0",
                                     __DATE__ " " __TIME__, &result);
     
     /* Should detect mismatch */
@@ -423,7 +438,7 @@ TEST(client_older_than_service_message) {
     
     NcdIpcVersionCheckResult result;
     memset(&result, 0, sizeof(result));
-    ipc_client_check_version(client, NCD_APP_VERSION,
+    ipc_client_check_version(client, "1.5.0",
                              __DATE__ " " __TIME__, &result);
     
     /* Message should contain upgrade advice, NOT stopped */
@@ -459,7 +474,7 @@ TEST(service_not_killed_when_newer) {
     
     NcdIpcVersionCheckResult result;
     memset(&result, 0, sizeof(result));
-    ipc_client_check_version(client, NCD_APP_VERSION,
+    ipc_client_check_version(client, "1.5.0",
                              __DATE__ " " __TIME__, &result);
     
     ASSERT_FALSE(result.versions_match);
@@ -521,6 +536,7 @@ void suite_version_compat(void) {
     RUN_TEST(protocol_version_matches_expected);
     RUN_TEST(service_version_flag_works);
     RUN_TEST(service_help_mentions_version_flag);
+    RUN_TEST(service_help_accepts_windows_question_mark_alias);
     RUN_TEST(alt_service_v13_reports_correct_version);
     RUN_TEST(alt_service_v17_reports_correct_version);
     RUN_TEST(client_newer_than_service_mismatch);
