@@ -32,6 +32,13 @@ set "TESTDIR=%ROOTDIR%test"
 :: ---------------------------------------------------------------------------
 :: 1. Remove object directories used by build.bat
 :: ---------------------------------------------------------------------------
+:: build.sh (WSL/Linux) caches objects per architecture in build_<arch>\
+for %%d in (build_x64 build_ARM64 build_RISC-V) do (
+    if exist "%ROOTDIR%%%d" (
+        echo [clean] Removing %ROOTDIR%%%d  ...
+        rmdir /s /q "%ROOTDIR%%%d" 2>nul
+    )
+)
 if exist "%ROOTDIR%obj" (
     echo [clean] Removing %ROOTDIR%obj  ...
     rmdir /s /q "%ROOTDIR%obj" 2>nul

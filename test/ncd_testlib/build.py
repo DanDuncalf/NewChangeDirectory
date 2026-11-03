@@ -179,19 +179,24 @@ def build_linux_main(test_build=False):
             print("[BUILD] Linux main binaries are up-to-date.")
             return True
 
+    # build.sh only defines NCD_TEST_BUILD (TUI key injection etc.) when given
+    # the "test" argument; without it a "test build" silently produced a
+    # release binary whenever the object cache was invalidated.
+    build_arg = " test" if test_build else ""
+
     if platform.system() == "Windows":
         if not is_wsl_available():
             print("[BUILD] ERROR: WSL not available, cannot build Linux binaries")
             return False
         wsl_root = wsl_path(PROJECT_ROOT)
-        cmd = f'cd "{wsl_root}" && ./build.sh'
+        cmd = f'cd "{wsl_root}" && ./build.sh{build_arg}'
         rc, stdout, stderr = run_cmd(
             ["wsl", "bash", "-c", cmd],
             cwd=str(PROJECT_ROOT), timeout=300
         )
     else:
         rc, stdout, stderr = run_cmd(
-            ["./build.sh"], cwd=str(PROJECT_ROOT), timeout=300, shell=True
+            [f"./build.sh{build_arg}"], cwd=str(PROJECT_ROOT), timeout=300, shell=True
         )
 
     if rc != 0:

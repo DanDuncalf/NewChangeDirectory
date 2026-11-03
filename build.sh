@@ -193,7 +193,23 @@ build_arch() {
     # Use intermediate object files to reduce memory pressure
     local build_dir="build_${arch}"
     mkdir -p "${build_dir}"
-    
+
+    # Cached objects are only valid for the same compiler + flags (a test
+    # build defines NCD_TEST_BUILD, a release build does not).  Discard the
+    # cache whenever they change.
+    local stamp="${build_dir}/.buildflags"
+    local flags_now="${cc} ${cflags}"
+    if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$flags_now" ]; then
+        rm -f "${build_dir}"/*.o
+        printf '%s' "$flags_now" > "$stamp"
+    fi
+
+    # Objects also depend on every header/table include in src/ and shared/
+    # (version strings, struct layouts, CRC tables).  Recompile everything
+    # when any of them is newer than an object.
+    local newest_hdr
+    newest_hdr=$(ls -t "${SRC_DIR}"/*.h "${SHARED_DIR}"/*.h "${SHARED_DIR}"/*.inc 2>/dev/null | head -n 1)
+
     local objs=()
     local src_files=(
         "${SRC_DIR}/main.c"
@@ -209,7 +225,8 @@ build_arch() {
         local obj_path="${build_dir}/${obj_name}"
         
         # Skip if object is newer than source
-        if [ -f "$obj_path" ] && [ "$obj_path" -nt "$src" ]; then
+        if [ -f "$obj_path" ] && [ "$obj_path" -nt "$src" ] &&
+           { [ -z "$newest_hdr" ] || [ "$obj_path" -nt "$newest_hdr" ]; }; then
             continue
         fi
         
