@@ -317,6 +317,44 @@ bool service_state_remove_group(ServiceState *state, const char *name) {
     return result;
 }
 
+int service_state_db_change(ServiceState *state, bool add, const char *path) {
+    if (!state || !path || !path[0]) {
+        return -1;
+    }
+
+    /* Reject mutations during shutdown */
+    if (state->shutdown_requested) {
+        return -1;
+    }
+
+    /* Excluded directories never enter the service database (it is filtered
+     * on load), so an agent-created one is accepted and left out. */
+    if (add && db_path_is_excluded(state->metadata, path)) {
+        return 0;
+    }
+
+    state_lock(state);
+    int rc;
+    if (add) {
+        if (!state->database) {
+            state->database = db_create();
+            state->database->last_scan = time(NULL);
+        }
+        rc = db_add_path(state->database, path);
+    } else {
+        rc = (state->database && db_remove_path(state->database, path)) ? 1 : 0;
+    }
+    if (rc > 0) {
+        /* Deferred flush, like a partial rescan: agents change one path at a
+         * time and must not cause a full database write per command. */
+        state->dirty_flags |= DIRTY_DATABASE_PARTIAL;
+        state->last_db_mutation = time(NULL);
+        state->mutation_count++;
+    }
+    state_unlock(state);
+    return rc;
+}
+
 bool service_state_add_exclusion(ServiceState *state, const char *pattern) {
     if (!state || !state->metadata || !pattern) {
         return false;

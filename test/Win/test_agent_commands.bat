@@ -167,31 +167,17 @@ if errorlevel 1 (
 
 echo Creating %VHD_SIZE% MB test VHD on drive %TESTDRIVE%:...
 
-(
-echo create vdisk file="%VHD_PATH%" maximum=%VHD_SIZE% type=expandable
-echo select vdisk file="%VHD_PATH%"
-echo attach vdisk
-echo create partition primary
-echo format fs=ntfs quick label="NCDAgent"
-echo assign letter=%TESTDRIVE%
-
-) > "%TEMP%\agent_diskpart.txt"
-
-
-
-diskpart /s "%TEMP%\agent_diskpart.txt" >nul 2>&1
+:: New-NcdTestVhd.ps1 formats the partition before assigning the letter, so
+:: Windows never shows a "format disk" prompt for a raw volume.
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%SCRIPT_DIR%New-NcdTestVhd.ps1" -Path "%VHD_PATH%" -Letter %TESTDRIVE% -SizeMB %VHD_SIZE% -Label NCDAgent >nul 2>&1
 
 if errorlevel 1 (
 
-    echo WARNING: diskpart failed, using temp directory
-
-    del "%TEMP%\agent_diskpart.txt" 2>nul
+    echo WARNING: VHD creation failed, using temp directory
 
     goto :use_tempdir
 
 )
-
-del "%TEMP%\agent_diskpart.txt" 2>nul
 
 
 

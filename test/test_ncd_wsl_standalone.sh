@@ -254,12 +254,17 @@ else
 fi
 
 # Test 2: Help output
-echo "[TEST 2] Help with -h"
-ncd_run_timed 10 -h
-if [[ $LAST_EXIT -eq 0 ]]; then
-    pass "Help with -h"
+# (-h is the history browser; help is --help / -?)
+echo "[TEST 2] Help with --help"
+ncd_run_timed 10 --help
+if [[ $LAST_EXIT -ne 0 ]]; then
+    fail "Help with --help" "exit code $LAST_EXIT"
+elif ! echo "$LAST_OUT" | grep -q "Standalone client"; then
+    fail "Help with --help" "header lacks [Standalone client.]: $(echo "$LAST_OUT" | head -3)"
+elif ! echo "$LAST_OUT" | grep -q -- "--agent"; then
+    fail "Help with --help" "usage text lacks --agent"
 else
-    fail "Help with -h" "exit code $LAST_EXIT"
+    pass "Help with --help"
 fi
 
 # Test 3: Version information
@@ -357,6 +362,11 @@ else
     fail "No match returns error" "exit code $LAST_EXIT (expected non-zero)"
 fi
 
+# Shared agent write->read tests (also used by the other NCD suite)
+source "$SCRIPT_DIR/ncd_agent_write_read.sh"
+
+run_agent_write_read_tests standalone
+
 # Test 13: Database override -d
 echo "[TEST 13] Database override -d"
 CUSTOM_DB="/tmp/ncd_test_$$.db"
@@ -367,6 +377,40 @@ else
     fail "Database override -d" "custom database not created"
 fi
 rm -f "$CUSTOM_DB"
+
+# Test 13b: tree/check accept doubled and trailing separators
+echo "[TEST 13b] Agent tree/check accept doubled and trailing separators"
+SEP_OK=1
+for v in "$TESTROOT//Projects" "$TESTROOT/Projects/" "$TESTROOT/Projects//"; do
+    ncd_run --agent:tree "$v" --depth 1
+    if [[ $LAST_EXIT -ne 0 ]] || ! echo "$LAST_OUT" | grep -q "alpha"; then
+        SEP_OK=0; SEP_WHY="tree '$v' -> exit $LAST_EXIT: $LAST_OUT"; break
+    fi
+    ncd_run --agent:check "$v"
+    if [[ $LAST_EXIT -ne 0 ]]; then
+        SEP_OK=0; SEP_WHY="check '$v' -> exit $LAST_EXIT: $LAST_OUT"; break
+    fi
+done
+if [[ $SEP_OK -eq 1 ]]; then
+    pass "Agent tree/check accept doubled and trailing separators"
+else
+    fail "Agent tree/check accept doubled and trailing separators" "$SEP_WHY"
+fi
+
+# Test 13c: agent output uses plain LF line endings
+echo "[TEST 13c] Agent output has no carriage returns"
+CR_OK=1
+for args in "--agent:tree $TESTROOT/Projects --depth 2" "--agent:query src --limit 5" "--agent:query Downloads --json"; do
+    # shellcheck disable=SC2086
+    OUT=$(cd "$TESTROOT" && "$NCD" $args 2>/dev/null)
+    if [[ -z "$OUT" ]]; then CR_OK=0; CR_WHY="no output from: $args"; break; fi
+    if printf '%s' "$OUT" | grep -q $'\r'; then CR_OK=0; CR_WHY="$args"; break; fi
+done
+if [[ $CR_OK -eq 1 ]]; then
+    pass "Agent output has no carriage returns"
+else
+    fail "Agent output has no carriage returns" "CR found in output of: $CR_WHY"
+fi
 
 # Test 14: Agent ls command
 echo "[TEST 14] Agent ls command"

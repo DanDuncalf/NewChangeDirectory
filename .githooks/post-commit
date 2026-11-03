@@ -8,7 +8,7 @@
 #   - If the commit did not change NCD_APP_VERSION in src/control_ipc.h: exit.
 #   - If the built binaries in the repo root do not match the new version:
 #     warn (rebuild first) and skip deploy.
-#   - Otherwise run deploy.bat to sync C:\ProgramData\NCD.
+#   - Otherwise run deploy.bat to install C:\Program Files\NCD\bin.
 
 set -u
 
@@ -31,9 +31,10 @@ if [ "$BUILT_VER" != "$NEW_VER" ]; then
     exit 0
 fi
 
-echo "[post-commit] Deploying v$NEW_VER to C:\ProgramData\NCD ..."
+echo "[post-commit] Deploying v$NEW_VER to C:\Program Files\NCD\bin ..."
 DEPLOY_BAT="$(cygpath -w "$REPO_ROOT/deploy.bat" 2>/dev/null || echo "$REPO_ROOT/deploy.bat")"
 # NB: `//c` (not `/c`) — MSYS2 converts a bare `/c` into a path.
+# deploy.bat elevates itself (UAC) and writes to C:\Program Files\NCD\bin.
 cmd //c "$DEPLOY_BAT"
 echo "[post-commit] Local deploy finished."
 exit 0

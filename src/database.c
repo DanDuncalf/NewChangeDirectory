@@ -73,7 +73,9 @@ bool g_test_slow_mode = false;
  * structural change (db_add_drive, subtree removal, filtering, ...).
  * Windows keys are case-insensitive, Linux keys are case-sensitive.
  */
-typedef struct { uint64_t hash; int dir_index; char *path; } PathMapEntry;
+/* drive_idx: position in db->drives, so a subtree removal on one drive can
+ * renumber that drive's entries in place (db_path_map_remap_drive). */
+typedef struct { uint64_t hash; int dir_index; int drive_idx; char *path; } PathMapEntry;
 typedef struct { PathMapEntry *entries; int count; int capacity; } PathMap;
 
 #if NCD_PLATFORM_WINDOWS
@@ -99,15 +101,21 @@ static void path_map_init(PathMap *m, int expected)
     m->count = 0;
 }
 
-static void path_map_put(PathMap *m, const char *path, int dir_index)
+/* Insert an entry that already owns its path string. */
+static void path_map_insert(PathMap *m, uint64_t h, int dir_index, int drive_idx, char *path)
 {
-    uint64_t h = path_key_hash(path);
     int idx = (int)(h % (uint64_t)m->capacity);
     while (m->entries[idx].path != NULL) idx = (idx + 1) % m->capacity;
     m->entries[idx].hash = h;
     m->entries[idx].dir_index = dir_index;
-    m->entries[idx].path = ncd_strdup(path);
+    m->entries[idx].drive_idx = drive_idx;
+    m->entries[idx].path = path;
     m->count++;
+}
+
+static void path_map_put(PathMap *m, const char *path, int dir_index, int drive_idx)
+{
+    path_map_insert(m, path_key_hash(path), dir_index, drive_idx, ncd_strdup(path));
 }
 
 static int path_map_get(const PathMap *m, const char *path)
@@ -132,6 +140,37 @@ void db_invalidate_path_map(NcdDatabase *db)
         free(pm);
         db->path_map = NULL;
     }
+}
+
+/*
+ * Renumber one drive's entries after its dirs[] was compacted: old_to_new
+ * maps each old index to its new index, or -1 for a removed directory.
+ * Avoids rebuilding the index of every directory (all drives) after one
+ * subtree removal -- the service removes paths for agent commands.
+ */
+static void db_path_map_remap_drive(NcdDatabase *db, int drive_idx,
+                                    const int *old_to_new, int old_count)
+{
+    PathMap *pm = (PathMap *)db->path_map;
+    if (!pm) return;
+
+    PathMap fresh;
+    fresh.capacity = pm->capacity;
+    fresh.entries = ncd_calloc((size_t)fresh.capacity, sizeof(PathMapEntry));
+    fresh.count = 0;
+    for (int i = 0; i < pm->capacity; i++) {
+        PathMapEntry *e = &pm->entries[i];
+        if (!e->path) continue;
+        int dir_index = e->dir_index;
+        if (e->drive_idx == drive_idx) {
+            dir_index = (dir_index >= 0 && dir_index < old_count) ? old_to_new[dir_index] : -1;
+            if (dir_index < 0) { free(e->path); continue; }
+        }
+        path_map_insert(&fresh, e->hash, dir_index, e->drive_idx, e->path);
+    }
+    free(pm->entries);
+    pm->entries = fresh.entries;
+    pm->count = fresh.count;
 }
 
 DirChildren *db_build_children_index(const DriveData *drv)
@@ -170,7 +209,7 @@ void db_free_children_index(DirChildren *children, int dir_count)
  */
 typedef struct { int dir; int path_len_before_name; } PathMapStackItem;
 
-static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter)
+static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter, int drive_idx)
 {
 #if !NCD_PLATFORM_WINDOWS
     (void)drive_letter; /* Unused on Linux - mount point comes from drv->label */
@@ -227,7 +266,7 @@ static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter
             int path_len = root_len + name_len;
             
             /* Add to map */
-            path_map_put(map, path, i);
+            path_map_put(map, path, i, drive_idx);
             
             /* Push children */
             DirChildren *dc = &children[i];
@@ -261,7 +300,7 @@ static void build_path_map(PathMap *map, const DriveData *drv, char drive_letter
         path_len += 1 + name_len;
         
         /* Add to map */
-        path_map_put(map, path, cur.dir);
+        path_map_put(map, path, cur.dir, drive_idx);
         
         /* Push children */
         DirChildren *dc = &children[cur.dir];
@@ -285,7 +324,7 @@ static PathMap *db_ensure_path_map(NcdDatabase *db)
     for (int d = 0; d < db->drive_count; d++) total += db->drives[d].dir_count;
     path_map_init(map, total);
     for (int d = 0; d < db->drive_count; d++)
-        build_path_map(map, &db->drives[d], db->drives[d].letter);
+        build_path_map(map, &db->drives[d], db->drives[d].letter, d);
     db->path_map = map;
     return map;
 }
@@ -1246,36 +1285,156 @@ int db_add_dir(DriveData *drv, const char *name, int32_t parent,
     return id;
 }
 
+char db_path_drive_letter(const char *path)
+{
+    if (!path || !path[0]) return 0;
+#if NCD_PLATFORM_WINDOWS
+    return path_get_drive(path);
+#else
+    /* /mnt/<x> belongs to drive X; every other path to native drive 0. */
+    return platform_get_drive_letter(path);
+#endif
+}
+
+/* Copy `path` with platform separators and no trailing separator. */
+static void db_normalize_lookup_path(const char *path, char *out, size_t out_size)
+{
+    platform_strncpy_s(out, out_size, path);
+    path_normalize_separators(out);
+    size_t len = strlen(out);
+#if NCD_PLATFORM_WINDOWS
+    size_t min_len = 3;                         /* keep "C:\" */
+#else
+    size_t min_len = 1;                         /* keep "/" */
+#endif
+    while (len > min_len && out[len - 1] == NCD_PATH_SEP[0]) out[--len] = '\0';
+}
+
+/* Root path of a drive as the path index spells it, without trailing separator. */
+static void db_drive_root(const DriveData *drv, char *out, size_t out_size)
+{
+#if NCD_PLATFORM_WINDOWS
+    if (drv->label[0] && strstr(drv->label, ":\\"))
+        snprintf(out, out_size, "%s", drv->label);
+    else
+        snprintf(out, out_size, "%c:%s", drv->letter, NCD_PATH_SEP);
+#else
+    snprintf(out, out_size, "%s", drv->label[0] ? drv->label : "/");
+#endif
+    size_t len = strlen(out);
+    while (len > 1 && out[len - 1] == NCD_PATH_SEP[0] &&
+           !(len == 3 && out[1] == ':')) {
+        out[--len] = '\0';
+    }
+}
+
+/* Index of `path` on `drv`, or -1. The cached path index spans all drives,
+ * so the hit must also be checked against this drive. */
+static int db_drive_path_index(NcdDatabase *db, const DriveData *drv, const char *path)
+{
+    int idx = db_path_index_get(db, path);
+    if (idx < 0 || idx >= drv->dir_count) return -1;
+    char buf[NCD_MAX_PATH];
+    if (!db_full_path(drv, idx, buf, sizeof(buf))) return -1;
+#if NCD_PLATFORM_WINDOWS
+    return _stricmp(buf, path) == 0 ? idx : -1;
+#else
+    return strcmp(buf, path) == 0 ? idx : -1;
+#endif
+}
+
+static int db_add_path_on_drive(NcdDatabase *db, char letter, const char *path, int depth)
+{
+    if (depth > 512) return -1;                 /* malformed path */
+
+    DriveData *drv = db_find_drive(db, letter);
+    if (!drv) return -1;
+
+    int existing = db_drive_path_index(db, drv, path);
+    if (existing >= 0) return existing;
+
+    char root[NCD_MAX_PATH];
+    db_drive_root(drv, root, sizeof(root));
+    size_t root_len = strlen(root);
+#if NCD_PLATFORM_WINDOWS
+    if (_stricmp(path, root) == 0) return -1;   /* the root itself has no entry */
+    if (_strnicmp(path, root, root_len) != 0) return -1;   /* not on this drive */
+#else
+    if (strcmp(path, root) == 0) return -1;
+    if (strncmp(path, root, root_len) != 0) return -1;
+#endif
+
+    const char *leaf = path_leaf(path);
+    if (!leaf || !leaf[0]) return -1;
+
+    int32_t parent_idx = -1;
+    char parent[NCD_MAX_PATH];
+    if (path_parent(path, parent, sizeof(parent))) {
+        db_normalize_lookup_path(parent, parent, sizeof(parent));
+        bool parent_is_root =
+#if NCD_PLATFORM_WINDOWS
+            _stricmp(parent, root) == 0;
+#else
+            strcmp(parent, root) == 0;
+#endif
+        if (!parent_is_root && strlen(parent) > strlen(root)) {
+            /* Missing ancestors are added first, so the leaf never lands at
+             * the drive root under a wrong full path. */
+            parent_idx = db_add_path_on_drive(db, letter, parent, depth + 1);
+            if (parent_idx < 0) return -1;
+        }
+    }
+
+    drv = db_find_drive(db, letter);            /* recursion may grow pools */
+    int id = db_add_dir(drv, leaf, parent_idx, false, false);
+    db->name_index_generation++;
+    /* Keep a cached path index current instead of rebuilding it (the
+     * service applies agent changes one at a time to a large database). */
+    PathMap *pm = (PathMap *)db->path_map;
+    if (pm && (pm->count + 1) * 4 < pm->capacity * 3) {
+        path_map_put(pm, path, id, (int)(drv - db->drives));
+    } else {
+        db_invalidate_path_map(db);
+    }
+    return id;
+}
+
+int db_add_path(NcdDatabase *db, const char *path)
+{
+    if (!db || !path || !path[0]) return -1;
+
+    char norm[NCD_MAX_PATH];
+    db_normalize_lookup_path(path, norm, sizeof(norm));
+    char letter = db_path_drive_letter(norm);
+#if NCD_PLATFORM_WINDOWS
+    if (letter == 0) return -1;
+#endif
+
+    db_make_mutable(db);
+    DriveData *drv = db_find_drive(db, letter);
+    if (drv && db_drive_path_index(db, drv, norm) >= 0) return 0;
+    if (!drv && !db_add_drive(db, letter)) return -1;
+
+    return db_add_path_on_drive(db, letter, norm, 0) >= 0 ? 1 : -1;
+}
+
 bool db_remove_path(NcdDatabase *db, const char *path)
 {
     if (!db || !path || !path[0]) return false;
 
-    db_make_mutable(db);
+    char norm[NCD_MAX_PATH];
+    db_normalize_lookup_path(path, norm, sizeof(norm));
 
-    char target_drive = 0;
-#if NCD_PLATFORM_WINDOWS
-    if (path[1] == ':') {
-        target_drive = (char)toupper((unsigned char)path[0]);
-    }
-#else
-    target_drive = (char)toupper((unsigned char)path[0]);
-#endif
-
-    DriveData *drv = db_find_drive(db, target_drive);
+    DriveData *drv = db_find_drive(db, db_path_drive_letter(norm));
     if (!drv) return false;
 
-    /* Find the directory index by full path reconstruction */
-    int dir_idx = -1;
-    char buf[NCD_MAX_PATH];
-    for (int i = 0; i < drv->dir_count; i++) {
-        if (!db_full_path(drv, i, buf, sizeof(buf))) continue;
-        if (_stricmp(buf, path) == 0) {
-            dir_idx = i;
-            break;
-        }
-    }
-
+    /* Path index lookup, not a scan that rebuilds every full path. */
+    int dir_idx = db_drive_path_index(db, drv, norm);
     if (dir_idx < 0) return false;
+
+    db_make_mutable(db);
+    drv = db_find_drive(db, db_path_drive_letter(norm));
+    if (!drv) return false;
 
     /* Collect all indices to remove (dir + all descendants) */
     bool *to_remove = ncd_calloc((size_t)drv->dir_count, sizeof(bool));
@@ -1314,6 +1473,7 @@ bool db_remove_path(NcdDatabase *db, const char *path)
         }
     }
 
+    int old_count = drv->dir_count;
     free(drv->dirs);
     if (new_count > 0) {
         drv->dirs = new_dirs;
@@ -1324,13 +1484,13 @@ bool db_remove_path(NcdDatabase *db, const char *path)
     drv->dir_count = new_count;
     drv->dir_capacity = new_count;
 
-    free(old_to_new);
-    free(to_remove);
-
     /* Invalidate cached name index */
     db->name_index_generation++;
-    /* Invalidate cached path map (P1.16) */
-    db_invalidate_path_map(db);
+    /* Keep the cached path index: renumber this drive's entries (P1.16) */
+    db_path_map_remap_drive(db, (int)(drv - db->drives), old_to_new, old_count);
+
+    free(old_to_new);
+    free(to_remove);
     return true;
 }
 
@@ -2788,6 +2948,33 @@ bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_pa
     bool r = db_exclusion_index_check(idx, drive_letter, dir_path);
     db_exclusion_index_free(idx);
     return r;
+}
+
+bool db_path_is_excluded(NcdMetadata *meta, const char *path)
+{
+    if (!meta || !path || !path[0] || meta->exclusions.count == 0) return false;
+
+    char buf[NCD_MAX_PATH];
+    platform_strncpy_s(buf, sizeof(buf), path);
+    path_normalize_separators(buf);
+    char letter = db_path_drive_letter(buf);
+
+    /* An excluded ancestor excludes the whole subtree (as db_filter_excluded
+     * does), so check the path and every ancestor below the drive root. */
+    NcdExclusionIndex *idx = db_exclusion_index_build(&meta->exclusions);
+    bool excluded = false;
+    size_t len = strlen(buf);
+    for (size_t i = 1; i <= len && !excluded; i++) {
+        if (i == len || buf[i] == NCD_PATH_SEP[0]) {
+            char saved = buf[i];
+            buf[i] = '\0';
+            const char *rel = db_exclusion_rel_path(buf);
+            if (rel[0]) excluded = db_exclusion_index_check(idx, letter, rel);
+            buf[i] = saved;
+        }
+    }
+    db_exclusion_index_free(idx);
+    return excluded;
 }
 
 bool db_exclusion_add(NcdMetadata *meta, const char *pattern)

@@ -49,6 +49,23 @@ static bool service_executable_exists(void) {
 #endif
 }
 
+/* Command that starts the service binary under test. Never resolve it through
+ * PATH: that would silently start a deployed (possibly older) NCDService. */
+static const char *service_start_cmd(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD a = GetFileAttributesA("NCDService.exe");
+    if (a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY))
+        return ".\\NCDService.exe start";
+    return "..\\NCDService.exe start";
+#else
+    if (access("./NCDService", X_OK) == 0) return "./NCDService start";
+    if (access("./ncd_service", X_OK) == 0) return "./ncd_service start";
+    if (access("../ncd_service", X_OK) == 0 && access("../NCDService", X_OK) != 0)
+        return "../ncd_service start";
+    return "../NCDService start";
+#endif
+}
+
 static void ensure_service_stopped(void) {
     if (ipc_service_exists()) {
         NcdIpcClient *client = ipc_client_connect();
@@ -78,11 +95,7 @@ static bool ensure_service_running(void) {
     
     if (!service_executable_exists()) return false;
 
-#if NCD_PLATFORM_WINDOWS
-    const char *start_cmd = "NCDService.exe start";
-#else
-    const char *start_cmd = "../NCDService start";
-#endif
+    const char *start_cmd = service_start_cmd();
 
     for (int attempt = 0; attempt < 5; attempt++) {
         ensure_service_stopped();

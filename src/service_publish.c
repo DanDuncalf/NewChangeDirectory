@@ -712,18 +712,12 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     
     /* Compute required size */
     size_t new_size = compute_database_snapshot_size(db);
-    
-    /* Allocate temp buffer */
-    uint8_t *temp_buf = (uint8_t *)malloc(new_size);
-    if (!temp_buf) {
-        return false;
-    }
-    
+
     /* Publish under a unique generation-suffixed name (same atomic-swap
      * strategy as the metadata snapshot, including stale-name recovery). */
     uint64_t new_gen = service_state_get_db_generation(state) + 1;
     size_t shm_size = shm_round_up_size(new_size);
-    
+
     char new_name[288];
     ShmHandle *shm;
     ShmResult result = create_generation_shm(pub->db_base, &new_gen, shm_size,
@@ -731,20 +725,12 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
     if (result != SHM_OK) {
         fprintf(stderr, "NCD Service: shm_create failed for database '%s': %s (size=%zu)\n",
                 new_name, shm_error_string(result), shm_size);
-        free(temp_buf);
         return false;
     }
-    
-    /* Build the snapshot with the generation actually acquired so the header
-     * and the object name always agree. */
-    if (!build_database_snapshot(temp_buf, new_size, db, new_gen)) {
-        shm_close(shm);
-        shm_remove(new_name);
-        free(temp_buf);
-        return false;
-    }
-    
-    /* Map and copy snapshot data */
+
+    /* Build the snapshot straight into the new object (no heap copy: the
+     * service republishes after every agent database change).  The object
+     * is not visible to readers until the swap below. */
     void *addr;
     size_t mapped_size;
     result = shm_map(shm, SHM_ACCESS_WRITE, &addr, &mapped_size);
@@ -754,20 +740,24 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
         }
         shm_close(shm);
         shm_remove(new_name);
-        free(temp_buf);
         return false;
     }
-    memcpy(addr, temp_buf, new_size);
+    /* Generation actually acquired, so the header and the name agree. */
+    bool built = build_database_snapshot((uint8_t *)addr, new_size, db, new_gen);
     shm_unmap(addr, mapped_size);
-    
+    if (!built) {
+        shm_close(shm);
+        shm_remove(new_name);
+        return false;
+    }
+
     /* Remap read-only */
     if (shm_map(shm, SHM_ACCESS_READ, &addr, &mapped_size) != SHM_OK) {
         shm_close(shm);
         shm_remove(new_name);
-        free(temp_buf);
         return false;
     }
-    
+
     /* Swap in the new snapshot, then drop the previous one. */
     char old_name[256];
     platform_strncpy_s(old_name, sizeof(old_name), pub->db_name);
@@ -790,7 +780,6 @@ bool snapshot_publisher_publish_db(SnapshotPublisher *pub,
         shm_remove(old_name);
     }
     
-    free(temp_buf);
     return true;
 }
 

@@ -36,6 +36,8 @@
 
 #if NCD_PLATFORM_WINDOWS
 #include <windows.h>
+#include <io.h>      /* _setmode, _fileno (agent output in binary mode) */
+#include <fcntl.h>   /* _O_BINARY */
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -643,13 +645,10 @@ static bool check_service_version(bool *out_service_was_stopped, bool *out_servi
         *out_service_running = false;
     }
     
+    /* ipc_service_exists() answers at once and already covers a service
+     * that is between pipe instances, so there is nothing to retry. */
     if (!ipc_service_exists()) {
-        /* Retry once — on Windows the named pipe may briefly not exist
-         * between server accept cycles. */
-        platform_sleep_ms(50);
-        if (!ipc_service_exists()) {
-            return true;  /* No service running, OK to start new one */
-        }
+        return true;  /* No service running, OK to start new one */
     }
 
     /* Service exists - mark as running */
@@ -1055,9 +1054,39 @@ extern bool parse_args(int argc, char *argv[], NcdOptions *opts);
 /* ================================================================ agent mode */
 
 /* Agent output uses stdout (not WriteConsoleA) for redirectability */
+/*
+ * Agent output is consumed by programs, usually through a pipe. Source strings
+ * end lines with "\r\n". Windows: stdout is switched to binary mode for agent
+ * commands (agent_output_init), so "\r\n" is written once; in text mode the CRT
+ * would turn it into "\r\r\n". POSIX: lines end with a plain "\n".
+ */
+static void agent_output_init(void)
+{
+#if NCD_PLATFORM_WINDOWS
+    fflush(stdout);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+}
+
+static void agent_write(const char *s, size_t n)
+{
+#if NCD_PLATFORM_WINDOWS
+    fwrite(s, 1, n, stdout);
+#else
+    size_t start = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '\r' && i + 1 < n && s[i + 1] == '\n') {
+            if (i > start) fwrite(s + start, 1, i - start, stdout);
+            start = i + 1;              /* drop the '\r', keep the '\n' */
+        }
+    }
+    if (n > start) fwrite(s + start, 1, n - start, stdout);
+#endif
+}
+
 static void agent_print(const char *s)
 {
-    fputs(s, stdout);
+    if (s) agent_write(s, strlen(s));
 }
 
 static void agent_print_char(char c)
@@ -1067,10 +1096,76 @@ static void agent_print_char(char c)
 
 static void agent_printf(const char *fmt, ...)
 {
+    char stack_buf[1024];
     va_list ap;
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    int len = vsnprintf(stack_buf, sizeof(stack_buf), fmt, ap);
     va_end(ap);
+    if (len < 0) return;
+    if ((size_t)len < sizeof(stack_buf)) {
+        agent_write(stack_buf, (size_t)len);
+        return;
+    }
+    char *heap = (char *)malloc((size_t)len + 1);
+    if (!heap) return;
+    va_start(ap, fmt);
+    vsnprintf(heap, (size_t)len + 1, fmt, ap);
+    va_end(ap);
+    agent_write(heap, (size_t)len);
+    free(heap);
+}
+
+/*
+ * Normalize a path given to an agent command before looking it up in the
+ * database. Agents (and scripts that glue "X:\" to "\sub") produce paths such
+ * as "Z:\\Projects" or "C:/a//b/" that Windows accepts but that would not
+ * match the database's canonical form:
+ *   - '/' -> '\' on Windows
+ *   - runs of separators collapse to one (a leading "\\" UNC prefix is kept)
+ *   - a trailing "." left by batch quoting is dropped ("T:\." -> "T:\")
+ *   - "R:" becomes "R:\"; any other trailing separator is removed
+ */
+static void agent_normalize_lookup_path(char *path)
+{
+    if (!path || !path[0]) return;
+#if NCD_PLATFORM_WINDOWS
+    for (char *p = path; *p; p++)
+        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
+#endif
+    /* Collapse repeated separators, keeping a leading UNC "\\" */
+    char *src = path, *dst = path;
+#if NCD_PLATFORM_WINDOWS
+    if (src[0] == NCD_PATH_SEP_CHAR && src[1] == NCD_PATH_SEP_CHAR) {
+        *dst++ = *src++;
+        *dst++ = *src++;
+        while (*src == NCD_PATH_SEP_CHAR) src++;
+    }
+#endif
+    for (; *src; src++) {
+        if (*src == NCD_PATH_SEP_CHAR && dst > path && dst[-1] == NCD_PATH_SEP_CHAR)
+            continue;
+        *dst++ = *src;
+    }
+    *dst = '\0';
+
+    size_t len = strlen(path);
+#if NCD_PLATFORM_WINDOWS
+    /* Trailing dot from batch quoting: "T:\." -> "T:\", "C:\path." -> "C:\path" */
+    if (len >= 2 && path[len - 1] == '.' && path[len - 2] != '.') {
+        path[--len] = '\0';
+    }
+    if (len == 2 && path[1] == ':') {
+        path[2] = NCD_PATH_SEP_CHAR;
+        path[3] = '\0';
+        return;
+    }
+    if (len == 3 && path[1] == ':') return;           /* drive root "R:\" */
+#else
+    if (len == 1) return;                               /* "/" */
+#endif
+    while (len > 1 && path[len - 1] == NCD_PATH_SEP_CHAR) {
+        path[--len] = '\0';
+    }
 }
 
 static void agent_json_escape(const char *s)
@@ -1231,6 +1326,21 @@ static NcdMetadata *metadata_load_or_create(void)
  * Returns the loaded database (caller must db_free), or NULL.
  * If out_db_path is non-NULL, the resolved path is written there.
  */
+/* Drive an agent read targets: the drive named in the search ("X:..."),
+ * otherwise the drive of the current directory. */
+static char agent_target_drive(const NcdOptions *opts)
+{
+    char cwd[MAX_PATH] = {0};
+    platform_get_current_dir(cwd, sizeof(cwd));
+    char target_drive = platform_get_drive_letter(cwd);
+
+    if (opts->has_search &&
+        isalpha((unsigned char)opts->search[0]) && opts->search[1] == ':') {
+        target_drive = (char)toupper((unsigned char)opts->search[0]);
+    }
+    return target_drive;
+}
+
 static NcdDatabase *agent_load_target_db(const NcdOptions *opts,
                                          char *out_db_path,
                                          size_t db_path_size)
@@ -1242,14 +1352,7 @@ static NcdDatabase *agent_load_target_db(const NcdOptions *opts,
         platform_strncpy_s(target_db, sizeof(target_db), opts->db_override);
         db = db_load_auto(target_db);
     } else {
-        char cwd[MAX_PATH] = {0};
-        platform_get_current_dir(cwd, sizeof(cwd));
-        char target_drive = platform_get_drive_letter(cwd);
-
-        if (opts->has_search &&
-            isalpha((unsigned char)opts->search[0]) && opts->search[1] == ':') {
-            target_drive = (char)toupper((unsigned char)opts->search[0]);
-        }
+        char target_drive = agent_target_drive(opts);
 
         if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
             db = db_load_auto(target_db);
@@ -1260,6 +1363,80 @@ static NcdDatabase *agent_load_target_db(const NcdOptions *opts,
         platform_strncpy_s(out_db_path, db_path_size, target_db);
     }
     return db;
+}
+
+/* Forward declaration (defined with the agent write helpers) */
+static bool agent_service_running(void);
+
+/*
+ * agent_service_db  --  The running service's in-memory database for agent
+ * reads, or NULL when no service is in use or /d names a database file.
+ * Probes the service first, so standalone runs never load every drive.
+ */
+static NcdDatabase *agent_service_db(const NcdOptions *opts)
+{
+    if (opts->db_override[0] || !agent_service_running()) return NULL;
+    const NcdDatabase *db = get_state_database();
+    return (db && is_service_backend()) ? (NcdDatabase *)db : NULL;
+}
+
+/*
+ * agent_drive_view  --  Read-only database holding one drive of `src`.
+ * Shares src's entries and name pools (service shared memory); only the
+ * caches the matcher and path index build are its own.  NULL if `src` has
+ * no such drive.  Free with agent_drive_view_free.
+ */
+static NcdDatabase *agent_drive_view(const NcdDatabase *src, char letter)
+{
+    int n = 0;
+    for (int i = 0; i < src->drive_count; i++)
+        if (src->drives[i].letter == letter) n++;
+    if (n == 0) return NULL;
+
+    NcdDatabase *v = ncd_calloc(1, sizeof(NcdDatabase));
+    v->version = src->version;
+    v->default_show_hidden = src->default_show_hidden;
+    v->default_show_system = src->default_show_system;
+    v->last_scan = src->last_scan;
+    v->drives = ncd_malloc_array((size_t)n, sizeof(DriveData));
+    for (int i = 0; i < src->drive_count; i++)
+        if (src->drives[i].letter == letter) v->drives[v->drive_count++] = src->drives[i];
+    v->drive_capacity = v->drive_count;
+    v->ref_count = 1;
+    return v;
+}
+
+static void agent_drive_view_free(NcdDatabase *v)
+{
+    if (!v) return;
+    db_invalidate_path_map(v);
+    if (v->name_index) name_index_free((NameIndex *)v->name_index);
+    free(v->drives);
+    free(v);
+}
+
+/* Database for an agent read: the target drive from the service when one is
+ * running, otherwise that drive's database file. */
+typedef struct { NcdDatabase *db; bool is_view; } AgentReadDb;
+
+static AgentReadDb agent_open_read_db(const NcdOptions *opts)
+{
+    AgentReadDb r = { NULL, false };
+    NcdDatabase *svc = agent_service_db(opts);
+    if (svc) {
+        r.db = agent_drive_view(svc, agent_target_drive(opts));
+        r.is_view = true;
+    } else {
+        r.db = agent_load_target_db(opts, NULL, 0);
+    }
+    return r;
+}
+
+static void agent_close_read_db(AgentReadDb *r)
+{
+    if (r->is_view) agent_drive_view_free(r->db);
+    else if (r->db) db_free(r->db);
+    r->db = NULL;
 }
 
 /* ============================================================ agent mode   */
@@ -1675,27 +1852,7 @@ static int agent_mode_tree(NcdDatabase *db, const NcdOptions *opts)
     /* Find the directory in the database */
     char search_path[NCD_MAX_PATH];
     platform_strncpy_s(search_path, sizeof(search_path), opts->search);
-    
-    /* Normalize path */
-#if NCD_PLATFORM_WINDOWS
-    for (char *p = search_path; *p; p++) {
-        if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-    }
-#endif
-#if NCD_PLATFORM_WINDOWS
-    /* Strip trailing dot (e.g., "T:\\." -> "T:\\" or "C:\\path." -> "C:\\path") to work around batch quoting */
-    size_t sp_len = strlen(search_path);
-    if (sp_len >= 2 && search_path[sp_len - 1] == '.') {
-        search_path[sp_len - 1] = '\0';
-        sp_len--;
-    }
-    /* Ensure drive letters have a trailing backslash (R: -> R:\) */
-    if (sp_len == 2 && search_path[1] == ':') {
-        search_path[2] = NCD_PATH_SEP_CHAR;
-        search_path[3] = '\0';
-        sp_len = 3;
-    }
-#endif
+    agent_normalize_lookup_path(search_path);
     
     /* Use cached path map for O(1) lookup (P1.16) */
     
@@ -1940,25 +2097,8 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
         if (db) {
             char search_path[NCD_MAX_PATH];
             platform_strncpy_s(search_path, sizeof(search_path), opts->search);
-#if NCD_PLATFORM_WINDOWS
-            for (char *p = search_path; *p; p++)
-                if (*p == '/') *p = NCD_PATH_SEP_CHAR;
-#endif
-#if NCD_PLATFORM_WINDOWS
-            /* Strip trailing dot (e.g., "T:\\." -> "T:\\" or "C:\\path." -> "C:\\path") to work around batch quoting */
-            size_t sp_len = strlen(search_path);
-            if (sp_len >= 2 && search_path[sp_len - 1] == '.') {
-                search_path[sp_len - 1] = '\0';
-                sp_len--;
-            }
-            /* Ensure drive letters have a trailing backslash (R: -> R:\) */
-            if (sp_len == 2 && search_path[1] == ':') {
-                search_path[2] = NCD_PATH_SEP_CHAR;
-                search_path[3] = '\0';
-                sp_len = 3;
-            }
-#endif
-            
+            agent_normalize_lookup_path(search_path);
+
             /* Use cached path map for O(1) lookup (P1.16) */
             in_db = db_path_index_get(db, search_path) >= 0;
         }
@@ -2019,14 +2159,9 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
     
     
     if (opts->agent_check_service_status) {
-        /* Check service status with retry — on Windows the named pipe may
-         * briefly not exist between server accept cycles. */
+        /* ipc_service_exists() already covers a service that is between
+         * pipe instances, so no retry delay is needed. */
         bool service_running = ipc_service_exists();
-        if (!service_running) {
-            /* Retry once after a short delay to ride out the accept gap */
-            platform_sleep_ms(50);
-            service_running = ipc_service_exists();
-        }
 
         if (!service_running) {
             /* Service not running */
@@ -2077,22 +2212,31 @@ static int agent_mode_check(NcdDatabase *db, const NcdOptions *opts)
             agent_printf("{\"v\":1,\"status\":\"%s\",\"state\":%u,\"log_level\":%d,\"pending_count\":%u,\"dirty_flags\":%u,",
                          state_str, info.runtime_state, info.log_level,
                          info.pending_count, info.dirty_flags);
-            agent_printf("\"version\":\"%s\",\"build\":\"%s\",",
-                         info.app_version, info.build_stamp);
-            agent_printf("\"platform\":\"%s\",\"arch\":\"%s\",",
-                         info.platform, info.arch);
+            /* String fields are escaped: Windows paths contain backslashes. */
+            agent_print("\"version\":\"");
+            agent_json_escape(info.app_version);
+            agent_print("\",\"build\":\"");
+            agent_json_escape(info.build_stamp);
+            agent_print("\",\"platform\":\"");
+            agent_json_escape(info.platform);
+            agent_print("\",\"arch\":\"");
+            agent_json_escape(info.arch);
+            agent_print("\",");
             agent_printf("\"meta_generation\":%llu,\"db_generation\":%llu,",
                          (unsigned long long)info.meta_generation,
                          (unsigned long long)info.db_generation);
-            agent_printf("\"meta_path\":\"%s\",\"log_path\":\"%s\",",
-                         info.meta_path, info.log_path);
-            agent_printf("\"drives\":[");
+            agent_print("\"meta_path\":\"");
+            agent_json_escape(info.meta_path);
+            agent_print("\",\"log_path\":\"");
+            agent_json_escape(info.log_path);
+            agent_print("\",\"drives\":[");
             for (uint32_t i = 0; i < info.drive_count; i++) {
                 if (i > 0) agent_print(",");
-                agent_printf("{\"letter\":\"%c\",\"dir_count\":%u,\"db_path\":\"%s\"}",
+                agent_printf("{\"letter\":\"%c\",\"dir_count\":%u,\"db_path\":\"",
                              info.drives[i].letter,
-                             info.drives[i].dir_count,
-                             info.drives[i].db_path);
+                             info.drives[i].dir_count);
+                agent_json_escape(info.drives[i].db_path);
+                agent_print("\"}");
             }
             agent_print("]}\r\n");
         } else {
@@ -2161,108 +2305,82 @@ typedef enum {
     AGENT_MKDIR_ERROR_OTHER
 } AgentMkdirResult;
 
+/* ===================================================== agent service routing */
+
+/* Whether a service is running, probed once per process. */
+static bool agent_service_running(void)
+{
+    static int cached = -1;
+    if (cached < 0) cached = ipc_service_exists() ? 1 : 0;
+    return cached == 1;
+}
+
 /*
- * Helper: Add a single directory path to the database.
- * Loads/creates database for the drive if needed, finds parent, adds directory.
- * Returns true if directory was added (or already exists), false on error.
- * Marks database dirty if modified.
+ * Apply a database change through the running service.  Returns true when the
+ * service applied it.  False means no service (or it refused), and the caller
+ * updates the on-disk database itself.  With a service running the disk copy
+ * must not be written: the service saves its in-memory database over it.
+ */
+static bool service_db_change(int update_type, const char *path)
+{
+    if (!path || !path[0] || !agent_service_running()) return false;
+
+    char norm[NCD_MAX_PATH];
+    platform_strncpy_s(norm, sizeof(norm), path);
+    path_normalize_separators(norm);
+
+    NcdIpcClient *client = ipc_client_connect();
+    if (!client) return false;
+    NcdIpcResult r = ipc_client_submit_metadata(client, update_type,
+                                                norm, strlen(norm) + 1);
+    ipc_client_disconnect(client);
+    return r == NCD_IPC_OK;
+}
+
+/* Database already loaded (and tracked) for a drive in this process, or NULL. */
+static NcdDatabase *tracked_db_for_drive(char drive)
+{
+    for (int i = 0; i < g_dirty_db_count; i++) {
+        if (g_dirty_dbs[i].drive == drive && g_dirty_dbs[i].db) {
+            return g_dirty_dbs[i].db;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Helper: Add a directory path (and missing ancestors) to the database.
+ * Goes through the service when one is running; otherwise updates the
+ * per-drive database file (deferred save, see flush_all_dirty_dbs).
+ * Returns true if the path is in the database afterwards.
  */
 static bool add_path_to_database(const char *path)
 {
     if (!path || !path[0]) return false;
-    
-    char target_drive = path_get_drive(path);
-    if (target_drive == 0 && path[0] != '\0') {
-        target_drive = (char)toupper((unsigned char)path[0]);
-    }
-    
+    if (service_db_change(NCD_META_UPDATE_DB_ADD_PATH, path)) return true;
+
+    char target_drive = db_path_drive_letter(path);
+#if NCD_PLATFORM_WINDOWS
     if (target_drive == 0) return false;
-    
-    /* Load existing database for this drive */
+#endif
     char target_db[NCD_MAX_PATH] = {0};
-    NcdDatabase *db = NULL;
-    
-    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-        /* Check if we already have this database in dirty tracking */
-        for (int i = 0; i < g_dirty_db_count; i++) {
-            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db) {
-                db = g_dirty_dbs[i].db;
-                break;
-            }
-        }
-        if (!db) {
-            db = db_load_auto(target_db);
-        }
-    }
-    
+    if (!db_drive_path(target_drive, target_db, sizeof(target_db))) return false;
+
+    NcdDatabase *db = tracked_db_for_drive(target_drive);
+    bool tracked = (db != NULL);
+    if (!db) db = db_load_auto(target_db);
     if (!db) {
         db = db_create();
         db->last_scan = time(NULL);
     }
-    
-    /* Find or add the drive */
-    DriveData *drv = db_find_drive(db, target_drive);
-    if (!drv) {
-        drv = db_add_drive(db, target_drive);
-    }
-    
-    if (!drv) {
+
+    int rc = db_add_path(db, path);
+    if (rc > 0) {
+        db_mark_dirty_standalone(target_drive, target_db, db);
+    } else if (!tracked) {
         db_free(db);
-        return false;
     }
-    
-    /* Normalize path separator for the platform */
-    char norm_path[NCD_MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), path);
-    path_normalize_separators(norm_path);
-    
-    /* Find parent directory in database using path map */
-    char parent_path[NCD_MAX_PATH];
-    const char *leaf_name = path_leaf(norm_path);
-    int32_t parent_idx = -1;
-    
-    /* Use cached path map for O(1) lookups (P1.16) */
-    bool in_db = false;
-    if (drv->dir_count > 0) {
-            
-        if (path_parent(norm_path, parent_path, sizeof(parent_path))) {
-            parent_idx = db_path_index_get(db, parent_path);
-        }
-        
-        /* Check if directory already exists in database - O(1) lookup */
-        in_db = db_path_index_get(db, norm_path) >= 0;
-    } else {
-        parent_idx = -1;
-        in_db = false;
-    }
-    
-    if (!in_db && leaf_name) {
-        /* Add to database */
-        db_make_mutable(db);
-        drv = db_find_drive(db, target_drive);
-        db_add_dir(drv, leaf_name, parent_idx, false, false);
-        db_invalidate_path_map(db);   /* cache must include the new entry */
-        
-        /* Mark database as dirty for deferred save */
-        char drv_path[NCD_MAX_PATH];
-        if (db_drive_path(target_drive, drv_path, sizeof(drv_path))) {
-            db_mark_dirty_standalone(target_drive, drv_path, db);
-        }
-    } else {
-        /* No changes made, free the database if not tracked */
-        bool tracked = false;
-        for (int i = 0; i < g_dirty_db_count; i++) {
-            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db == db) {
-                tracked = true;
-                break;
-            }
-        }
-        if (!tracked) {
-            db_free(db);
-        }
-    }
-    
-    return true;
+    return rc >= 0;
 }
 
 /* Helper: create all parent directories for a path */
@@ -3343,7 +3461,10 @@ static int agent_mode_complete(NcdDatabase *db, const NcdOptions *opts)
     if (limit > MAX_PRINTED)
         limit = MAX_PRINTED;
 
-    NcdMetadata *meta = db_metadata_load();
+    /* With the service in use its metadata is current; the file may lag. */
+    NcdMetadata *meta = is_service_backend() ? (NcdMetadata *)get_state_metadata() : NULL;
+    bool owns_meta = (meta == NULL);
+    if (owns_meta) meta = db_metadata_load();
 
     #define RECORD_PRINTED(name) \
         do { \
@@ -3428,62 +3549,38 @@ emit_results:
     #undef MAX_PRINTED
     #undef RECORD_PRINTED
 
-    if (meta) db_metadata_free(meta);
+    if (meta && owns_meta) db_metadata_free(meta);
     return 0;
 }
 
 /*
- * Helper: Remove a path from the database (best-effort).
- * Loads the per-drive database, removes the entry, and marks dirty.
+ * Helper: Remove a path (and its subtree) from the database (best-effort).
+ * Goes through the service when one is running; otherwise updates the
+ * per-drive database file and marks it dirty.
  */
 static bool remove_path_from_database(const char *path)
 {
     if (!path || !path[0]) return false;
+    if (service_db_change(NCD_META_UPDATE_DB_REMOVE_PATH, path)) return true;
 
-    char target_drive = path_get_drive(path);
-    if (target_drive == 0 && path[0] != '\0') {
-        target_drive = (char)toupper((unsigned char)path[0]);
-    }
-
+    char target_drive = db_path_drive_letter(path);
+#if NCD_PLATFORM_WINDOWS
     if (target_drive == 0) return false;
-
+#endif
     char target_db[NCD_MAX_PATH] = {0};
-    NcdDatabase *db = NULL;
+    if (!db_drive_path(target_drive, target_db, sizeof(target_db))) return false;
 
-    if (db_drive_path(target_drive, target_db, sizeof(target_db))) {
-        for (int i = 0; i < g_dirty_db_count; i++) {
-            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db) {
-                db = g_dirty_dbs[i].db;
-                break;
-            }
-        }
-        if (!db) {
-            db = db_load_auto(target_db);
-        }
-    }
-
+    NcdDatabase *db = tracked_db_for_drive(target_drive);
+    bool tracked = (db != NULL);
+    if (!db) db = db_load_auto(target_db);
     if (!db) return false;
 
-    char norm_path[NCD_MAX_PATH];
-    platform_strncpy_s(norm_path, sizeof(norm_path), path);
-    path_normalize_separators(norm_path);
-
-    bool found = db_remove_path(db, norm_path);
+    bool found = db_remove_path(db, path);
     if (found) {
         db_mark_dirty_standalone(target_drive, target_db, db);
-    } else {
-        bool tracked = false;
-        for (int i = 0; i < g_dirty_db_count; i++) {
-            if (g_dirty_dbs[i].drive == target_drive && g_dirty_dbs[i].db == db) {
-                tracked = true;
-                break;
-            }
-        }
-        if (!tracked) {
-            db_free(db);
-        }
+    } else if (!tracked) {
+        db_free(db);
     }
-
     return found;
 }
 
@@ -3782,7 +3879,8 @@ static int agent_mode_rmdirs(const NcdOptions *opts)
         } else if (delete_success) {
             result_str = "removed";
             platform_strncpy_s(result_msg, sizeof(result_msg), "Directory removed");
-            remove_path_from_database(dir_path);
+            /* list.paths[0] is the tree root; removing it drops the subtree. */
+            if (i == 0) remove_path_from_database(dir_path);
             removed_count++;
         } else {
             result_str = "error";
@@ -3915,45 +4013,10 @@ static int agent_mode_mv(const NcdOptions *opts)
         return 1;
     }
 
-    /* Update database: remove old path, add new path */
-    {
-        char src_drive = path_get_drive(src);
-        if (src_drive == 0 && src[0] != '\0') {
-            src_drive = (char)toupper((unsigned char)src[0]);
-        }
-
-        /* Load source drive database and remove old path */
-        char db_path[NCD_MAX_PATH] = {0};
-        NcdDatabase *db = NULL;
-        if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
-            for (int i = 0; i < g_dirty_db_count; i++) {
-                if (g_dirty_dbs[i].drive == src_drive && g_dirty_dbs[i].db) {
-                    db = g_dirty_dbs[i].db;
-                    break;
-                }
-            }
-            if (!db) {
-                db = db_load_auto(db_path);
-            }
-        }
-        if (!db) {
-            db = db_create();
-            db->last_scan = time(NULL);
-        }
-
-        (void)db_remove_path(db, src);
-
-        /* Ensure db is tracked for saving */
-        if (db_drive_path(src_drive, db_path, sizeof(db_path))) {
-            db_mark_dirty_standalone(src_drive, db_path, db);
-        }
-
-        /* Add new path to database */
-        add_path_to_database(dst);
-
-        /* Flush dirty databases immediately */
-        flush_all_dirty_dbs();
-    }
+    /* Update database: remove old path (and subtree), add new path */
+    remove_path_from_database(src);
+    add_path_to_database(dst);
+    flush_all_dirty_dbs();
 
     if (opts->agent_json) {
         agent_print("{\"v\":1,\"src\":\"");
@@ -4503,6 +4566,8 @@ static void report_metadata_loads(void)
 
 int main(int argc, char *argv[])
 {
+    /* Never block on a Windows "no disk" / critical-error message box. */
+    platform_suppress_error_dialogs();
     if (getenv("NCD_TEST_REPORT_LOADS")) atexit(report_metadata_loads);
     /* Open a direct console handle as early as possible so all subsequent
      * ncd_print / ncd_printf calls bypass CRT buffering.                  */
@@ -4515,7 +4580,10 @@ int main(int argc, char *argv[])
         con_close();
         return 1;
     }
-    
+
+    /* Agent output goes to programs: exact line endings (see agent_write). */
+    if (opts.agent_mode) agent_output_init();
+
     /* Apply config override if specified */
     if (opts.conf_override[0]) {
         db_metadata_set_override(opts.conf_override);
@@ -5279,10 +5347,10 @@ int main(int argc, char *argv[])
         
         switch (opts.agent_subcommand) {
             case AGENT_SUB_QUERY: {
-                NcdDatabase *db = agent_load_target_db(&opts, NULL, 0);
-                int count = agent_mode_query(db, &opts);
+                AgentReadDb rdb = agent_open_read_db(&opts);
+                int count = agent_mode_query(rdb.db, &opts);
                 result = (count > 0) ? 0 : 1;
-                if (db) db_free(db);
+                agent_close_read_db(&rdb);
                 break;
             }
             case AGENT_SUB_LS: {
@@ -5291,13 +5359,11 @@ int main(int argc, char *argv[])
                 break;
             }
             case AGENT_SUB_TREE: {
-                /* Prefer service-backed state when available for consistency */
-                NcdDatabase *db = NULL;
+                /* The service's database when one is running (no local load
+                 * of every drive first); otherwise the target drive's file. */
                 bool owns_db = false;
-                const NcdDatabase *state_db = get_state_database();
-                if (state_db && is_service_backend()) {
-                    db = (NcdDatabase *)state_db;
-                } else {
+                NcdDatabase *db = agent_service_db(&opts);
+                if (!db) {
                     db = agent_load_target_db(&opts, NULL, 0);
                     owns_db = true;
                 }
@@ -5307,18 +5373,18 @@ int main(int argc, char *argv[])
                 break;
             }
             case AGENT_SUB_CHECK: {
-                NcdDatabase *db = NULL;
+                AgentReadDb rdb = { NULL, false };
                 if (opts.agent_check_db_age || opts.agent_check_stats || opts.has_search) {
-                    db = agent_load_target_db(&opts, NULL, 0);
+                    rdb = agent_open_read_db(&opts);
                 }
-                result = agent_mode_check(db, &opts);
-                if (db) db_free(db);
+                result = agent_mode_check(rdb.db, &opts);
+                agent_close_read_db(&rdb);
                 break;
             }
             case AGENT_SUB_COMPLETE: {
-                NcdDatabase *db = agent_load_target_db(&opts, NULL, 0);
-                result = agent_mode_complete(db, &opts);
-                if (db) db_free(db);
+                AgentReadDb rdb = agent_open_read_db(&opts);
+                result = agent_mode_complete(rdb.db, &opts);
+                agent_close_read_db(&rdb);
                 break;
             }
             case AGENT_SUB_MKDIR: {

@@ -175,8 +175,10 @@ TEST(mv_updates_database) {
     char src[NCD_MAX_PATH], dst[NCD_MAX_PATH], db_path[NCD_MAX_PATH];
     snprintf(src, sizeof(src), "%s/TestSrc", base);
     snprintf(dst, sizeof(dst), "%s/TestDst", base);
-    snprintf(db_path, sizeof(db_path), "%s/ncd_%02x.database", ncd_dir, (unsigned char)'/');
-    const char test_drive = '/';
+    /* Native Linux paths belong to drive 0 (ncd_00.database), the database
+     * agent query reads for them. */
+    snprintf(db_path, sizeof(db_path), "%s/ncd_%02x.database", ncd_dir, 0);
+    const char test_drive = 0;
 #endif
     rm_rf(base);
     mkdir(base, 0755);

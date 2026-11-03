@@ -305,13 +305,13 @@ else
 fi
 
 # Test 3: Help shows service status
-echo "[TEST 3] Help shows service status"
-ncd_run_timed 10 -h
-if echo "$LAST_OUT" | grep -qi "Service\|Running\|service\|running"; then
-    pass "Help shows service status"
+# (-h is the history browser; help is --help / -?)
+echo "[TEST 3] Help shows service running"
+ncd_run_timed 10 --help
+if [[ $LAST_EXIT -eq 0 ]] && echo "$LAST_OUT" | grep -q "Service: Running"; then
+    pass "Help shows service running"
 else
-    # Help might just show NCD without explicit service status - that's OK
-    pass "Help shows service status (implicit)"
+    fail "Help shows service running" "exit $LAST_EXIT, header: $(echo "$LAST_OUT" | head -3)"
 fi
 
 # Change to TESTROOT for search operations
@@ -445,6 +445,70 @@ if echo "$LAST_OUT" | grep -qi '"v":\|\[\|{'; then
 else
     fail "JSON output format from agent commands" "output: $LAST_OUT"
 fi
+
+# Shared agent write->read tests (also used by the other NCD suite)
+source "$SCRIPT_DIR/ncd_agent_write_read.sh"
+
+run_agent_write_read_tests service
+
+# The disk database moved away: only the service can answer agent reads.
+echo "[TEST] Agent query/complete/check use the service (work with no disk database)"
+DB_ASIDE="$TEST_DATA/db_aside"
+mkdir -p "$DB_ASIDE"
+mv "$TEST_DATA"/ncd/*.database "$DB_ASIDE"/ 2>/dev/null
+if ls "$TEST_DATA"/ncd/*.database >/dev/null 2>&1; then
+    fail "Agent reads use the service" "could not move database files"
+else
+    ncd_run --agent:query Downloads --limit 1
+    Q_OUT="$(printf '%s\n' "$LAST_OUT" | tr -d '\r' | head -n 1)"
+    ncd_run --agent:complete Down
+    C_OUT="$LAST_OUT"
+    ncd_run --agent:check "$TESTROOT/Users/scott/Downloads" --json
+    K_OUT="$LAST_OUT"
+    if [[ "$Q_OUT" != "$TESTROOT/Users/scott/Downloads" ]]; then
+        fail "Agent reads use the service" "query got '$Q_OUT'"
+    elif ! echo "$C_OUT" | grep -q Downloads; then
+        fail "Agent reads use the service" "complete got '$C_OUT'"
+    elif ! echo "$K_OUT" | grep -q '"in_db":true'; then
+        fail "Agent reads use the service" "check got '$K_OUT'"
+    else
+        pass "Agent reads use the service"
+    fi
+fi
+mv "$DB_ASIDE"/*.database "$TEST_DATA"/ncd/ 2>/dev/null
+
+# The service writes its in-memory database over the disk files when it
+# stops; a move made through the service must be in that database.
+echo "[TEST] Agent move survives the service saving its database"
+KEEP_FROM="$TESTROOT/Projects/agent_keep_from"
+KEEP_TO="$TESTROOT/Projects/agent_keep_to"
+rm -rf "$KEEP_FROM" "$KEEP_TO"
+ncd_run --agent:mkdir "$KEEP_FROM" --json
+MK_EXIT=$LAST_EXIT
+ncd_run --agent:mv "$KEEP_FROM" "$KEEP_TO" --json
+MV_EXIT=$LAST_EXIT
+"$SERVICE_EXE" stop >/dev/null 2>&1
+STOP_WAIT=0
+while is_service_running && [[ $STOP_WAIT -lt $SERVICE_TIMEOUT ]]; do sleep 1; STOP_WAIT=$((STOP_WAIT + 1)); done
+if [[ $MK_EXIT -ne 0 || $MV_EXIT -ne 0 ]]; then
+    fail "Agent move survives the service save" "mkdir exit $MK_EXIT, mv exit $MV_EXIT"
+elif is_service_running; then
+    fail "Agent move survives the service save" "service did not stop"
+else
+    ncd_run --agent:query agent_keep_to --limit 1
+    SAVED="$(printf '%s\n' "$LAST_OUT" | tr -d '\r' | head -n 1)"
+    ncd_run --agent:query agent_keep_from
+    if [[ "$SAVED" != "$KEEP_TO" ]]; then
+        fail "Agent move survives the service save" "after save, query got '$SAVED'"
+    elif [[ $LAST_EXIT -eq 0 ]]; then
+        fail "Agent move survives the service save" "after save, old path still indexed: $LAST_OUT"
+    else
+        pass "Agent move survives the service save"
+    fi
+fi
+start_service
+wait_for_service_ready >/dev/null 2>&1
+rm -rf "$KEEP_FROM" "$KEEP_TO"
 
 # ==========================================================================
 # Log Verification

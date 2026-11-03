@@ -97,28 +97,21 @@ class WindowsTestDrive:
         )
         self._force_cleanup_letter_and_vhd()
 
-        # Try diskpart VHD first (most reliable isolation)
-        dp_script = os.path.join(tempfile.gettempdir(), "ncd_diskpart_py.txt")
+        # Try a VHD first (most reliable isolation). New-NcdTestVhd.ps1 formats
+        # the partition before giving it a letter, so Windows never sees an
+        # unformatted volume and never shows the "format disk" prompt.
+        vhd_script = Path(__file__).resolve().parent.parent / "Win" / "New-NcdTestVhd.ps1"
         try:
-            with open(dp_script, "w") as f:
-                f.write(f'create vdisk file="{self.vhd_path}" maximum=50 type=expandable\n')
-                f.write(f'select vdisk file="{self.vhd_path}"\n')
-                f.write("attach vdisk\n")
-                f.write("create partition primary\n")
-                f.write('format fs=ntfs quick label="NCDTest"\n')
-                f.write(f"assign letter={self.letter}\n")
-
             result = subprocess.run(
-                ["diskpart", "/s", dp_script],
+                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                 "-File", str(vhd_script), "-Path", self.vhd_path,
+                 "-Letter", self.letter, "-SizeMB", "50", "-Label", "NCDTest"],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=60,
             )
-            os.unlink(dp_script)
         except Exception as e:
-            print(f"[TEST_DRIVE] diskpart error: {e}")
-            if os.path.exists(dp_script):
-                os.unlink(dp_script)
+            print(f"[TEST_DRIVE] VHD creation error: {e}")
             result = subprocess.CompletedProcess(args=[], returncode=-1)
 
         if result.returncode == 0 and os.path.exists(f"{self.letter}:\\"):

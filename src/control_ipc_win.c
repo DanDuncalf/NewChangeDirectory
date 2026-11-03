@@ -34,8 +34,10 @@ struct NcdIpcClient {
 };
 
 struct NcdIpcServer {
-    HANDLE hPipe;
-    char   pipe_name[256];
+    HANDLE     hPipe;           /* listening instance (INVALID_HANDLE_VALUE if none) */
+    OVERLAPPED connect_ov;      /* pending ConnectNamedPipe on hPipe */
+    bool       connect_pending;
+    char       pipe_name[256];
 };
 
 struct NcdIpcConnection {
@@ -46,6 +48,48 @@ struct NcdIpcConnection {
 /* --------------------------------------------------------- globals            */
 
 static char g_pipe_name[256] = {0};
+
+/*
+ * pipe_io  --  One overlapped ReadFile/WriteFile with a timeout.
+ *
+ * Every NCD pipe handle (client and server side) is opened with
+ * FILE_FLAG_OVERLAPPED, so a wait wakes the moment data arrives.  The old
+ * PeekNamedPipe + Sleep(10) polling cost a full timer tick (~15.6 ms) per
+ * request on each side.  On timeout the I/O is cancelled and the last
+ * error is WAIT_TIMEOUT.
+ */
+static BOOL pipe_io(HANDLE h, BOOL write, void *buf, DWORD len, DWORD *done,
+                    DWORD timeout_ms) {
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof(ov));
+    ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (!ov.hEvent) {
+        return FALSE;
+    }
+    *done = 0;
+
+    BOOL ok = write ? WriteFile(h, buf, len, NULL, &ov)
+                    : ReadFile(h, buf, len, NULL, &ov);
+    DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+    if (!ok && err == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(ov.hEvent, timeout_ms) != WAIT_OBJECT_0) {
+            CancelIo(h);
+            DWORD ignored;
+            GetOverlappedResult(h, &ov, &ignored, TRUE);  /* let the cancel finish */
+            CloseHandle(ov.hEvent);
+            SetLastError(WAIT_TIMEOUT);
+            return FALSE;
+        }
+        ok = TRUE;
+    }
+    if (ok) {
+        ok = GetOverlappedResult(h, &ov, done, FALSE);
+        err = ok ? ERROR_SUCCESS : GetLastError();
+    }
+    CloseHandle(ov.hEvent);
+    SetLastError(err);
+    return ok;
+}
 
 /* --------------------------------------------------------- error mapping      */
 
@@ -154,10 +198,10 @@ NcdIpcClient *ipc_client_connect(void) {
         return NULL;
     }
     
-    /* Try to connect to named pipe with retries */
+    /* Try to connect to named pipe with retries (about 1 second in total) */
     HANDLE hPipe = INVALID_HANDLE_VALUE;
-    int retries = 50;  /* 50 * 20ms = 1 second total */
-    
+    int retries = 50;
+
     while (retries > 0) {
         hPipe = CreateFile(
             g_pipe_name,            /* Pipe name */
@@ -166,7 +210,7 @@ NcdIpcClient *ipc_client_connect(void) {
             0,                      /* No sharing */
             NULL,                   /* Default security attributes */
             OPEN_EXISTING,          /* Opens existing pipe */
-            0,                      /* Default attributes */
+            FILE_FLAG_OVERLAPPED,   /* pipe_io() waits with a timeout */
             NULL                    /* No template file */
         );
         
@@ -185,8 +229,15 @@ NcdIpcClient *ipc_client_connect(void) {
         }
         
         DWORD err = GetLastError();
-        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PIPE_BUSY || err == ERROR_BAD_PIPE) {
-            /* Pipe not ready yet or server closed it; wait and retry */
+        if (err == ERROR_PIPE_BUSY) {
+            /* Every instance is taken: wake as soon as one is free instead
+             * of sleeping a fixed interval. */
+            WaitNamedPipeA(g_pipe_name, 20);
+            retries--;
+            continue;
+        }
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_BAD_PIPE) {
+            /* No listening instance: the service is starting up */
             Sleep(20);
             retries--;
             continue;
@@ -262,7 +313,7 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
     
     /* Send message */
     DWORD written;
-    if (!WriteFile(client->hPipe, msg_buf, (DWORD)msg_len, &written, NULL)) {
+    if (!pipe_io(client->hPipe, TRUE, msg_buf, (DWORD)msg_len, &written, 5000)) {
         DWORD err = GetLastError();
         IPC_DBG("IPC: WriteFile failed, error=%lu\n", err);
         return win_error_to_ipc(err);
@@ -280,42 +331,18 @@ NcdIpcResult ipc_send_receive(NcdIpcClient *client,
     DWORD read = 0;
     BOOL read_result;
     
-    /* Use PeekNamedPipe first to check if data is available without blocking */
-    DWORD bytes_available = 0;
-    
-    /* Wait up to 5 seconds for response (prevents indefinite hang on service shutdown) */
-    int timeout_ms = 5000;
-    int waited_ms = 0;
+    /* Wait up to 5 seconds for response (prevents indefinite hang on service
+     * shutdown).  The wait wakes as soon as the reply arrives. */
+    const DWORD timeout_ms = 5000;
 
 read_next_message:
-    while (waited_ms < timeout_ms) {
-        if (PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
-            if (bytes_available >= sizeof(NcdIpcHeader)) {
-                /* Data is available, read it */
-                break;
-            }
-        } else {
-            DWORD err = GetLastError();
-            if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
-                IPC_DBG("IPC: Pipe broken, service may have shutdown\n");
-                if (type == NCD_MSG_REQUEST_SHUTDOWN) {
-                    return NCD_IPC_OK;  /* Service shutdown is expected for REQUEST_SHUTDOWN */
-                }
-                return win_error_to_ipc(err);
-            }
-        }
-        Sleep(10);
-        waited_ms += 10;
-    }
-    
-    if (waited_ms >= timeout_ms) {
-        IPC_DBG("IPC: Read timeout waiting for response\n");
-        return NCD_IPC_ERROR_GENERIC;
-    }
-    
-    read_result = ReadFile(client->hPipe, resp_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL);
+    read_result = pipe_io(client->hPipe, FALSE, resp_buf, NCD_IPC_MAX_MSG_SIZE, &read, timeout_ms);
     if (!read_result) {
         DWORD err = GetLastError();
+        if (err == WAIT_TIMEOUT) {
+            IPC_DBG("IPC: Read timeout waiting for response\n");
+            return NCD_IPC_ERROR_GENERIC;
+        }
         IPC_DBG("IPC: ReadFile failed, error=%lu\n", err);
         if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
             /* Service closed pipe - this is expected after REQUEST_SHUTDOWN */
@@ -421,7 +448,7 @@ NcdIpcResult ipc_platform_conn_write(NcdIpcConnection *conn,
     }
     
     DWORD written;
-    if (!WriteFile(conn->hPipe, data, (DWORD)len, &written, NULL)) {
+    if (!pipe_io(conn->hPipe, TRUE, (void *)data, (DWORD)len, &written, NCD_PIPE_TIMEOUT_MS)) {
         return win_error_to_ipc(GetLastError());
     }
     
@@ -444,7 +471,13 @@ NcdIpcServer *ipc_server_init(void) {
     
     strncpy(server->pipe_name, g_pipe_name, sizeof(server->pipe_name) - 1);
     server->pipe_name[sizeof(server->pipe_name) - 1] = '\0';
-    
+    server->hPipe = INVALID_HANDLE_VALUE;
+    server->connect_ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (!server->connect_ov.hEvent) {
+        free(server);
+        return NULL;
+    }
+
     return server;
 }
 
@@ -464,22 +497,28 @@ void ipc_server_cleanup(NcdIpcServer *server) {
     }
     
     if (server->hPipe != INVALID_HANDLE_VALUE) {
+        if (server->connect_pending) {
+            CancelIo(server->hPipe);
+        }
         CloseHandle(server->hPipe);
     }
-    
+    if (server->connect_ov.hEvent) {
+        CloseHandle(server->connect_ov.hEvent);
+    }
+
     free(server);
 }
 
-NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
-    if (!server) {
-        return NULL;
-    }
-    
+/*
+ * Create a listening pipe instance and start an overlapped ConnectNamedPipe.
+ * Returns false if the instance could not be created.
+ */
+static bool server_listen(NcdIpcServer *server) {
     /* Build security attributes for pipe creation */
     SECURITY_ATTRIBUTES sa;
     SECURITY_DESCRIPTOR sd;
     LPSECURITY_ATTRIBUTES psa = NULL;
-    
+
     if (ncd_is_system_mode()) {
         /* System mode: NULL DACL allows all users to connect */
         InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
@@ -489,41 +528,94 @@ NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
         sa.bInheritHandle = FALSE;
         psa = &sa;
     }
-    
-    /* Create named pipe */
+
     HANDLE hPipe = CreateNamedPipe(
         server->pipe_name,          /* Pipe name */
-        PIPE_ACCESS_DUPLEX,         /* Read/write access */
+        PIPE_ACCESS_DUPLEX |        /* Read/write access */
+        FILE_FLAG_OVERLAPPED,       /* pipe_io() and timed accept */
         PIPE_TYPE_MESSAGE |         /* Message-type pipe */
         PIPE_READMODE_MESSAGE |     /* Message-read mode */
         PIPE_WAIT,                  /* Blocking mode */
         PIPE_UNLIMITED_INSTANCES,   /* Max instances */
         NCD_PIPE_BUFFER_SIZE,       /* Output buffer size */
         NCD_PIPE_BUFFER_SIZE,       /* Input buffer size */
-        (timeout_ms > 0) ? timeout_ms : NCD_PIPE_TIMEOUT_MS, /* Timeout */
+        NCD_PIPE_TIMEOUT_MS,        /* Default WaitNamedPipe timeout */
         psa                         /* Security attributes */
     );
-    
     if (hPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    ResetEvent(server->connect_ov.hEvent);
+    server->hPipe = hPipe;
+    server->connect_pending = false;
+    if (ConnectNamedPipe(hPipe, &server->connect_ov)) {
+        SetEvent(server->connect_ov.hEvent);      /* connected already */
+        return true;
+    }
+    switch (GetLastError()) {
+        case ERROR_IO_PENDING:
+            server->connect_pending = true;
+            return true;
+        case ERROR_PIPE_CONNECTED:                  /* client got in first */
+            SetEvent(server->connect_ov.hEvent);
+            return true;
+        default:                                    /* e.g. ERROR_NO_DATA */
+            CloseHandle(hPipe);
+            server->hPipe = INVALID_HANDLE_VALUE;
+            return false;
+    }
+}
+
+/*
+ * ipc_server_accept  --  Wait up to timeout_ms for a client.
+ *
+ * A listening instance is kept open between calls (and re-created right
+ * after a client is handed out), so a client never finds the pipe missing
+ * while the service handles another connection, and the wait wakes the
+ * moment a client connects.
+ */
+NcdIpcConnection *ipc_server_accept(NcdIpcServer *server, int timeout_ms) {
+    if (!server) {
         return NULL;
     }
-    
-    /* Wait for client connection */
-    BOOL connected = ConnectNamedPipe(hPipe, NULL);
-    if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
-        CloseHandle(hPipe);
+
+    if (server->hPipe == INVALID_HANDLE_VALUE && !server_listen(server)) {
+        Sleep(10);                                  /* avoid a hot loop */
         return NULL;
     }
-    
+
+    DWORD wait = (timeout_ms > 0) ? (DWORD)timeout_ms : INFINITE;
+    if (WaitForSingleObject(server->connect_ov.hEvent, wait) != WAIT_OBJECT_0) {
+        return NULL;                                /* still listening */
+    }
+
+    HANDLE hPipe = server->hPipe;
+    if (server->connect_pending) {
+        DWORD ignored;
+        BOOL ok = GetOverlappedResult(hPipe, &server->connect_ov, &ignored, FALSE);
+        server->connect_pending = false;
+        if (!ok && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(hPipe);
+            server->hPipe = INVALID_HANDLE_VALUE;
+            return NULL;
+        }
+    }
+    server->hPipe = INVALID_HANDLE_VALUE;
+
+    /* Next client can connect while this one is served. */
+    server_listen(server);
+
     NcdIpcConnection *conn = (NcdIpcConnection *)calloc(1, sizeof(NcdIpcConnection));
     if (!conn) {
+        DisconnectNamedPipe(hPipe);
         CloseHandle(hPipe);
         return NULL;
     }
-    
+
     conn->hPipe = hPipe;
     conn->is_connected = true;
-    
+
     return conn;
 }
 
@@ -567,38 +659,12 @@ int ipc_server_receive(NcdIpcConnection *conn, void **out_payload, size_t *out_l
     DWORD read;
     
     /*
-     * Poll for data with timeout before blocking ReadFile.
-     * This prevents the service from permanently stalling when a client
-     * connects but never sends data (hung process, zombie, etc.).
-     * Matches the 200ms timeout used on POSIX (SO_RCVTIMEO).
+     * Wait up to 200 ms for a message.  This prevents the service from
+     * stalling when a client connects but never sends data (hung process,
+     * zombie, ...), matching SO_RCVTIMEO on POSIX.  A disconnect or a new
+     * message ends the wait at once.
      */
-    const int poll_timeout_ms = 200;
-    const int poll_interval_ms = 10;
-    int waited_ms = 0;
-    DWORD bytes_available = 0;
-    
-    while (waited_ms < poll_timeout_ms) {
-        if (PeekNamedPipe(conn->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
-            if (bytes_available >= sizeof(NcdIpcHeader)) {
-                break;  /* Data available, proceed to read */
-            }
-        } else {
-            DWORD err = GetLastError();
-            if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED ||
-                err == ERROR_NO_DATA) {
-                return 0;  /* Client disconnected */
-            }
-        }
-        Sleep((DWORD)poll_interval_ms);
-        waited_ms += poll_interval_ms;
-    }
-    
-    if (waited_ms >= poll_timeout_ms) {
-        /* Client connected but sent nothing within timeout */
-        return 0;
-    }
-    
-    if (!ReadFile(conn->hPipe, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
+    if (!pipe_io(conn->hPipe, FALSE, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read, 200)) {
         return 0;
     }
     
@@ -646,46 +712,23 @@ bool ipc_service_exists(void) {
         }
     }
     
-    /* Try to connect with retries to handle transient unavailability
-     * when the service is between pipe instances. */
-    int retries = 5;  /* 5 * 20ms = 100ms total */
-    while (retries > 0) {
-        HANDLE hPipe = CreateFile(
-            g_pipe_name,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL
-        );
-        
-        if (hPipe != INVALID_HANDLE_VALUE) {
-            CloseHandle(hPipe);
-            return true;
-        }
-        
-        DWORD err = GetLastError();
-        /* ERROR_PIPE_BUSY (231) means the pipe exists but all instances are busy.
-         * This indicates the service IS running, just handling other clients. */
-        if (err == ERROR_PIPE_BUSY) {
-            return true;
-        }
-        
-        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_BAD_PIPE) {
-            /* Service may be recreating the pipe; wait briefly and retry */
-            Sleep(20);
-            retries--;
-            continue;
-        }
-        
-        break;
+    /* One probe, no sleeping: a client that runs without the service must
+     * not pay a retry delay on every command.  WaitNamedPipe does not take
+     * the listening instance (opening it would make the service accept and
+     * drop an empty connection).  It returns at once when no instance
+     * exists; when every instance is busy it gives up after 1 ms. */
+    if (WaitNamedPipeA(g_pipe_name, 1)) {
+        return true;
     }
-    
-    /* Fallback: check the service mutex. The pipe may be temporarily
-     * unavailable while the service is between connections, but the
-     * mutex remains owned until the process exits. An abandoned mutex
-     * means the service crashed and should not be treated as running. */
+    if (GetLastError() == ERROR_SEM_TIMEOUT) {
+        return true;            /* pipe exists, all instances busy */
+    }
+
+    /* No pipe right now: either no service, or a service that is between
+     * pipe instances (or still starting). The instance mutex tells the two
+     * apart immediately -- it stays owned until the service process exits.
+     * An abandoned mutex means the service crashed and is not running.
+     * ipc_client_connect() rides out the between-instances gap itself. */
     const char *mutex_name = ncd_is_system_mode() 
         ? "Global\\NCDService_Instance_7D3F9A2E"
         : "NCDService_Instance_7D3F9A2E";
@@ -723,45 +766,16 @@ NcdIpcResult ipc_platform_recv_with_timeout(NcdIpcClient *client,
     *out_payload = NULL;
     *out_len = 0;
     
-    /* Check if data is available using PeekNamedPipe */
-    DWORD bytes_available = 0;
-    if (!PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
-        DWORD err = GetLastError();
-        if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
-            return NCD_IPC_ERROR_NOT_FOUND;
-        }
-        return win_error_to_ipc(err);
-    }
-    
-    if (bytes_available == 0) {
-        /* No data available - wait for timeout */
-        int waited_ms = 0;
-        const int poll_interval = 10;
-        
-        while (waited_ms < timeout_ms) {
-            Sleep(poll_interval);
-            waited_ms += poll_interval;
-            
-            if (!PeekNamedPipe(client->hPipe, NULL, 0, NULL, &bytes_available, NULL)) {
-                return NCD_IPC_ERROR_NOT_FOUND;
-            }
-            
-            if (bytes_available >= sizeof(NcdIpcHeader)) {
-                break;
-            }
-        }
-        
-        if (bytes_available == 0 || bytes_available < sizeof(NcdIpcHeader)) {
-            return NCD_IPC_ERROR_NOT_FOUND;
-        }
-    }
-    
-    /* Read the message */
+    /* Read the message (the wait wakes as soon as one arrives) */
     uint8_t msg_buf[NCD_IPC_MAX_MSG_SIZE];
     DWORD read;
-    
-    if (!ReadFile(client->hPipe, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read, NULL)) {
+
+    if (!pipe_io(client->hPipe, FALSE, msg_buf, NCD_IPC_MAX_MSG_SIZE, &read,
+                 (DWORD)(timeout_ms > 0 ? timeout_ms : 0))) {
         DWORD err = GetLastError();
+        if (err == WAIT_TIMEOUT) {
+            return NCD_IPC_ERROR_NOT_FOUND;         /* nothing within timeout */
+        }
         if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
             return NCD_IPC_ERROR_NOT_FOUND;
         }

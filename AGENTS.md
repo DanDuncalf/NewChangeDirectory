@@ -138,7 +138,7 @@ NewChangeDirectory/
 ├── build.bat                 # Windows build (MSVC)
 ├── build.sh                  # Linux build (GCC/Clang)
 ├── Makefile                  # Cross-platform build (MinGW)
-├── deploy.bat                # Windows deployment script
+├── deploy.bat                # Windows deploy (elevates, delegates to packaging\windows\install.bat)
 ├── deploy.sh                 # Linux deployment script
 └── LINUX_PORT_CHANGELIST.md  # Linux porting documentation
 ```
@@ -223,6 +223,21 @@ Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File
 
 > **History:** On 2026-05-27, a 6-second launch delay was traced to a leftover IFEO key with `VerifierDlls=vrfcore.dll vfbasics.dll`. An agent had enabled Application Verifier during debugging and never removed it. The previous investigation misattributed this to Codex sandbox because renaming the binary bypassed the IFEO name match.
 
+### Deployment Layout (Windows) — MANDATORY
+
+Windows uses one layout. Do not invent new directories.
+
+| Purpose | Path | Notes |
+|---------|------|-------|
+| Binaries + wrappers | `C:\Program Files\NCD\bin` | `NewChangeDirectory.exe`, `NCDService.exe`, `ncd.bat`, `ncd_service.bat`, `completions\`, `mcp_server\`. Added to **Machine** PATH. |
+| Data | `C:\ProgramData\NCD` | Databases, `ncd.metadata`, `ncd_service.log`. **Never on PATH and never holds executables.** |
+
+- `deploy.bat` elevates itself, then calls `packaging\windows\install.bat /quiet` (all-users scope). Do not reintroduce copy/PATH logic in `deploy.bat`.
+- `install.bat` is also the public package installer and is driven by `NCD_SRC_DIR` / `NCD_INSTALL_SCOPE` / `NCD_INSTALL_DEST` / `NCD_INSTALL_QUIET` when called non-interactively. All-users → `%PROGRAMFILES%\NCD\bin` (data stays in `C:\ProgramData\NCD`); current-user → `%LOCALAPPDATA%\NCD\bin` (data `%LOCALAPPDATA%\NCD`).
+- PATH entries are managed by `packaging\windows\update-path.ps1`: whole-entry comparison, preserves the registry value kind (`REG_EXPAND_SZ`), broadcasts `WM_SETTINGCHANGE`.
+- `ncd.bat` / `ncd_service.bat` invoke the executable by name, so wrapper and binary must stay in the same PATH directory.
+- Legacy trees put executables in `C:\ProgramData\NCD`; `deploy.bat` deletes those on every run and leaves the data files alone.
+
 ## Testing
 
 > **📋 Full docs:** [`AGENT_TESTING_GUIDE.md`](AGENT_TESTING_GUIDE.md)
@@ -266,11 +281,36 @@ Every release must bump the version number in:
 
 After bumping, run `python test/runner.py --quick` to confirm tests pass before pushing.
 
-**Local deploy on version bump (automated):** A tracked `post-commit` git hook (`.githooks/post-commit`, registered via `core.hooksPath=.githooks`) detects commits that change `NCD_APP_VERSION` and runs `deploy.bat` to sync `C:\ProgramData\NCD` automatically. If the built binaries are stale (header newer than the exe), the hook skips the deploy and warns — rebuild with `build.bat`, then run `deploy.bat`. To check version sync across header / built / deployed binaries at any time, run:
+**Local deploy on version bump (automated):** A tracked `post-commit` git hook (`.githooks/post-commit`, registered via `core.hooksPath=.githooks`) detects commits that change `NCD_APP_VERSION` and runs `deploy.bat` to install `C:\Program Files\NCD\bin` (elevating via UAC). If the built binaries are stale (header newer than the exe), the hook skips the deploy and warns — rebuild with `build.bat`, then run `deploy.bat`. To check version sync across header / built / deployed binaries at any time, run:
 
 ```powershell
 python tools\check_deploy_version.py
 ```
+
+### Windows Service / Client Integration Suites
+
+`test/Win/test_service_windows.ps1` ("Service Tests (Isolated)"), `test/Win/test_ncd_windows_standalone.ps1`
+("NCD Standalone") and `test/Win/test_ncd_windows_with_service.ps1` ("NCD with Service") share
+`test/Win/NcdIntegration.psm1` and mirror the Linux `test/test_service_wsl.sh` and `test/test_ncd_wsl_*.sh`.
+Each uses its own `LOCALAPPDATA` under `%TEMP%` with `NCD_TEST_MODE=1` (forces user mode).
+A test service cannot start while any `NCDService.exe` runs (the start command checks both the per-user and
+`Global\` mutex), so the harness kills `NCDService.exe` before every Windows suite, including a deployed
+system-wide service. Restart it afterwards. A suite listed in `test/ncd_testlib/integration.py` whose script is
+missing counts as a failure.
+
+With a service running, client reads come from its shared memory: the plain search, `--agent:tree`,
+and `--agent:query`/`--agent:complete`/`--agent:check` (limited to the target drive, as in standalone mode).
+Agent writes (`mkdir`, `mkdirs`, `mv`, `rmdir`, `rmdirs`, `ln`) go to the service as
+`NCD_META_UPDATE_DB_ADD_PATH`/`DB_REMOVE_PATH` and the client does not touch the disk database: the service
+saves its in-memory database over the files (deferred flush), which would undo a direct disk write. `-d <file>`
+and runs without a service use the disk database. `ipc_service_exists()` answers without sleeping: with no
+pipe it checks the service instance mutex (Windows); on Linux it retries only a full backlog (`EAGAIN`).
+Windows pipe I/O is overlapped on both ends (`pipe_io()` in `src/control_ipc_win.c`) and the service keeps a
+listening pipe instance open while it serves a client: no `PeekNamedPipe`/`Sleep` polling, which cost a ~15.6 ms
+timer tick per request. The service keeps its path index current across agent adds/removes and builds database
+snapshots directly in shared memory.
+The write/read behaviour is covered in both modes by `Invoke-NcdAgentWriteReadTests`
+(`test/Win/NcdIntegration.psm1`) and `test/ncd_agent_write_read.sh`.
 
 ### Keystroke Injection for TUI Testing
 
@@ -480,6 +520,9 @@ ncd_service start -init -log2 -conf C:\NCD\custom.metadata
 ## Database Storage
 
 ### Locations
+
+These paths hold **data only** — no executables. Windows binaries and wrappers
+live in the Program Files install directory (see § *Deployment Layout (Windows)*).
 
 **System-wide (default):** Shared paths accessible by all users:
 - Windows: `C:\ProgramData\NCD\`

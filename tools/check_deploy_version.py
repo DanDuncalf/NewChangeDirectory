@@ -3,7 +3,7 @@
 
   1. src/control_ipc.h        (NCD_APP_VERSION - single source of truth)
   2. Built binaries           (repo root NewChangeDirectory.exe / NCDService.exe)
-  3. Deployed binaries        (C:\\ProgramData\\NCD\\)
+  3. Deployed binaries        (C:\\Program Files\\NCD\\bin\\)
 
 Exit code 0 when everything matches, 1 on any drift.
 Used by the .githooks/post-commit auto-deploy hook; also runnable manually:
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEPLOY_DIR = Path(r"C:\ProgramData\NCD")
+DEPLOY_DIR = Path(r"C:\Program Files\NCD\bin")
 
 
 def repo_version():

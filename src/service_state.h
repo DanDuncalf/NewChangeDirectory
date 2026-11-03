@@ -129,6 +129,13 @@ bool service_state_add_group(ServiceState *state,
 bool service_state_remove_group(ServiceState *state, const char *name);
 
 /*
+ * service_state_db_change  --  Add (add=true) or remove a directory path in
+ * the in-memory database on behalf of an agent command.
+ * Returns 1 if the database changed, 0 if nothing to do, -1 on error.
+ */
+int service_state_db_change(ServiceState *state, bool add, const char *path);
+
+/*
  * service_state_add_exclusion  --  Add an exclusion pattern
  */
 bool service_state_add_exclusion(ServiceState *state, const char *pattern);

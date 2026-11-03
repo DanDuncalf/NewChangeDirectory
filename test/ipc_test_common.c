@@ -497,6 +497,24 @@ const char *get_encoding_name(int encoding) {
     }
 }
 
+/* Print s as a JSON string literal (quotes included). Shared-memory names on
+ * Windows contain backslashes ("Local\NCD_..."), which must be escaped. */
+static void print_json_string(const char *s) {
+    putchar('"');
+    for (; s && *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') {
+            putchar('\\');
+            putchar(c);
+        } else if (c < 0x20) {
+            printf("\\u%04x", c);
+        } else {
+            putchar(c);
+        }
+    }
+    putchar('"');
+}
+
 void print_json_state_info(const NcdIpcStateInfo *info) {
     printf("{\n");
     printf("  \"protocol_version\": %u,\n", info->protocol_version);
@@ -505,15 +523,20 @@ void print_json_state_info(const NcdIpcStateInfo *info) {
     printf("  \"db_generation\": %llu,\n", (unsigned long long)info->db_generation);
     printf("  \"meta_size\": %u,\n", info->meta_size);
     printf("  \"db_size\": %u,\n", info->db_size);
-    printf("  \"meta_shm_name\": \"%s\",\n", info->meta_name);
-    printf("  \"db_shm_name\": \"%s\"\n", info->db_name);
-    printf("}\n");
+    printf("  \"meta_shm_name\": ");
+    print_json_string(info->meta_name);
+    printf(",\n  \"db_shm_name\": ");
+    print_json_string(info->db_name);
+    printf("\n}\n");
 }
 
 void print_json_version_info(const NcdIpcVersionInfo *info) {
     printf("{\n");
-    printf("  \"app_version\": \"%s\",\n", info->app_version);
-    printf("  \"build_stamp\": \"%s\",\n", info->build_stamp);
+    printf("  \"app_version\": ");
+    print_json_string(info->app_version);
+    printf(",\n  \"build_stamp\": ");
+    print_json_string(info->build_stamp);
+    printf(",\n");
     printf("  \"protocol_version\": %u\n", info->protocol_version);
     printf("}\n");
 }

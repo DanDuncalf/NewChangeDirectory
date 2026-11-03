@@ -364,9 +364,11 @@ int platform_get_available_drives(char *out_drives, int max_drives)
     DWORD mask = GetLogicalDrives();
     int count = 0;
     for (int i = 0; i < 26 && count < max_drives; i++) {
-        if (mask & (1u << i)) {
-            out_drives[count++] = (char)('A' + i);
-        }
+        if (!(mask & (1u << i))) continue;
+        /* Skip unformatted (RAW), empty, CD-ROM and offline drives. */
+        char root[4] = { (char)('A' + i), ':', '\\', '\0' };
+        if (!platform_volume_is_usable(root)) continue;
+        out_drives[count++] = (char)('A' + i);
     }
     return count;
 #else

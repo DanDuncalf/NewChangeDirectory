@@ -102,6 +102,23 @@ static bool service_process_still_running(void) {
 #endif
 }
 
+/* Command that starts the service binary under test. Never resolve it through
+ * PATH: that would silently start a deployed (possibly older) NCDService. */
+static const char *service_start_cmd(void) {
+#if NCD_PLATFORM_WINDOWS
+    DWORD a = GetFileAttributesA("NCDService.exe");
+    if (a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY))
+        return ".\\NCDService.exe start";
+    return "..\\NCDService.exe start";
+#else
+    if (access("./NCDService", X_OK) == 0) return "./NCDService start";
+    if (access("./ncd_service", X_OK) == 0) return "./ncd_service start";
+    if (access("../ncd_service", X_OK) == 0 && access("../NCDService", X_OK) != 0)
+        return "../ncd_service start";
+    return "../NCDService start";
+#endif
+}
+
 static void ensure_service_stopped(void) {
     if (!ipc_service_exists()) {
         wait_for_service_fully_exited(3);
@@ -147,22 +164,13 @@ TEST(ipc_pipe_create_already_exists) {
     
     /* Start service - creates pipe */
     char _buf[256];
-#if NCD_PLATFORM_WINDOWS
-    snprintf(_buf, sizeof(_buf), "NCDService.exe start");
+    snprintf(_buf, sizeof(_buf), "%s", service_start_cmd());
     system(_buf);
-#else
-    snprintf(_buf, sizeof(_buf), "../NCDService start");
-    system(_buf);
-#endif
     platform_sleep_ms(1000);
     
     /* Try to start again - should report already running */
     char output[256] = {0};
-#if NCD_PLATFORM_WINDOWS
-    snprintf(_buf, sizeof(_buf), "NCDService.exe start");
-#else
-    snprintf(_buf, sizeof(_buf), "../NCDService start");
-#endif
+    snprintf(_buf, sizeof(_buf), "%s", service_start_cmd());
     FILE *pipe = popen(_buf, "r");
     if (pipe) {
         fread(output, 1, sizeof(output) - 1, pipe);
@@ -206,7 +214,7 @@ TEST(ipc_pipe_disconnect_mid_transfer) {
     
     /* Start service */
 #if NCD_PLATFORM_WINDOWS
-    system("NCDService.exe start");
+    system(service_start_cmd());
 #else
     system("../NCDService start");
 #endif
@@ -307,7 +315,7 @@ TEST(ipc_message_partial_read_handling) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -329,7 +337,7 @@ TEST(ipc_message_partial_write_handling) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -353,7 +361,7 @@ TEST(ipc_message_exact_buffer_size) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -379,7 +387,7 @@ TEST(ipc_message_oversized_rejection) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -407,7 +415,7 @@ TEST(ipc_message_corrupted_header) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     /* Service should reject messages with invalid headers */
@@ -430,7 +438,7 @@ TEST(ipc_message_unknown_message_type) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -452,7 +460,7 @@ TEST(ipc_message_sequence_number_mismatch) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -478,7 +486,7 @@ TEST(ipc_timeout_exact_boundary) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -500,7 +508,7 @@ TEST(ipc_timeout_zero_immediate_return) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     /* Connection should be quick */
@@ -525,7 +533,7 @@ TEST(ipc_timeout_with_slow_response) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();
@@ -548,7 +556,7 @@ TEST(ipc_timeout_recovery_reconnect) {
     if (!service_executable_exists()) { SKIP_TEST("Service executable not found"); }
     
     /* Start service */
-    system("../NCDService start 2>/dev/null || NCDService.exe start");
+    system(service_start_cmd());
     platform_sleep_ms(1000);
     
     ipc_client_init();

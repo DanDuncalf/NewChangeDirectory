@@ -26,24 +26,39 @@ Pre-built packages for all platforms are available on the [GitHub Releases](http
 ### Windows
 
 1. Download `NCD-<version>-windows-x64.zip` from the latest release
-2. Extract the ZIP to a folder of your choice (e.g. `C:\NCD`)
-3. Run `install.bat` to add NCD to your PATH (or [install manually](#manual-installation))
+2. Extract the ZIP to a temporary folder (e.g. `%TEMP%\NCD`)
+3. Run `install.bat` to install NCD and add it to PATH (or [install manually](#manual-installation))
+
+`install.bat` asks for the install scope:
+
+| Choice | Binaries and wrappers | PATH | Data |
+|--------|-----------------------|------|------|
+| `[1] All users` (default) | `C:\Program Files\NCD\bin` | Machine | `C:\ProgramData\NCD` |
+| `[2] Current user` | `%LOCALAPPDATA%\NCD\bin` | User | `%LOCALAPPDATA%\NCD` |
+
+The all-users install requests Administrator privileges. Binaries and data are kept in separate directories; only the binary directory goes on PATH.
 
 ```batch
-# Extract and install
-C:\NCD> install.bat
+# Extract, then install
+install.bat
 ```
 
-Or install manually:
+### Manual Installation
+
+Copy the binaries and wrappers into one directory, then add that directory
+to the system PATH (`System Properties > Environment Variables`):
+
 ```batch
-set DEST=C:\NCD\bin
-mkdir %DEST%
-copy NewChangeDirectory.exe %DEST%
-copy NCDService.exe %DEST%
-copy ncd.bat %DEST%
-copy ncd_service.bat %DEST%
-:: Add %DEST% to your PATH environment variable
+set DEST=C:\Program Files\NCD\bin
+mkdir "%DEST%"
+copy NewChangeDirectory.exe "%DEST%"
+copy NCDService.exe "%DEST%"
+copy ncd.bat "%DEST%"
+copy ncd_service.bat "%DEST%"
 ```
+
+Keep `ncd.bat` and `NewChangeDirectory.exe` in the same directory: the wrapper
+launches the executable by name. Data stays in `C:\ProgramData\NCD`.
 
 ### Windows ARM64
 
@@ -90,9 +105,21 @@ ncd --help
 | `ncd` / `ncd.bat` | Shell wrapper (needed for `cd` to work from your shell) |
 | `ncd_service` / `ncd_service.bat` | Service launcher script |
 | `install.bat` / `install.sh` | One-command installer (PATH setup, startup, etc.) |
+| `update-path.ps1` | PATH helper used by `install.bat` (Windows) |
 | `completions/` | Tab-completion scripts for Bash, Zsh, PowerShell |
 | `mcp_server/` | Optional MCP server for LLM integration (Claude, etc.) |
 | `README.md` | This file |
+
+### Where NCD Installs
+
+Only the binary directory goes on `PATH`; databases, metadata and the service
+log are always kept outside it.
+
+| Scope | Binaries and wrappers | Data |
+|-------|-----------------------|------|
+| Windows, all users (default) | `C:\Program Files\NCD\bin` | `C:\ProgramData\NCD` |
+| Windows, current user | `%LOCALAPPDATA%\NCD\bin` | `%LOCALAPPDATA%\NCD` |
+| Linux | `/usr/local/bin` (or `install.sh <dir>`) | `/var/lib/ncd` (per-user: `~/.local/share/ncd`) |
 
 ## Building from Source
 
@@ -431,6 +458,11 @@ ncd_service start -init C,D,E
 The `-init` option blocks startup until the scan is complete, preventing clients from attempting to use NCD before the database is ready. If a metadata file already exists, `-init` performs a forced rescan of the specified drives (or all drives) on startup.
 
 ## Database Storage
+
+These directories hold **data only** (databases, metadata, service log). The
+binaries and wrapper scripts live in the install directory listed under
+[Where NCD Installs](#where-ncd-installs) — currently
+`C:\Program Files\NCD\bin` for an all-users Windows install.
 
 ### Per-User Storage (`--user-mode`)
 

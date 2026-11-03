@@ -1,10 +1,13 @@
 ================================================================================
 NCD Test Results Report
 ================================================================================
-Generated: 2026-11-03T06:58:02Z
+Generated: 2026-11-03T22:45:17Z
 Generator: runner.py
 Platform: Windows
 WSL Available: True
+Version (src/control_ipc.h): 1.8
+Windows binary:              NCD v1.8  [built Nov  3 2026 14:23:00]  [Windows x64]
+Linux binary:                NCD v1.8  [built Nov  3 2026 14:24:45]  [Linux x64]
 
 --------------------------------------------------------------------------------
 HOST ENVIRONMENTS
@@ -17,14 +20,14 @@ BUILD INFORMATION
 ================================================================================
 
 [Windows Main Binaries]
-  NCDService.exe                           : 2026-11-03T06:34:16Z
+  NCDService.exe                           : 2026-11-03T22:23:07Z
   NCDService_v13.exe                       : 2026-06-24T16:47:32Z
   NCDService_v17.exe                       : 2026-06-24T16:47:33Z
-  NewChangeDirectory.exe                   : 2026-11-03T06:34:15Z
+  NewChangeDirectory.exe                   : 2026-11-03T22:23:06Z
 
 [Linux Main Binaries]
-  NCDService                               : 2026-11-03T06:36:02Z
-  NewChangeDirectory                       : 2026-11-03T06:36:02Z
+  NCDService                               : 2026-11-03T22:24:58Z
+  NewChangeDirectory                       : 2026-11-03T22:24:58Z
   ncd_service_v13                          : 2026-06-23T15:24:41Z
   ncd_service_v17                          : 2026-06-23T15:24:47Z
 
@@ -34,76 +37,76 @@ UNIT TEST RESULTS - WINDOWS
 
   Pass    Fail    Skip  Name                                 Arch     Mode             Date        Time
 ------  ------  ------  ------------------------------------ -------- -------- ------------  ----------
-    10       0       0  fuzz_database_load.exe               x64      native     2026-11-03    06:35:24
-    10       0       0  fuzz_ipc.exe                         x64      native     2026-11-03    06:35:27
-    58       0       0  test_agent_cli_extended.exe          x64      native     2026-11-03    06:35:34
-    12       0       0  test_agent_complete_mkdir_quit.exe   x64      native     2026-11-03    06:35:36
-    26       0       0  test_agent_integration.exe           x64      native     2026-11-03    06:35:35
-    15       0       0  test_agent_ls_check.exe              x64      native     2026-11-03    06:35:36
-    16       0       0  test_agent_mkdir_extended.exe        x64      native     2026-11-03    06:35:47
-    16       0       0  test_agent_mode.exe                  x64      native     2026-11-03    06:35:42
-     4       0       0  test_agent_mv.exe                    x64      native     2026-11-03    06:35:49
-    14       0       0  test_agent_query_tree.exe            x64      native     2026-11-03    06:35:35
-     7       0       0  test_agent_rmdir.exe                 x64      native     2026-11-03    06:35:48
-     5       0       0  test_agent_verify.exe                x64      native     2026-11-03    06:35:50
-    15       0       0  test_bugs.exe                        x64      native     2026-11-03    06:35:13
-    30       0       0  test_cli_edge_cases.exe              x64      native     2026-11-03    06:35:29
-    40       0       0  test_cli_parse.exe                   x64      native     2026-11-03    06:35:32
-    47       0       0  test_cli_parse_extended.exe          x64      native     2026-11-03    06:35:33
-     7       0       0  test_common.exe                      x64      native     2026-11-03    06:35:14
-    33       0       0  test_common_extended.exe             x64      native     2026-11-03    06:35:34
-    22       0       0  test_config.exe                      x64      native     2026-11-03    06:35:31
-     5       0       0  test_crc64.exe                       x64      native     2026-11-03    06:35:43
-    50       0       0  test_database.exe                    x64      native     2026-11-03    06:35:12
-    50       0       0  test_database_extended.exe           x64      native     2026-11-03    06:35:23
-    13       0       0  test_db_corruption.exe               x64      native     2026-11-03    06:35:13
-     9       0       0  test_drive_load.exe                  x64      native     2026-11-03    06:35:44
-     9       0       0  test_exclusion_index.exe             x64      native     2026-11-03    06:35:45
-    10       0       0  test_framework_contract.exe          x64      native     2026-11-03    06:35:43
-    17       0       0  test_history.exe                     x64      native     2026-11-03    06:35:31
-    13       0       0  test_integration_extended.exe        x64      native     2026-11-03    06:35:34
-    13       0       0  test_ipc.exe                         x64      native     2026-11-03    06:35:32
-    19       0       0  test_ipc_extended.exe                x64      native     2026-11-03    06:35:26
-    11       0       0  test_key_injection.exe               x64      native     2026-11-03    06:35:40
-     6       0       0  test_legacy_service_shutdown.exe     x64      native     2026-11-03    06:35:17
-     6       0       0  test_load_integration.exe            x64      native     2026-11-03    06:35:44
-    40       0       0  test_main.exe                        x64      native     2026-11-03    06:35:28
-    23       0       0  test_matcher.exe                     x64      native     2026-11-03    06:35:12
-    32       0       0  test_matcher_extended.exe            x64      native     2026-11-03    06:35:30
-    10       0       0  test_metadata.exe                    x64      native     2026-11-03    06:35:15
-    30       0       0  test_odd_cases.exe                   x64      native     2026-11-03    06:35:23
-    11       0       0  test_p0_regression.exe               x64      native     2026-11-03    06:35:43
-    13       0       0  test_platform.exe                    x64      native     2026-11-03    06:35:14
-     9       0       0  test_rescan_dedup.exe                x64      native     2026-11-03    06:35:45
-    20       0       0  test_result_edge_cases.exe           x64      native     2026-11-03    06:35:30
-    15       0       0  test_result_output.exe               x64      native     2026-11-03    06:35:32
-    11       0       0  test_scanner.exe                     x64      native     2026-11-03    06:35:15
-    35       0       0  test_scanner_extended.exe            x64      native     2026-11-03    06:35:29
-    10       0       0  test_service_database.exe            x64      native     2026-11-03    06:35:38
-     4       0       0  test_service_empty_db.exe            x64      native     2026-11-03    06:35:38
-     4       0       0  test_service_init_db.exe             x64      native     2026-11-03    06:35:25
-    11       0       0  test_service_integration.exe         x64      native     2026-11-03    06:35:17
-    13       0       0  test_service_ipc.exe                 x64      native     2026-11-03    06:35:39
-    22       0       0  test_service_lazy_load.exe           x64      native     2026-11-03    06:35:16
-    13       0       0  test_service_lifecycle.exe           x64      native     2026-11-03    06:35:16
-     7       0       0  test_service_logging.exe             x64      native     2026-11-03    06:35:39
-     9       0       0  test_service_parity.exe              x64      native     2026-11-03    06:35:39
-     6       0       0  test_service_race_conditions.exe     x64      native     2026-11-03    06:35:25
-    20       0       0  test_service_rescan.exe              x64      native     2026-11-03    06:35:25
-    25       0       0  test_service_stress.exe              x64      native     2026-11-03    06:35:24
-    17       0       0  test_service_version_compat.exe      x64      native     2026-11-03    06:35:17
-    10       0       0  test_shared_state_extended.exe       x64      native     2026-11-03    06:35:40
-    11       0       0  test_shm_platform.exe                x64      native     2026-11-03    06:35:40
-    20       0       0  test_shm_stress.exe                  x64      native     2026-11-03    06:35:26
-    15       0       0  test_strbuilder.exe                  x64      native     2026-11-03    06:35:13
-    41       0       0  test_strbuilder_extended.exe         x64      native     2026-11-03    06:35:33
-    25       0       0  test_stress.exe                      x64      native     2026-11-03    06:35:30
-     8       0       0  test_ui_config.exe                   x64      native     2026-11-03    06:35:37
-    15       0       0  test_ui_exclusions.exe               x64      native     2026-11-03    06:35:28
-    45       0       0  test_ui_extended.exe                 x64      native     2026-11-03    06:35:27
-     9       0       0  test_ui_history.exe                  x64      native     2026-11-03    06:35:37
-     9       0       0  test_ui_navigator.exe                x64      native     2026-11-03    06:35:38
-    10       0       0  test_ui_selector.exe                 x64      native     2026-11-03    06:35:36
+    10       0       0  fuzz_database_load.exe               x64      native     2026-11-03    22:24:17
+    10       0       0  fuzz_ipc.exe                         x64      native     2026-11-03    22:24:20
+    58       0       0  test_agent_cli_extended.exe          x64      native     2026-11-03    22:24:28
+    12       0       0  test_agent_complete_mkdir_quit.exe   x64      native     2026-11-03    22:24:30
+    26       0       0  test_agent_integration.exe           x64      native     2026-11-03    22:24:29
+    15       0       0  test_agent_ls_check.exe              x64      native     2026-11-03    22:24:29
+    16       0       0  test_agent_mkdir_extended.exe        x64      native     2026-11-03    22:24:41
+    16       0       0  test_agent_mode.exe                  x64      native     2026-11-03    22:24:37
+     4       0       0  test_agent_mv.exe                    x64      native     2026-11-03    22:24:44
+    14       0       0  test_agent_query_tree.exe            x64      native     2026-11-03    22:24:29
+     7       0       0  test_agent_rmdir.exe                 x64      native     2026-11-03    22:24:42
+     5       0       0  test_agent_verify.exe                x64      native     2026-11-03    22:24:44
+    15       0       0  test_bugs.exe                        x64      native     2026-11-03    22:24:06
+    30       0       0  test_cli_edge_cases.exe              x64      native     2026-11-03    22:24:22
+    40       0       0  test_cli_parse.exe                   x64      native     2026-11-03    22:24:26
+    47       0       0  test_cli_parse_extended.exe          x64      native     2026-11-03    22:24:27
+     7       0       0  test_common.exe                      x64      native     2026-11-03    22:24:07
+    33       0       0  test_common_extended.exe             x64      native     2026-11-03    22:24:27
+    22       0       0  test_config.exe                      x64      native     2026-11-03    22:24:24
+     5       0       0  test_crc64.exe                       x64      native     2026-11-03    22:24:38
+    50       0       0  test_database.exe                    x64      native     2026-11-03    22:24:05
+    50       0       0  test_database_extended.exe           x64      native     2026-11-03    22:24:16
+    13       0       0  test_db_corruption.exe               x64      native     2026-11-03    22:24:06
+     9       0       0  test_drive_load.exe                  x64      native     2026-11-03    22:24:38
+     9       0       0  test_exclusion_index.exe             x64      native     2026-11-03    22:24:39
+    10       0       0  test_framework_contract.exe          x64      native     2026-11-03    22:24:37
+    17       0       0  test_history.exe                     x64      native     2026-11-03    22:24:25
+    13       0       0  test_integration_extended.exe        x64      native     2026-11-03    22:24:28
+    13       0       0  test_ipc.exe                         x64      native     2026-11-03    22:24:25
+    19       0       0  test_ipc_extended.exe                x64      native     2026-11-03    22:24:19
+    11       0       0  test_key_injection.exe               x64      native     2026-11-03    22:24:35
+     6       0       0  test_legacy_service_shutdown.exe     x64      native     2026-11-03    22:24:11
+     6       0       0  test_load_integration.exe            x64      native     2026-11-03    22:24:38
+    40       0       0  test_main.exe                        x64      native     2026-11-03    22:24:22
+    23       0       0  test_matcher.exe                     x64      native     2026-11-03    22:24:05
+    32       0       0  test_matcher_extended.exe            x64      native     2026-11-03    22:24:23
+    10       0       0  test_metadata.exe                    x64      native     2026-11-03    22:24:08
+    30       0       0  test_odd_cases.exe                   x64      native     2026-11-03    22:24:16
+    11       0       0  test_p0_regression.exe               x64      native     2026-11-03    22:24:37
+    18       0       0  test_platform.exe                    x64      native     2026-11-03    22:24:07
+     9       0       0  test_rescan_dedup.exe                x64      native     2026-11-03    22:24:39
+    20       0       0  test_result_edge_cases.exe           x64      native     2026-11-03    22:24:23
+    15       0       0  test_result_output.exe               x64      native     2026-11-03    22:24:26
+    11       0       0  test_scanner.exe                     x64      native     2026-11-03    22:24:08
+    35       0       0  test_scanner_extended.exe            x64      native     2026-11-03    22:24:23
+    10       0       0  test_service_database.exe            x64      native     2026-11-03    22:24:32
+     4       0       0  test_service_empty_db.exe            x64      native     2026-11-03    22:24:32
+     4       0       0  test_service_init_db.exe             x64      native     2026-11-03    22:24:19
+    11       0       0  test_service_integration.exe         x64      native     2026-11-03    22:24:10
+    13       0       0  test_service_ipc.exe                 x64      native     2026-11-03    22:24:33
+    22       0       0  test_service_lazy_load.exe           x64      native     2026-11-03    22:24:09
+    13       0       0  test_service_lifecycle.exe           x64      native     2026-11-03    22:24:09
+     7       0       0  test_service_logging.exe             x64      native     2026-11-03    22:24:33
+     9       0       0  test_service_parity.exe              x64      native     2026-11-03    22:24:34
+     6       0       0  test_service_race_conditions.exe     x64      native     2026-11-03    22:24:18
+    20       0       0  test_service_rescan.exe              x64      native     2026-11-03    22:24:18
+    25       0       0  test_service_stress.exe              x64      native     2026-11-03    22:24:17
+    17       0       0  test_service_version_compat.exe      x64      native     2026-11-03    22:24:10
+    10       0       0  test_shared_state_extended.exe       x64      native     2026-11-03    22:24:34
+    11       0       0  test_shm_platform.exe                x64      native     2026-11-03    22:24:34
+    20       0       0  test_shm_stress.exe                  x64      native     2026-11-03    22:24:20
+    15       0       0  test_strbuilder.exe                  x64      native     2026-11-03    22:24:06
+    41       0       0  test_strbuilder_extended.exe         x64      native     2026-11-03    22:24:27
+    25       0       0  test_stress.exe                      x64      native     2026-11-03    22:24:24
+     8       0       0  test_ui_config.exe                   x64      native     2026-11-03    22:24:31
+    15       0       0  test_ui_exclusions.exe               x64      native     2026-11-03    22:24:21
+    45       0       0  test_ui_extended.exe                 x64      native     2026-11-03    22:24:21
+     9       0       0  test_ui_history.exe                  x64      native     2026-11-03    22:24:31
+     9       0       0  test_ui_navigator.exe                x64      native     2026-11-03    22:24:31
+    10       0       0  test_ui_selector.exe                 x64      native     2026-11-03    22:24:30
 
 ================================================================================
 UNIT TEST RESULTS - LINUX
@@ -111,112 +114,179 @@ UNIT TEST RESULTS - LINUX
 
   Pass    Fail    Skip  Name                                 Arch     Mode             Date        Time
 ------  ------  ------  ------------------------------------ -------- -------- ------------  ----------
-    10       0       0  fuzz_database_load                   x64      native     2026-11-03    04:23:01
-    10       0       0  fuzz_ipc                             x64      native     2026-11-03    05:08:05
-    58       0       0  test_agent_cli_extended              x64      native     2026-11-03    04:22:14
-    12       0       0  test_agent_complete_mkdir_quit       x64      native     2026-11-03    04:22:22
-    26       0       0  test_agent_integration               x64      native     2026-11-03    04:22:08
-    15       0       0  test_agent_ls_check                  x64      native     2026-11-03    04:22:19
-    16       0       0  test_agent_mkdir_extended            x64      native     2026-11-03    04:23:44
-    16       0       0  test_agent_mode                      x64      native     2026-11-03    04:22:06
-     4       0       0  test_agent_mv                        x64      native     2026-11-03    04:23:50
-    14       0       0  test_agent_query_tree                x64      native     2026-11-03    04:22:16
-     7       0       0  test_agent_rmdir                     x64      native     2026-11-03    04:23:47
-     7       0       0  test_agent_verify                    x64      native     2026-11-03    04:23:52
-    15       0       0  test_bugs                            x64      native     2026-11-03    04:23:10
-    30       0       0  test_cli_edge_cases                  x64      native     2026-11-03    04:23:29
-    40       0       0  test_cli_parse                       x64      native     2026-11-03    04:22:03
-    46       0       0  test_cli_parse_extended              x64      native     2026-11-03    04:22:25
+    10       0       0  fuzz_database_load                   x64      native     2026-11-03    22:27:17
+    10       0       0  fuzz_ipc                             x64      native     2026-11-03    22:27:46
+    58       0       0  test_agent_cli_extended              x64      native     2026-11-03    22:26:22
+    12       0       0  test_agent_complete_mkdir_quit       x64      native     2026-11-03    22:26:31
+    26       0       0  test_agent_integration               x64      native     2026-11-03    22:26:16
+    15       0       0  test_agent_ls_check                  x64      native     2026-11-03    22:26:28
+    16       0       0  test_agent_mkdir_extended            x64      native     2026-11-03    22:28:07
+    16       0       0  test_agent_mode                      x64      native     2026-11-03    22:26:12
+     4       0       0  test_agent_mv                        x64      native     2026-11-03    22:28:13
+    14       0       0  test_agent_query_tree                x64      native     2026-11-03    22:26:25
+     7       0       0  test_agent_rmdir                     x64      native     2026-11-03    22:28:10
+     7       0       0  test_agent_verify                    x64      native     2026-11-03    22:28:16
+    15       0       0  test_bugs                            x64      native     2026-11-03    22:27:27
+    30       0       0  test_cli_edge_cases                  x64      native     2026-11-03    22:27:49
+    40       0       0  test_cli_parse                       x64      native     2026-11-03    22:26:09
+    46       0       0  test_cli_parse_extended              x64      native     2026-11-03    22:26:35
      7       0       0  test_common                          x64      native     2026-06-15    01:44:28
     33       0       0  test_common_extended                 x64      native     2026-06-15    01:44:57
-    22       0       0  test_config                          x64      native     2026-11-02    18:09:07
-     5       0       0  test_crc64                           x64      native     2026-11-02    16:16:55
-    45       0       0  test_database                        x64      native     2026-11-02    18:08:58
-    50       0       0  test_database_extended               x64      native     2026-11-03    04:22:53
-    13       0       0  test_db_corruption                   x64      native     2026-11-03    04:23:07
-     9       0       0  test_drive_load                      x64      native     2026-11-03    05:08:13
-     9       0       0  test_exclusion_index                 x64      native     2026-11-03    04:23:58
-    17       0       0  test_history                         x64      native     2026-11-02    18:09:04
-    13       0       0  test_integration_extended            x64      native     2026-11-03    04:22:30
-    17       0       0  test_ipc                             x64      native     2026-11-03    05:07:26
-    19       0       0  test_ipc_extended                    x64      native     2026-11-03    05:08:02
+    22       0       0  test_config                          x64      native     2026-11-03    22:25:11
+     5       0       0  test_crc64                           x64      native     2026-11-03    16:50:45
+    45       0       0  test_database                        x64      native     2026-11-03    22:25:02
+    50       0       0  test_database_extended               x64      native     2026-11-03    22:27:08
+    13       0       0  test_db_corruption                   x64      native     2026-11-03    22:27:24
+     9       0       0  test_drive_load                      x64      native     2026-11-03    22:28:26
+     9       0       0  test_exclusion_index                 x64      native     2026-11-03    22:28:32
+    17       0       0  test_history                         x64      native     2026-11-03    22:25:07
+    13       0       0  test_integration_extended            x64      native     2026-11-03    22:26:40
+    17       0       0  test_ipc                             x64      native     2026-11-03    21:49:42
+    19       0       0  test_ipc_extended                    x64      native     2026-11-03    22:27:42
     11       0       0  test_key_injection                   x64      native     2026-05-08    22:03:21
-     6       0       0  test_legacy_service_shutdown         x64      native     2026-11-03    05:07:24
-     6       0       0  test_load_integration                x64      native     2026-11-03    05:08:09
-    40       0       0  test_main                            x64      native     2026-11-03    04:22:51
-    23       0       0  test_matcher                         x64      native     2026-11-02    18:09:01
-    32       0       0  test_matcher_extended                x64      native     2026-11-03    04:23:35
-    10       0       0  test_metadata                        x64      native     2026-11-03    04:21:19
-    30       0       0  test_odd_cases                       x64      native     2026-11-03    04:22:56
-    33       0       0  test_platform_extended               x64      native     2026-11-03    04:22:27
-     8       0       0  test_rescan_dedup                    x64      native     2026-11-03    04:23:55
-    20       0       0  test_result_edge_cases               x64      native     2026-11-03    04:23:39
-    15       0       0  test_result_output                   x64      native     2026-11-03    04:22:11
-    11       0       0  test_scanner                         x64      native     2026-11-03    04:21:21
-    35       0       0  test_scanner_extended                x64      native     2026-11-03    04:23:32
-    10       0       0  test_service_database                x64      native     2026-11-03    05:07:05
-     4       0       0  test_service_empty_db                x64      native     2026-11-03    05:07:14
-     4       0       0  test_service_init_db                 x64      native     2026-11-03    05:07:59
-    11       0       0  test_service_integration             x64      native     2026-11-03    05:07:01
-    13       0       0  test_service_ipc                     x64      native     2026-11-03    05:07:09
-    22       0       0  test_service_lazy_load               x64      native     2026-11-03    05:06:50
-    13       0       0  test_service_lifecycle               x64      native     2026-11-03    05:06:57
-     7       0       0  test_service_logging                 x64      native     2026-11-03    05:07:17
-     9       0       0  test_service_parity                  x64      native     2026-11-03    05:06:54
-    20       0       0  test_service_rescan                  x64      native     2026-11-03    05:07:55
-    25       0       0  test_service_stress                  x64      native     2026-11-03    05:07:52
-    17       0       0  test_service_version_compat          x64      native     2026-11-03    05:07:20
-    10       0       0  test_shared_state                    x64      native     2026-11-02    17:00:44
-    10       0       0  test_shared_state_extended           x64      native     2026-11-02    17:00:46
-    11       0       0  test_shm_platform                    x64      native     2026-11-02    17:00:48
-    18       0       0  test_shm_stress                      x64      native     2026-11-02    17:02:09
+     6       0       0  test_legacy_service_shutdown         x64      native     2026-11-03    22:26:06
+     6       0       0  test_load_integration                x64      native     2026-11-03    22:28:21
+    40       0       0  test_main                            x64      native     2026-11-03    22:27:05
+    23       0       0  test_matcher                         x64      native     2026-11-03    22:25:05
+    32       0       0  test_matcher_extended                x64      native     2026-11-03    22:27:56
+    10       0       0  test_metadata                        x64      native     2026-11-03    22:25:16
+    30       0       0  test_odd_cases                       x64      native     2026-11-03    22:27:12
+    17       0       0  test_platform                        x64      native     2026-11-03    22:25:13
+    33       0       0  test_platform_extended               x64      native     2026-11-03    22:26:38
+     8       0       0  test_rescan_dedup                    x64      native     2026-11-03    22:28:29
+    20       0       0  test_result_edge_cases               x64      native     2026-11-03    22:28:00
+    15       0       0  test_result_output                   x64      native     2026-11-03    22:26:19
+    11       0       0  test_scanner                         x64      native     2026-11-03    22:25:19
+    35       0       0  test_scanner_extended                x64      native     2026-11-03    22:27:53
+    10       0       0  test_service_database                x64      native     2026-11-03    22:25:41
+     4       0       0  test_service_empty_db                x64      native     2026-11-03    22:25:52
+     4       0       0  test_service_init_db                 x64      native     2026-11-03    22:27:38
+    11       0       0  test_service_integration             x64      native     2026-11-03    22:25:37
+    13       0       0  test_service_ipc                     x64      native     2026-11-03    22:25:47
+    22       0       0  test_service_lazy_load               x64      native     2026-11-03    22:25:23
+    13       0       0  test_service_lifecycle               x64      native     2026-11-03    22:25:32
+     7       0       0  test_service_logging                 x64      native     2026-11-03    22:25:55
+     9       0       0  test_service_parity                  x64      native     2026-11-03    22:25:28
+    20       0       0  test_service_rescan                  x64      native     2026-11-03    22:27:34
+    25       0       0  test_service_stress                  x64      native     2026-11-03    22:27:30
+    17       0       0  test_service_version_compat          x64      native     2026-11-03    22:26:00
+    10       0       0  test_shared_state                    x64      native     2026-11-03    16:48:27
+    10       0       0  test_shared_state_extended           x64      native     2026-11-03    16:48:30
+    11       0       0  test_shm_platform                    x64      native     2026-11-03    16:48:33
+    18       0       0  test_shm_stress                      x64      native     2026-11-03    16:50:11
     15       0       0  test_strbuilder                      x64      native     2026-06-15    01:44:29
     41       0       0  test_strbuilder_extended             x64      native     2026-06-15    01:44:56
-    25       0       0  test_stress                          x64      native     2026-11-03    04:23:42
-     8       0       0  test_ui_config                       x64      native     2026-11-03    04:22:39
-    15       0       0  test_ui_exclusions                   x64      native     2026-11-03    04:22:48
-    45       0       0  test_ui_extended                     x64      native     2026-11-03    04:22:45
-     9       0       0  test_ui_history                      x64      native     2026-11-03    04:22:36
-     9       0       0  test_ui_navigator                    x64      native     2026-11-03    04:22:42
-    10       0       0  test_ui_selector                     x64      native     2026-11-03    04:22:33
+    25       0       0  test_stress                          x64      native     2026-11-03    22:28:04
+     8       0       0  test_ui_config                       x64      native     2026-11-03    22:26:51
+    15       0       0  test_ui_exclusions                   x64      native     2026-11-03    22:27:02
+    45       0       0  test_ui_extended                     x64      native     2026-11-03    22:26:59
+     9       0       0  test_ui_history                      x64      native     2026-11-03    22:26:48
+     9       0       0  test_ui_navigator                    x64      native     2026-11-03    22:26:55
+    10       0       0  test_ui_selector                     x64      native     2026-11-03    22:26:44
 
 ================================================================================
 INTEGRATION TEST SUITES
 ================================================================================
 
-  Service Tests (Isolated)                           MISSING (script not found)
-  NCD Standalone                                     MISSING (script not found)
-  NCD with Service                                   MISSING (script not found)
-  Windows Feature Tests                              PASS (300/300 passed)
+  Service Tests (Isolated)                           PASS (13/13 passed)
+  NCD Standalone                                     PASS (19/19 passed)
+  NCD with Service                                   PASS (23/23 passed)
+  Windows Feature Tests                              PASS (124/124 passed)
   Windows Wrapper Tests                              PASS (1/1 passed)
   Windows Agent Command Tests                        PASS (30/30 passed)
   Service Race Tester                                PASS (1/1 passed)
   Latency (us):
-    agent_read       n= 180 min=  66563.30 max=2871828.60 avg= 493922.25 p50= 380137.00 p95=1418561.30 p99=1622090.10
-    agent_write      n=  87 min=  77436.10 max=1640836.10 avg= 504968.06 p50= 364348.80 p95=1443317.70 p99=1640836.10
-    ipc_read         n= 152 min=     27.10 max=  32087.80 avg=  20209.17 p50=  15971.50 p95=  31956.70 p99=  32084.00
-    ipc_write        n=  75 min=  14841.40 max=  32204.20 avg=  21052.86 p50=  16009.40 p95=  32081.00 p99=  32204.20
+    agent_read                   n=1614 min=  20929.10 max=  86161.30 avg=  39360.84 p50=  37566.20 p95=  60545.90 p99=  74056.70
+    agent_write                  n= 743 min=  28687.40 max= 112320.30 avg=  44023.80 p50=  41489.00 p95=  62178.40 p99=  76061.90
+    ipc_read                     n=2655 min=     34.50 max=  25848.70 avg=   1242.16 p50=    335.80 p95=   9954.10 p99=  14665.90
+    ipc_write                    n=1619 min=     31.00 max=  32878.70 avg=    985.93 p50=    424.10 p95=   1896.20 p99=  15138.10
+  Agent Latency Benchmark                            PASS (31/31 passed)
+  Latency (us):
+    scan/rescan_tree             n=   1 min=21473143.60 max=21473143.60 avg=21473143.60 p50=21473143.60 p95=21473143.60 p99=21473143.60
+    standalone/version           n=  25 min=   7324.10 max=   9970.40 avg=   8314.10 p50=   8059.00 p95=   9802.30 p99=   9970.40
+    standalone/query_unique      n=  25 min=  28167.90 max=  30944.70 avg=  29288.39 p50=  29225.30 p95=  30513.70 p99=  30944.70
+    standalone/query_multi       n=  25 min=  29044.10 max=  37631.50 avg=  30749.10 p50=  30074.70 p95=  34197.50 p99=  37631.50
+    standalone/query_many_json   n=  25 min=  33418.90 max=  41747.80 avg=  35103.25 p50=  34294.60 p95=  41681.70 p99=  41747.80
+    standalone/query_miss        n=  25 min=  33140.80 max=  47273.70 avg=  34999.92 p50=  34472.00 p95=  36269.00 p99=  47273.70
+    standalone/complete          n=  25 min=  14004.50 max=  16956.40 avg=  14751.75 p50=  14500.60 p95=  16408.80 p99=  16956.40
+    standalone/check_stats       n=  25 min=  11502.10 max=  16612.30 avg=  12842.22 p50=  12715.70 p95=  14086.70 p99=  16612.30
+    standalone/check_db_age      n=  25 min=  11577.50 max=  13088.20 avg=  12241.17 p50=  12285.90 p95=  12921.10 p99=  13088.20
+    standalone/check_service     n=  25 min=   7200.30 max=   8653.10 avg=   7926.22 p50=   7859.70 p95=   8643.10 p99=   8653.10
+    standalone/tree              n=  25 min= 163997.80 max= 197859.00 avg= 173883.52 p50= 171861.60 p95= 194161.20 p99= 197859.00
+    standalone/ls                n=  25 min=   8278.70 max=   9291.40 avg=   8821.52 p50=   8821.90 p95=   9240.50 p99=   9291.40
+    standalone/search            n=  25 min=  40948.00 max=  50592.10 avg=  44781.67 p50=  43732.80 p95=  49902.30 p99=  50592.10
+    standalone/mkdir             n=  25 min= 172244.70 max= 191608.80 avg= 180206.65 p50= 179000.10 p95= 191266.40 p99= 191608.80
+    standalone/mv                n=  25 min= 180905.90 max= 213842.50 avg= 191987.17 p50= 190114.00 p95= 212979.10 p99= 213842.50
+    standalone/rmdir             n=  25 min= 179829.70 max= 198809.00 avg= 188832.34 p50= 187874.10 p95= 194533.50 p99= 198809.00
+    service/version              n=  25 min=   6980.70 max=   9417.20 avg=   7969.42 p50=   7906.20 p95=   9375.20 p99=   9417.20
+    service/query_unique         n=  25 min=  27222.30 max=  39937.30 avg=  28942.52 p50=  28437.90 p95=  31282.40 p99=  39937.30
+    service/query_multi          n=  25 min=  28082.70 max=  41909.90 avg=  29765.24 p50=  29243.70 p95=  31340.40 p99=  41909.90
+    service/query_many_json      n=  25 min=  33288.30 max=  43362.00 avg=  35536.28 p50=  34729.50 p95=  42575.20 p99=  43362.00
+    service/query_miss           n=  25 min=  32635.70 max=  38288.30 avg=  34372.26 p50=  34132.50 p95=  36715.70 p99=  38288.30
+    service/complete             n=  25 min=  12244.10 max=  14205.00 avg=  13247.93 p50=  13310.20 p95=  14171.80 p99=  14205.00
+    service/check_stats          n=  25 min=  10513.80 max=  16134.20 avg=  11828.83 p50=  11597.90 p95=  14108.20 p99=  16134.20
+    service/check_db_age         n=  25 min=  10528.30 max=  11902.00 avg=  11292.62 p50=  11381.30 p95=  11869.20 p99=  11902.00
+    service/check_service        n=  25 min=   7475.30 max=   9162.30 avg=   8183.47 p50=   8164.80 p95=   8987.00 p99=   9162.30
+    service/tree                 n=  25 min= 136833.90 max= 146466.60 avg= 141462.92 p50= 141396.20 p95= 144931.20 p99= 146466.60
+    service/ls                   n=  25 min=   7772.20 max=  18281.10 avg=   8914.78 p50=   8431.60 p95=  10141.60 p99=  18281.10
+    service/search               n=  25 min=  28741.40 max=  36130.40 avg=  30439.82 p50=  30121.70 p95=  34236.10 p99=  36130.40
+    service/mkdir                n=  25 min=  13576.10 max=  16379.30 avg=  14860.20 p50=  14771.20 p95=  16265.30 p99=  16379.30
+    service/mv                   n=  25 min=  26938.00 max=  33114.50 avg=  30096.18 p50=  30397.50 p95=  31602.80 p99=  33114.50
+    service/rmdir                n=  25 min=  20036.90 max=  26559.90 avg=  23072.33 p50=  23118.00 p95=  25735.70 p99=  26559.90
   WSL Service Tests                                  PASS (10/10 passed)
-  WSL NCD Standalone                                 PASS (15/15 passed)
-  WSL NCD with Service                               PASS (15/15 passed)
+  WSL NCD Standalone                                 PASS (21/21 passed)
+  WSL NCD with Service                               PASS (21/21 passed)
   WSL Feature Tests                                  PASS (118/118 passed)
   WSL Agent Command Tests                            PASS (30/30 passed)
   WSL Service Race Tester                            PASS (1/1 passed)
   Latency (us):
-    agent_read       n=3526 min=   4426.34 max= 105772.44 avg=  18889.66 p50=  10124.28 p95=  57683.70 p99=  72942.59
-    agent_write      n= 824 min=  16930.95 max= 132194.04 avg=  45950.79 p50=  38479.43 p95=  94411.19 p99= 107038.53
-    ipc_read         n=4402 min=     33.62 max=  94546.20 avg=   4371.88 p50=    159.16 p95=  28738.40 p99=  49057.18
-    ipc_write        n=1925 min=     32.30 max=  68856.39 avg=   3776.27 p50=    321.49 p95=  28533.67 p99=  46164.16
+    agent_read                   n=1895 min=   5447.44 max= 182299.33 avg=  40876.35 p50=  13316.82 p95= 118571.97 p99= 142994.11
+    agent_write                  n= 682 min=   7076.01 max= 188414.69 avg=  54859.08 p50=  28981.90 p95= 122695.38 p99= 143241.06
+    ipc_read                     n=2495 min=     24.16 max= 123686.24 avg=   9386.46 p50=    277.27 p95=  81957.32 p99=  98860.85
+    ipc_write                    n=1149 min=     49.23 max= 124527.42 avg=   6670.85 p50=    351.82 p95=  77286.46 p99=  98683.34
+  WSL Agent Latency Benchmark                        PASS (31/31 passed)
+  Latency (us):
+    scan/rescan_tree             n=   1 min=54022082.03 max=54022082.03 avg=54022082.03 p50=54022082.03 p95=54022082.03 p99=54022082.03
+    standalone/version           n=  25 min=   6940.59 max=  10032.93 avg=   7930.64 p50=   7779.45 p95=   9163.00 p99=  10032.93
+    standalone/query_unique      n=  25 min=  37713.67 max=  49269.93 avg=  40683.64 p50=  39774.85 p95=  45932.11 p99=  49269.93
+    standalone/query_multi       n=  25 min=  37549.36 max=  48943.75 avg=  40857.54 p50=  40546.30 p95=  45731.19 p99=  48943.75
+    standalone/query_many_json   n=  25 min=  37682.40 max=  45582.80 avg=  40808.08 p50=  40598.26 p95=  43500.46 p99=  45582.80
+    standalone/query_miss        n=  25 min=  40517.75 max=  49179.02 avg=  44250.05 p50=  44439.96 p95=  46940.61 p99=  49179.02
+    standalone/complete          n=  25 min=  13617.36 max=  32167.67 avg=  20057.89 p50=  20340.09 p95=  26414.49 p99=  32167.67
+    standalone/check_stats       n=  25 min=  11152.00 max=  13400.81 avg=  12365.54 p50=  12525.16 p95=  13151.59 p99=  13400.81
+    standalone/check_db_age      n=  25 min=  11282.89 max=  15456.29 avg=  12897.50 p50=  12741.05 p95=  14510.23 p99=  15456.29
+    standalone/check_service     n=  25 min=   7002.85 max=   9604.24 avg=   8146.30 p50=   8060.13 p95=   9151.48 p99=   9604.24
+    standalone/tree              n=  25 min=  80979.88 max=  95769.76 avg=  85150.26 p50=  83019.53 p95=  92254.99 p99=  95769.76
+    standalone/ls                n=  25 min=   7949.52 max=  10812.68 avg=   8995.94 p50=   8910.22 p95=  10444.69 p99=  10812.68
+    standalone/search            n=  25 min=  44865.95 max=  53175.59 avg=  48514.61 p50=  47630.14 p95=  52884.44 p99=  53175.59
+    standalone/mkdir             n=  25 min=  86047.17 max=  97820.48 avg=  91194.18 p50=  90272.38 p95=  97056.95 p99=  97820.48
+    standalone/mv                n=  25 min= 115285.96 max= 160212.72 avg= 128469.92 p50= 126986.23 p95= 145721.26 p99= 160212.72
+    standalone/rmdir             n=  25 min= 117980.15 max= 150081.39 avg= 129733.89 p50= 127087.06 p95= 149957.51 p99= 150081.39
+    service/version              n=  25 min=   6737.83 max=   8714.48 avg=   7723.32 p50=   7581.52 p95=   8646.99 p99=   8714.48
+    service/query_unique         n=  25 min=  35357.79 max=  45692.55 avg=  38784.67 p50=  38621.87 p95=  41328.51 p99=  45692.55
+    service/query_multi          n=  25 min=  37413.74 max=  42929.85 avg=  39569.15 p50=  39419.63 p95=  41806.55 p99=  42929.85
+    service/query_many_json      n=  25 min=  36945.17 max=  41837.58 avg=  39418.06 p50=  39506.52 p95=  41345.85 p99=  41837.58
+    service/query_miss           n=  25 min=  39291.50 max=  47689.72 avg=  42400.51 p50=  42499.90 p95=  45163.61 p99=  47689.72
+    service/complete             n=  25 min=  11113.74 max=  14991.11 avg=  12994.86 p50=  12848.64 p95=  14653.55 p99=  14991.11
+    service/check_stats          n=  25 min=   9708.52 max=  12172.67 avg=  10907.54 p50=  10877.58 p95=  11998.44 p99=  12172.67
+    service/check_db_age         n=  25 min=  10111.58 max=  12534.57 avg=  10895.64 p50=  10677.32 p95=  11725.15 p99=  12534.57
+    service/check_service        n=  25 min=   7392.09 max=   8910.65 avg=   8143.59 p50=   8277.25 p95=   8686.24 p99=   8910.65
+    service/tree                 n=  25 min=  68157.23 max=  83992.07 avg=  72551.62 p50=  71491.51 p95=  78263.64 p99=  83992.07
+    service/ls                   n=  25 min=   7506.65 max=   9964.22 avg=   8749.85 p50=   8790.36 p95=   9424.33 p99=   9964.22
+    service/search               n=  25 min=  37143.80 max=  41714.72 avg=  39309.46 p50=  38973.24 p95=  41602.69 p99=  41714.72
+    service/mkdir                n=  25 min=  13854.66 max=  21305.39 avg=  15648.31 p50=  15333.00 p95=  18485.25 p99=  21305.39
+    service/mv                   n=  25 min=  25155.32 max=  32434.55 avg=  28405.01 p50=  28375.80 p95=  30996.24 p99=  32434.55
+    service/rmdir                n=  25 min=  19241.67 max=  29995.58 avg=  21395.16 p50=  21028.07 p95=  23357.18 p99=  29995.58
 
 ================================================================================
 GRAND TOTALS
 ================================================================================
 
-Windows Unit: 1246 run, 1246 passed,    0 failed,    0 skipped
-Windows Int:   332 run,  332 passed,    0 failed,    0 skipped
-Linux Unit:   1246 run, 1246 passed,    0 failed,    0 skipped
-Linux Int:     189 run,  189 passed,    0 failed,    0 skipped
-Overall:      3013 run, 3013 passed,    0 failed,    0 skipped
+Windows Unit: 1251 run, 1251 passed,    0 failed,    0 skipped
+Windows Int:   242 run,  242 passed,    0 failed,    0 skipped
+Linux Unit:   1263 run, 1263 passed,    0 failed,    0 skipped
+Linux Int:     232 run,  232 passed,    0 failed,    0 skipped
+Overall:      2988 run, 2988 passed,    0 failed,    0 skipped
 
 OVERALL STATUS: PASS
 REASON: All tests passed with zero failures

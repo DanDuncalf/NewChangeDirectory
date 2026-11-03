@@ -222,24 +222,15 @@ if exist "%VHD_PATH%" (
     del "%VHD_PATH%" 2>nul
 )
 
-:: --- Create VHD via diskpart ---
+:: --- Create VHD ---
+:: New-NcdTestVhd.ps1 formats the partition before assigning the letter, so
+:: Windows never shows a "format disk" prompt for a raw volume.
 echo   Creating %VHD_SIZE% MB test VHD on drive %TESTDRIVE%:...
-(
-echo create vdisk file="%VHD_PATH%" maximum=%VHD_SIZE% type=expandable
-echo select vdisk file="%VHD_PATH%"
-echo attach vdisk
-echo create partition primary
-echo format fs=ntfs quick label="NCDTest"
-echo assign letter=%TESTDRIVE%
-) > "%TEMP%\ncd_diskpart_create.txt"
-
-diskpart /s "%TEMP%\ncd_diskpart_create.txt" >nul 2>&1
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%SCRIPT_DIR%New-NcdTestVhd.ps1" -Path "%VHD_PATH%" -Letter %TESTDRIVE% -SizeMB %VHD_SIZE% -Label NCDTest >nul 2>&1
 if errorlevel 1 (
-    echo WARNING: diskpart failed, using temp directory fallback
-    del "%TEMP%\ncd_diskpart_create.txt" 2>nul
+    echo WARNING: VHD creation failed, using temp directory fallback
     goto :use_tempdir
 )
-del "%TEMP%\ncd_diskpart_create.txt" 2>nul
 
 :: Verify drive is mounted
 if not exist %TESTDRIVE%:\ (
@@ -849,28 +840,34 @@ if exist "%RESULT_FILE%" (
 
 echo --- Category T: Batch Wrapper ---
 
+:: A stray service would answer the wrapper's search from its own database
+:: (which does not contain the test tree), so the directory would not change.
+taskkill /F /IM NCDService.exe >nul 2>&1
+
 set "NCD_BAT=%PROJECT_ROOT%\ncd.bat"
+:: ncd.bat runs NewChangeDirectory.exe by name. Put the build under test first
+:: on PATH, or the wrapper silently runs a deployed copy (or none at all).
+set "PATH=%PROJECT_ROOT%;%PATH%"
 if exist "%NCD_BAT%" (
     :: Copy test DB to default per-drive location so wrapper script can find it
     copy "%DB_OVERRIDE%" "%DB_DIR%\ncd_%TESTDRIVE%.database" >nul 2>&1
     :: T1: Wrapper changes dir (use unique search to avoid TUI hang)
-    set "T1_BEFORE=%CD%"
+    set "T1_BEFORE=!CD!"
     call "%NCD_BAT%" Reports >nul 2>&1
-    if not "!CD!"=="!T1_BEFORE!" (
+    if /i "!CD:~-24!"=="\scott\Documents\Reports" (
         call :pass T1 "Wrapper changes dir"
     ) else (
-        :: May not change if no match found in isolated DB
-        call :skip T1 "Wrapper changes dir" "dir may not have changed in test environment"
+        call :fail T1 "Wrapper changes dir" "still in !CD! (was !T1_BEFORE!)"
     )
     cd /d "%PROJECT_ROOT%"
 
     :: T2: Wrapper cleans vars
     call "%NCD_BAT%" Reports >nul 2>&1
+    :: ncd.bat always clears NCD_STATUS/NCD_PATH/... in :ncd_cleanup
     if not defined NCD_STATUS (
         call :pass T2 "Wrapper cleans vars"
     ) else (
-        :: Vars may or may not be cleaned depending on implementation
-        call :skip T2 "Wrapper cleans vars" "cleanup behavior varies"
+        call :fail T2 "Wrapper cleans vars" "NCD_STATUS still set to !NCD_STATUS!"
     )
     cd /d "%PROJECT_ROOT%"
 
@@ -1021,10 +1018,9 @@ del "%TEMP%\v8_out.txt" 2>nul
 
 :: V9: Tree default format doesn't have path separators (just names)
 "%NCD%" %CONF_OVERRIDE% /d %DB_OVERRIDE% /agent tree "%TESTROOT%\WinSys" --depth 2 > "%TEMP%\v9_out.txt" 2>&1
-set /p V9_FIRST= < "%TEMP%\v9_out.txt"
+set "V9_FIRST="
+for /f "usebackq delims=" %%L in ("%TEMP%\v9_out.txt") do if not defined V9_FIRST set "V9_FIRST=%%L"
 set "V9_FIRST=!V9_FIRST: =!"
-set "V9_FIRST=!V9_FIRST:
-=!"
 if "!V9_FIRST!"=="System32" (call :pass V9 "Agent tree default shows only names") else (call :fail V9 "Agent tree default shows only names")
 del "%TEMP%\v9_out.txt" 2>nul
 

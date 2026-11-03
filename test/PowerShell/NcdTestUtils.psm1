@@ -458,23 +458,16 @@ function New-NcdTestVhd {
     
     Write-Host "Creating VHD at $vhdPath on drive $driveLetter`:" -ForegroundColor Cyan
     
-    # Create diskpart script
-    $diskpartScript = @"
-create vdisk file="$vhdPath" maximum=$SizeMB type=expandable
-select vdisk file="$vhdPath"
-attach vdisk
-create partition primary
-format fs=ntfs quick label="$Label"
-assign letter=$driveLetter
-"@
-    
-    $scriptPath = [System.IO.Path]::GetTempFileName()
-    $diskpartScript | Out-File -FilePath $scriptPath -Encoding ASCII
-    
+    # Formats before assigning the letter, so Windows never shows a
+    # "format disk" prompt for a raw volume (see test\Win\New-NcdTestVhd.ps1).
+    $vhdScript = Join-Path $PSScriptRoot "..\Win\New-NcdTestVhd.ps1"
+    $scriptPath = $null
+
     try {
-        $result = & diskpart /s $scriptPath 2>&1
+        $result = & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $vhdScript `
+            -Path $vhdPath -Letter $driveLetter -SizeMB $SizeMB -Label $Label 2>&1
         if ($LASTEXITCODE -ne 0) {
-            throw "DiskPart failed: $result"
+            throw "VHD creation failed: $result"
         }
         
         # Register cleanup for this VHD
@@ -491,7 +484,7 @@ assign letter=$driveLetter
         }
     }
     catch {
-        Remove-Item $scriptPath -ErrorAction SilentlyContinue
+        # (nothing to clean up: the helper script removes a half-created VHD)
         throw
     }
 }

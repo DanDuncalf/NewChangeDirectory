@@ -31,7 +31,7 @@ extern "C" {
 
 /* Application version - must match between client and service */
 #ifndef NCD_APP_VERSION
-#define NCD_APP_VERSION     "1.8"
+#define NCD_APP_VERSION     "1.9"
 #endif
 
 /* Build stamp — single source for all modules */
@@ -132,6 +132,11 @@ typedef struct {
 #define NCD_META_UPDATE_DIR_HISTORY_REMOVE 8  /* Remove by index */
 #define NCD_META_UPDATE_DIR_HISTORY_SWAP   9  /* Swap first two entries (ping-pong) */
 #define NCD_META_UPDATE_ENCODING_SWITCH 10 /* Encoding mode switch */
+/* Database changes from agent commands (data: full path, NUL-terminated).
+ * Applied to the service's in-memory database and republished; an older
+ * service rejects them and the client falls back to its disk database. */
+#define NCD_META_UPDATE_DB_ADD_PATH     11 /* Add a directory (and missing ancestors) */
+#define NCD_META_UPDATE_DB_REMOVE_PATH  12 /* Remove a directory and its subtree */
 
 /*
  * NcdSubmitMetadataPayload  --  SUBMIT_METADATA request

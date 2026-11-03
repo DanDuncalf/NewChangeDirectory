@@ -199,6 +199,21 @@ int db_add_dir(DriveData *drv,
 bool db_remove_path(NcdDatabase *db, const char *path);
 
 /*
+ * Add one directory path (and any missing ancestors) to the database,
+ * creating the drive entry if needed.  Separators are normalized and a
+ * trailing separator is ignored.
+ * Returns 1 if added, 0 if already present, -1 on error.
+ */
+int db_add_path(NcdDatabase *db, const char *path);
+
+/*
+ * Drive a full path belongs to in the database: 'A'..'Z' for Windows drive
+ * paths and WSL /mnt/<x> paths, 0 for native Linux paths (and for Windows
+ * paths without a drive letter).
+ */
+char db_path_drive_letter(const char *path);
+
+/*
  * Reconstruct the full absolute path for a directory entry.
  * e.g. "C:\Users\Scott\Downloads"
  * Writes into buf (size NCD_MAX_PATH).  Returns buf.
@@ -450,6 +465,12 @@ bool db_exclusion_remove(NcdMetadata *meta, const char *pattern);
  * Returns true if the directory should be excluded.
  */
 bool db_exclusion_check(NcdMetadata *meta, char drive_letter, const char *dir_path);
+
+/*
+ * True if a full directory path, or any of its ancestors, matches an
+ * exclusion pattern (the same rule db_filter_excluded applies).
+ */
+bool db_path_is_excluded(NcdMetadata *meta, const char *path);
 
 /*
  * Compiled exclusion index -- the one matcher used by the scanner, the load

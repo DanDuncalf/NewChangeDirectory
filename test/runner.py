@@ -70,6 +70,69 @@ from ncd_testlib.platform_info import (
 RESULTS_FILE = PROJECT_ROOT / "test.results"
 
 
+def get_source_version():
+    """NCD_APP_VERSION from src/control_ipc.h (the single source of truth)."""
+    import re
+    try:
+        text = (PROJECT_ROOT / "src" / "control_ipc.h").read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'#define\s+NCD_APP_VERSION\s+"([^"]+)"', text)
+        return m.group(1) if m else "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _first_line(text):
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def get_tested_versions():
+    """Versions reported by the binaries under test (`-v` output)."""
+    versions = {"source": get_source_version()}
+    env = dict(os.environ, NCD_TEST_MODE="1")
+    if platform.system() == "Windows":
+        exe = PROJECT_ROOT / "NewChangeDirectory.exe"
+        if exe.exists():
+            try:
+                r = subprocess.run([str(exe), "-v"], capture_output=True, text=True,
+                                   timeout=30, env=env, stdin=subprocess.DEVNULL)
+                versions["windows"] = _first_line(r.stdout + r.stderr) or "no output"
+            except Exception as e:  # noqa: BLE001
+                versions["windows"] = f"error: {e}"
+        else:
+            versions["windows"] = "not built"
+        if is_wsl_available():
+            try:
+                from ncd_testlib.build import wsl_path
+                cmd = (f'cd "{wsl_path(PROJECT_ROOT)}" && NCD_TEST_MODE=1 '
+                       f'./NewChangeDirectory -v 2>&1 || echo "not built"')
+                r = subprocess.run(["wsl", "bash", "-c", cmd], capture_output=True, text=True,
+                                   timeout=60, stdin=subprocess.DEVNULL)
+                versions["linux"] = _first_line(r.stdout + r.stderr) or "no output"
+            except Exception as e:  # noqa: BLE001
+                versions["linux"] = f"error: {e}"
+    else:
+        exe = PROJECT_ROOT / "NewChangeDirectory"
+        try:
+            r = subprocess.run([str(exe), "-v"], capture_output=True, text=True,
+                               timeout=30, env=env, stdin=subprocess.DEVNULL)
+            versions["linux"] = _first_line(r.stdout + r.stderr) or "no output"
+        except Exception as e:  # noqa: BLE001
+            versions["linux"] = f"error: {e}"
+    return versions
+
+
+def format_version_lines(versions):
+    lines = [f"Version (src/control_ipc.h): {versions.get('source', 'unknown')}"]
+    if "windows" in versions:
+        lines.append(f"Windows binary:              {versions['windows']}")
+    if "linux" in versions:
+        lines.append(f"Linux binary:                {versions['linux']}")
+    return lines
+
+
 def is_shell_elevated():
     """Return True when the current shell has the privileges required by the suite."""
     if platform.system() == "Windows":
@@ -170,6 +233,8 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
     lines.append(f"Generator: runner.py")
     lines.append(f"Platform: {platform.system()}")
     lines.append(f"WSL Available: {build_info.get('wsl_available', 'N/A')}")
+    for vline in format_version_lines(build_info.get('versions') or get_tested_versions()):
+        lines.append(vline)
     lines.append("")
     lines.append("-" * 80)
     lines.append("HOST ENVIRONMENTS")
@@ -287,7 +352,7 @@ def write_results_file(build_info, windows_results, linux_results, integration_r
                 for cat, stats in summary["latency_by_category"].items():
                     if stats.get("samples", 0) > 0:
                         lines.append(
-                            f"    {cat:16s} n={stats['samples']:4d} "
+                            f"    {cat:28s} n={stats['samples']:4d} "
                             f"min={stats['min_us']:10.2f} max={stats['max_us']:10.2f} "
                             f"avg={stats['avg_us']:10.2f} p50={stats['p50_us']:10.2f} "
                             f"p95={stats['p95_us']:10.2f} p99={stats['p99_us']:10.2f}"
@@ -484,9 +549,11 @@ def run_unit_tests(discovered, windows_only=False, wsl_only=False, quick=False):
     return windows_results, linux_results
 
 
-def run_integration_tests(suite, no_service=False, quick=False):
+def run_integration_tests(suite, no_service=False, quick=False,
+                          windows_only=False, wsl_only=False):
     """Run integration tests via the unified integration test runner."""
-    return run_all_integration_suites(suite_filter=suite, no_service=no_service, quick=quick)
+    return run_all_integration_suites(suite_filter=suite, no_service=no_service, quick=quick,
+                                      windows_only=windows_only, wsl_only=wsl_only)
 
 
 def main():
@@ -522,6 +589,7 @@ def main():
     print("NCD Test Runner")
     print("=" * 80)
     print()
+    print(f"NCD Version:    {get_source_version()}  (src/control_ipc.h)")
     print(f"Test Suite:     {args.suite}")
     print(f"Skip Build:     {args.skip_build}")
     print(f"Windows Only:   {args.windows_only}")
@@ -561,7 +629,12 @@ def main():
         "linux_main": {},
         "windows_tests": {},
         "linux_tests": {},
+        "versions": get_tested_versions(),
     }
+    print("Versions under test:")
+    for vline in format_version_lines(build_info["versions"]):
+        print(f"  {vline}")
+    print()
     for exe in WINDOWS_MAIN_BINARIES:
         p = PROJECT_ROOT / exe
         build_info["windows_main"][exe] = get_mtime(p)
@@ -608,6 +681,8 @@ def main():
                     args.suite,
                     no_service=args.no_service,
                     quick=args.quick,
+                    windows_only=args.windows_only,
+                    wsl_only=args.wsl_only,
                 )
 
             write_results_file(build_info, windows_results, linux_results, integration_status)

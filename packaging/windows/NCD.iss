@@ -15,7 +15,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\NCD
+DefaultDirName={code:GetDefaultDir}
 DisableDirPage=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -26,6 +26,17 @@ SetupIconFile=..
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+
+[Code]
+function GetDefaultDir(Param: String): String;
+begin
+  { Binaries live in <base>\bin. All users -> C:\Program Files\NCD\bin;
+    per-user -> %LOCALAPPDATA%\NCD\bin (matches install.bat). }
+  if IsAdminInstallMode then
+    Result := ExpandConstant('{commonpf}\NCD')
+  else
+    Result := ExpandConstant('{localappdata}\NCD');
+end;
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

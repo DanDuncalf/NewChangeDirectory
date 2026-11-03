@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from .build import is_wsl_available, run_cmd, wsl_path
@@ -17,22 +18,24 @@ TEST_DIR = PROJECT_ROOT / "test"
 # ---------------------------------------------------------------------------
 
 WINDOWS_SUITES = [
-    ("Service Tests (Isolated)", TEST_DIR / "Test-Service-Windows.bat", 60),
-    ("NCD Standalone", TEST_DIR / "Test-NCD-Windows-Standalone.bat", 60),
-    ("NCD with Service", TEST_DIR / "Test-NCD-Windows-With-Service.bat", 60),
+    ("Service Tests (Isolated)", TEST_DIR / "Win" / "test_service_windows.ps1", 180),
+    ("NCD Standalone", TEST_DIR / "Win" / "test_ncd_windows_standalone.ps1", 180),
+    ("NCD with Service", TEST_DIR / "Win" / "test_ncd_windows_with_service.ps1", 240),
     ("Windows Feature Tests", TEST_DIR / "Win" / "test_features.bat", 1800),
     ("Windows Wrapper Tests", TEST_DIR / "Win" / "test_wrapper.bat", 30),
     ("Windows Agent Command Tests", TEST_DIR / "Win" / "test_agent_commands.bat", 120),
     ("Service Race Tester", TEST_DIR / "Win" / "test_service_race.bat", 60),
+    ("Agent Latency Benchmark", TEST_DIR / "bench_agent_latency.py", 1200),
 ]
 
 WSL_SUITES = [
     ("WSL Service Tests", TEST_DIR / "test_service_wsl.sh", 60),
     ("WSL NCD Standalone", TEST_DIR / "test_ncd_wsl_standalone.sh", 60),
-    ("WSL NCD with Service", TEST_DIR / "test_ncd_wsl_with_service.sh", 90),
+    ("WSL NCD with Service", TEST_DIR / "test_ncd_wsl_with_service.sh", 150),
     ("WSL Feature Tests", TEST_DIR / "Wsl" / "test_features.sh", 120),
     ("WSL Agent Command Tests", TEST_DIR / "Wsl" / "test_agent_commands.sh", 180),
     ("WSL Service Race Tester", TEST_DIR / "Wsl" / "test_service_race.sh", 180),
+    ("WSL Agent Latency Benchmark", TEST_DIR / "bench_agent_latency.py", 1200),
 ]
 
 
@@ -139,16 +142,21 @@ def run_windows_suite(script_path: Path, timeout: int = 60):
         return {
             "name": script_path.name,
             "passed": 0,
-            "failed": 0,
+            "failed": 1,  # a listed suite whose script is gone is a failure
             "skipped": 0,
-            "total": 0,
+            "total": 1,
             "status": "MISSING",
             "status_str": _format_status(0, 0, 0, 0, "MISSING"),
         }
 
-    rc, out, err = run_cmd(
-        ["cmd", "/c", str(script_path)], cwd=PROJECT_ROOT, timeout=timeout
-    )
+    if script_path.suffix.lower() == ".py":
+        cmd = [sys.executable, "-u", str(script_path)]
+    elif script_path.suffix.lower() == ".ps1":
+        cmd = ["powershell", "-NoProfile", "-NonInteractive",
+               "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+    else:
+        cmd = ["cmd", "/c", str(script_path)]
+    rc, out, err = run_cmd(cmd, cwd=PROJECT_ROOT, timeout=timeout)
     output = out + err
     print(output)
 
@@ -199,9 +207,9 @@ def run_wsl_suite(script_path: Path, timeout: int = 60):
         return {
             "name": script_path.name,
             "passed": 0,
-            "failed": 0,
+            "failed": 1,  # a listed suite whose script is gone is a failure
             "skipped": 0,
-            "total": 0,
+            "total": 1,
             "status": "MISSING",
             "status_str": _format_status(0, 0, 0, 0, "MISSING"),
         }
@@ -243,7 +251,8 @@ def run_wsl_suite(script_path: Path, timeout: int = 60):
     if ncd_ui_keys_strict:
         env_setup += f"export NCD_UI_KEYS_STRICT='{ncd_ui_keys_strict}'; "
 
-    cmd = f'{env_setup}cd "{wsl_proj}" && bash "{wsl_script}"'
+    interpreter = "python3 -u" if script_path.suffix.lower() == ".py" else "bash"
+    cmd = f'{env_setup}cd "{wsl_proj}" && {interpreter} "{wsl_script}"'
     rc, out, err = run_cmd(["wsl", "bash", "-c", cmd], timeout=timeout, stdin=subprocess.DEVNULL)
     output = out + err
     print(output)
@@ -284,7 +293,8 @@ def run_wsl_suite(script_path: Path, timeout: int = 60):
 # Main entry point used by runner.py
 # ---------------------------------------------------------------------------
 
-def run_all_integration_suites(suite_filter=None, no_service=False, quick=False):
+def run_all_integration_suites(suite_filter=None, no_service=False, quick=False,
+                               windows_only=False, wsl_only=False):
     """
     Run integration tests and return a list of result dicts.
 
@@ -296,10 +306,12 @@ def run_all_integration_suites(suite_filter=None, no_service=False, quick=False)
 
     run_windows = system == "Windows" and suite_filter not in ("wsl",)
     run_wsl = (system == "Windows" and is_wsl_available()) or system != "Windows"
-    if suite_filter == "windows":
+    # The service/ncd/ncd-service filters select by suite name and apply to
+    # both platforms; --windows-only / --wsl-only pick the platform.
+    if suite_filter == "windows" or windows_only:
         run_wsl = False
-    if suite_filter in ("service", "ncd", "ncd-service"):
-        run_wsl = False
+    if wsl_only:
+        run_windows = False
 
     windows_to_run = list(WINDOWS_SUITES)
     wsl_to_run = list(WSL_SUITES)

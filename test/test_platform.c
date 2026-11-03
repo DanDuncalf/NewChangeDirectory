@@ -3,6 +3,7 @@
 #include "../src/ncd.h"
 #include "../src/platform.h"
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 
 TEST(strcasestr_finds_substring) {
@@ -206,6 +207,78 @@ TEST(system_mode_paths_do_not_depend_on_elevation) {
     return 0;
 }
 
+/* ================================================================ Usable Volume Tests */
+/* Unformatted (RAW) volumes, empty/CD drives and unused letters must never be
+ * scanned. A RAW volume cannot be created here without Windows offering to
+ * format it, so these cover the classifier on real and missing volumes and
+ * check that every enumerated drive passes it. */
+
+TEST(volume_usable_rejects_null_and_empty) {
+    ASSERT_FALSE(platform_volume_is_usable(NULL));
+    ASSERT_FALSE(platform_volume_is_usable(""));
+    return 0;
+}
+
+#if NCD_PLATFORM_WINDOWS
+TEST(volume_usable_accepts_system_drive) {
+    const char *sd = getenv("SystemDrive");
+    char root[4] = { (sd && sd[0]) ? sd[0] : 'C', ':', '\\', '\0' };
+    ASSERT_TRUE(platform_volume_is_usable(root));
+    return 0;
+}
+
+TEST(volume_usable_rejects_unused_letter) {
+    unsigned long mask = platform_get_logical_drives_mask();
+    int found = 0;
+    for (int i = 25; i >= 2; i--) {           /* Z..C */
+        if (mask & (1ul << i)) continue;
+        char root[4] = { (char)('A' + i), ':', '\\', '\0' };
+        ASSERT_FALSE(platform_volume_is_usable(root));
+        found = 1;
+        break;
+    }
+    if (!found) SKIP_TEST("every drive letter is in use");
+    return 0;
+}
+
+TEST(volume_usable_rejects_non_root_path_and_garbage) {
+    ASSERT_FALSE(platform_volume_is_usable("not-a-drive"));
+    return 0;
+}
+#else
+TEST(volume_usable_accepts_root_dir) {
+    ASSERT_TRUE(platform_volume_is_usable("/"));
+    return 0;
+}
+
+TEST(volume_usable_rejects_missing_dir) {
+    ASSERT_FALSE(platform_volume_is_usable("/nonexistent_ncd_volume_xyz"));
+    return 0;
+}
+#endif
+
+TEST(enumerated_drives_are_all_usable) {
+    char drives[32];
+    int n = platform_get_available_drives(drives, 27);
+    for (int i = 0; i < n; i++) {
+        char mount[MAX_PATH];
+        if (!platform_build_mount_path(drives[i], mount, sizeof(mount))) continue;
+#if NCD_PLATFORM_WINDOWS
+        ASSERT_TRUE(platform_volume_is_usable(mount));
+#else
+        (void)mount;  /* Linux mounts come from /proc/mounts */
+#endif
+    }
+
+    char mount_bufs[26][MAX_PATH];
+    const char *mount_ptrs[26];
+    int m = ncd_platform_enumerate_mounts(mount_bufs, mount_ptrs, MAX_PATH, 26);
+    for (int i = 0; i < m; i++) {
+        ASSERT_TRUE(platform_volume_is_usable(mount_ptrs[i]));
+    }
+    return 0;
+}
+
 /* Test suites */
 void suite_platform(void) {
     RUN_TEST(strcasestr_finds_substring);
@@ -221,6 +294,17 @@ void suite_platform(void) {
     RUN_TEST(get_app_title_returns_non_null);
     RUN_TEST(db_default_path_returns_valid_path);
     RUN_TEST(system_mode_paths_do_not_depend_on_elevation);
+    /* Usable volume tests (skip unformatted / empty / missing drives) */
+    RUN_TEST(volume_usable_rejects_null_and_empty);
+#if NCD_PLATFORM_WINDOWS
+    RUN_TEST(volume_usable_accepts_system_drive);
+    RUN_TEST(volume_usable_rejects_unused_letter);
+    RUN_TEST(volume_usable_rejects_non_root_path_and_garbage);
+#else
+    RUN_TEST(volume_usable_accepts_root_dir);
+    RUN_TEST(volume_usable_rejects_missing_dir);
+#endif
+    RUN_TEST(enumerated_drives_are_all_usable);
 }
 
 /* Main */

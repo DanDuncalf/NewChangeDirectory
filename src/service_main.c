@@ -888,8 +888,16 @@ static const char *metadata_update_type_to_string(int type) {
         case NCD_META_UPDATE_DIR_HISTORY_REMOVE: return "DIR_HISTORY_REMOVE";
         case NCD_META_UPDATE_DIR_HISTORY_SWAP: return "DIR_HISTORY_SWAP";
         case NCD_META_UPDATE_ENCODING_SWITCH: return "ENCODING_SWITCH";
+        case NCD_META_UPDATE_DB_ADD_PATH: return "DB_ADD_PATH";
+        case NCD_META_UPDATE_DB_REMOVE_PATH: return "DB_REMOVE_PATH";
         default: return "UNKNOWN";
     }
+}
+
+/* Agent database changes: they touch only the database snapshot. */
+static bool is_db_update_type(int update_type) {
+    return update_type == NCD_META_UPDATE_DB_ADD_PATH ||
+           update_type == NCD_META_UPDATE_DB_REMOVE_PATH;
 }
 
 static bool apply_metadata_update(ServiceState *state, int update_type,
@@ -1029,6 +1037,30 @@ static bool apply_metadata_update(ServiceState *state, int update_type,
             success = service_state_swap_dir_history(state);
             break;
         }
+        case NCD_META_UPDATE_DB_ADD_PATH:
+        case NCD_META_UPDATE_DB_REMOVE_PATH: {
+            /* Data: full directory path, NUL-terminated within data_len */
+            char path_buf[NCD_MAX_PATH];
+            uint32_t path_len = 0;
+            const char *p = (const char *)data;
+            while (p && path_len < data_len && p[path_len] != '\0') {
+                path_len++;
+            }
+            if (path_len == 0 || path_len >= sizeof(path_buf)) {
+                success = false;
+                break;
+            }
+            memcpy(path_buf, p, path_len);
+            path_buf[path_len] = '\0';
+            int rc = service_state_db_change(state,
+                                             update_type == NCD_META_UPDATE_DB_ADD_PATH,
+                                             path_buf);
+            LOG_DETAIL("%s '%s' -> %d", metadata_update_type_to_string(update_type),
+                       path_buf, rc);
+            success = (rc >= 0);
+            publish_db = (rc > 0);
+            break;
+        }
         default:
             if (out_publish_db) *out_publish_db = false;
             return false;
@@ -1061,8 +1093,10 @@ static void handle_submit_metadata(NcdIpcConnection *conn,
     }
 
     if (success) {
-        service_state_bump_meta_generation(state);
-        snapshot_publisher_publish_meta(pub, state);
+        if (!is_db_update_type(payload->update_type)) {
+            service_state_bump_meta_generation(state);
+            snapshot_publisher_publish_meta(pub, state);
+        }
 
         if (publish_db) {
             service_state_bump_db_generation(state);
@@ -1130,8 +1164,10 @@ void handle_pending_metadata(ServiceState *state, void *pub,
     bool success = apply_metadata_update(state, update_type, data, data_len, &publish_db);
 
     if (success) {
-        service_state_bump_meta_generation(state);
-        snapshot_publisher_publish_meta((SnapshotPublisher *)pub, state);
+        if (!is_db_update_type(update_type)) {
+            service_state_bump_meta_generation(state);
+            snapshot_publisher_publish_meta((SnapshotPublisher *)pub, state);
+        }
         if (publish_db) {
             service_state_bump_db_generation(state);
             snapshot_publisher_publish_db((SnapshotPublisher *)pub, state);
@@ -1748,10 +1784,11 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
             LOG_DETAIL("Client #%d connected", client_connection_count);
             int msg_count = 0;
             while (ATOMIC_LOAD(g_running)) {
+                /* ipc_server_receive waits for the next message (up to
+                 * 200 ms) and returns at once on disconnect: no sleep. */
                 int result = handle_client_connection(conn, state, pub);
                 if (result < 0) break;
                 msg_count++;
-                platform_sleep_ms(1);
             }
             DBG_LOG("NCD Service: Client disconnected after %d messages\n", msg_count);
             LOG_DETAIL("Client #%d disconnected after %d messages",
@@ -1790,7 +1827,7 @@ static void service_loop(ServiceState *state, SnapshotPublisher *pub, NcdIpcServ
                 LOG_DETAIL("ERROR - Failed to flush state");
             }
         }
-        platform_sleep_ms(10);
+        /* No sleep: ipc_server_accept already waits up to 100 ms. */
     }
 #else
     /* POSIX: poll()-based multiplexed I/O loop.
@@ -2637,6 +2674,8 @@ cleanup:
 /* --------------------------------------------------------- main               */
 
 int main(int argc, char *argv[]) {
+    /* Never block on a Windows "no disk" / critical-error message box. */
+    platform_suppress_error_dialogs();
 #if NCD_PLATFORM_WINDOWS
     platform_get_module_path(g_exe_path, sizeof(g_exe_path));
 #endif

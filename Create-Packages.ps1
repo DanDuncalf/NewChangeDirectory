@@ -133,6 +133,7 @@ if (-not $SkipWindowsBuild) {
         Copy-Item (Join-Path $ProjectRoot "ncd.bat") $tempDir
         Copy-Item (Join-Path $ProjectRoot "ncd_service.bat") $tempDir
         Copy-Item (Join-Path $PackagingDir "windows\install.bat") $tempDir
+        Copy-Item (Join-Path $PackagingDir "windows\update-path.ps1") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
 
         if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {
@@ -201,6 +202,7 @@ if (-not $SkipWindowsBuild -and -not $SkipWindowsArm64) {
         Copy-Item (Join-Path $ProjectRoot "ncd.bat") $tempDir
         Copy-Item (Join-Path $ProjectRoot "ncd_service.bat") $tempDir
         Copy-Item (Join-Path $PackagingDir "windows\install.bat") $tempDir
+        Copy-Item (Join-Path $PackagingDir "windows\update-path.ps1") $tempDir
         Copy-Item (Join-Path $ProjectRoot "README.md") $tempDir
 
         if (Test-Path (Join-Path $ProjectRoot "mcp_server")) {

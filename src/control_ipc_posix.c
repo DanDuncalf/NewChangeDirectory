@@ -609,12 +609,20 @@ bool ipc_service_exists(void) {
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         
         int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+        int err = errno;
         close(fd);
-        
-        if (result == 0) {
+
+        if (result == 0 || err == EINPROGRESS) {
             return true;
         }
-        
+
+        /* Only a full backlog (EAGAIN) means a live server worth retrying.
+         * No socket file (ENOENT) or nobody listening (ECONNREFUSED) means
+         * no service: answer at once instead of sleeping. */
+        if (err != EAGAIN) {
+            return false;
+        }
+
         if (attempt < 2) {
             struct timespec ts = {0, 20000000};  /* 20 ms */
             nanosleep(&ts, NULL);

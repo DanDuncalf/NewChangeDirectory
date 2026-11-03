@@ -3,6 +3,8 @@ setlocal EnableExtensions
 
 set "PROJECT_ROOT=%~dp0..\.."
 set "NCD_BAT=%PROJECT_ROOT%\ncd.bat"
+:: ncd.bat runs NewChangeDirectory.exe by name: test the build, not a deployed copy.
+set "PATH=%PROJECT_ROOT%;%PATH%"
 set "OUT_FILE=%TEMP%\ncd_wrapper_noargs_%RANDOM%.txt"
 set "NCD_TEST_MODE=1"
 set "NCD_UI_KEYS=ESC"

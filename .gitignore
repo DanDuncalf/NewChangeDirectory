@@ -438,3 +438,6 @@ duncalf-com.key.pub
 /test/trd_tree/
 /test/it_fs_*/
 /test/tei_tree/
+
+# Agent latency benchmark output (per machine)
+test/agent_latency_*.json

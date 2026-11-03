@@ -260,6 +260,23 @@ static unsigned long worker_thread(void *param)
 
 /* ================================================================ public   */
 
+/* A mount is scanned only when its volume has a recognised filesystem.
+ * Unformatted (RAW), empty removable, CD-ROM and offline drives are skipped,
+ * so NCD never reads from them (and Windows never offers to format them). */
+static bool scan_mount_is_usable(const char *mount)
+{
+    if (!mount || !mount[0]) return false;
+#if NCD_PLATFORM_WINDOWS
+    if (isalpha((unsigned char)mount[0]) && mount[1] == ':') {
+        char root[4] = { mount[0], ':', '\\', '\0' };
+        return platform_volume_is_usable(root);
+    }
+    return true;  /* UNC and other paths: scanning reports its own errors */
+#else
+    return platform_volume_is_usable(mount);
+#endif
+}
+
 int scan_mount(NcdDatabase   *db,
                const char    *mount,
                bool           include_hidden,
@@ -272,6 +289,7 @@ int scan_mount(NcdDatabase   *db,
     (void)user_data;
 
     if (!mount || !mount[0]) return -1;
+    if (!scan_mount_is_usable(mount)) return -1;
 
     NcdExclusionIndex *excl_index = db_exclusion_index_build(exclusions);
 
@@ -423,6 +441,22 @@ int scan_mounts(NcdDatabase *db,
         mounts = mount_ptrs;
         count = mount_count;
     }
+
+    /* Never touch a volume without a recognised filesystem, even when the
+     * caller asked for it by name (ncd -r F, ncd_service start -init F):
+     * unformatted (RAW), empty removable, CD-ROM and offline drives. */
+    const char *usable_ptrs[26];
+    int usable_count = 0;
+    for (int i = 0; i < count && i < 26; i++) {
+        if (scan_mount_is_usable(mounts[i])) {
+            usable_ptrs[usable_count++] = mounts[i];
+        } else {
+            fprintf(stderr, "NCD: Skipping %s (not mounted or no recognised filesystem).\n",
+                    mounts[i]);
+        }
+    }
+    mounts = usable_ptrs;
+    count = usable_count;
 
     /* Empty mount list - nothing to scan */
     if (count == 0) return 0;
