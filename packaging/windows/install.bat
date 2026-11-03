@@ -39,10 +39,14 @@ set "IS_ELEVATED=0"
 if %errorlevel% == 0 set "IS_ELEVATED=1"
 
 set "HOST_ARCH=x64"
-if "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "HOST_ARCH=arm64"
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "HOST_ARCH=arm64"
+if /I "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "HOST_ARCH=arm64"
 
-set "PKG_ARCH=x64"
-if exist "%SRC_DIR%NewChangeDirectory_arm64.exe" set "PKG_ARCH=arm64"
+:: Install the build matching the host. A source tree (the repo after
+:: Create-Packages.ps1) can hold both builds; packages hold only one.
+set "PKG_ARCH=%HOST_ARCH%"
+if /I "%HOST_ARCH%"=="arm64" if not exist "%SRC_DIR%NewChangeDirectory_arm64.exe" set "PKG_ARCH=x64"
+if /I "%HOST_ARCH%"=="x64" if not exist "%SRC_DIR%NewChangeDirectory.exe" if exist "%SRC_DIR%NewChangeDirectory_arm64.exe" set "PKG_ARCH=arm64"
 
 :: ---- Options ------------------------------------------------------------
 set "OPT_SCOPE="
