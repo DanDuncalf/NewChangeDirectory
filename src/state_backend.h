@@ -142,6 +142,12 @@ void state_backend_close(NcdStateView *view);
  */
 const char *state_backend_error_string(void);
 
+/*
+ * state_backend_service_error_string  --  Why the last service open failed
+ * (empty when it did not fail), even after a fallback to local mode.
+ */
+const char *state_backend_service_error_string(void);
+
 /* --------------------------------------------------------- state access     */
 
 /*

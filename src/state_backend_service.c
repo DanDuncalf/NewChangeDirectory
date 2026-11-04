@@ -352,6 +352,23 @@ static bool connect_with_retry(NcdIpcClient **client, int max_retries, int retry
 #define SVC_DBG(...) ((void)0)
 #endif
 
+/* Snapshot opens retried after a concurrent publish removed the name. */
+#define SNAPSHOT_OPEN_ATTEMPTS 20
+
+/*
+ * Re-read the current snapshot names after an open found the advertised one
+ * already gone (replaced by a newer generation).  False once the attempts are
+ * used up or the service no longer answers.
+ */
+static bool refetch_state_info(NcdStateView *view, NcdIpcStateInfo *state_info, int *attempts)
+{
+    if (++*attempts >= SNAPSHOT_OPEN_ATTEMPTS) {
+        return false;
+    }
+    SVC_DBG("Snapshot replaced while opening, re-reading state info (attempt %d)\n", *attempts);
+    return ipc_client_get_state_info(SERVICE(view).ipc_client, state_info) == NCD_IPC_OK;
+}
+
 int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     if (!out) {
         set_error("Invalid output pointer");
@@ -502,7 +519,15 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
         return -1;
     }
     SVC_DBG("Versions match\n");
-    
+
+    /* The service publishes each snapshot under a new generation name and
+     * removes the previous one.  A publish between the state query above and
+     * the opens below (an agent write, the post-load publish) removes the name
+     * we were given -- on POSIX shm_unlink takes effect at once.  Ask again
+     * for the current names and retry. */
+    int snapshot_attempts = 0;
+open_snapshots:
+    ;
     /* Open and map metadata shared memory */
     SVC_DBG("Opening metadata shared memory...\n");
     /* Trust the advertised name from the service rather than recomputing locally */
@@ -511,6 +536,10 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     
     SVC_DBG("Metadata SHM name: %s\n", meta_name);
     ShmResult shm_result = shm_open_existing(meta_name, SHM_ACCESS_READ, (ShmHandle **)&SERVICE(view).meta_shm);
+    if (shm_result == SHM_ERROR_NOTFOUND &&
+        refetch_state_info(view, &state_info, &snapshot_attempts)) {
+        goto open_snapshots;
+    }
     if (shm_result != SHM_OK) {
         ipc_client_disconnect(SERVICE(view).ipc_client);
         free(view);
@@ -541,6 +570,23 @@ int state_backend_open_service(NcdStateView **out, NcdStateSourceInfo *info) {
     
     SVC_DBG("Database SHM name: %s\n", db_name);
     shm_result = shm_open_existing(db_name, SHM_ACCESS_READ, (ShmHandle **)&SERVICE(view).db_shm);
+    if (shm_result == SHM_ERROR_NOTFOUND) {
+        /* Drop the metadata mapping too: the retry reopens both by name. */
+        shm_unmap(SERVICE(view).meta_addr, SERVICE(view).meta_size);
+        shm_close(SERVICE(view).meta_shm);
+        SERVICE(view).meta_addr = NULL;
+        SERVICE(view).meta_shm = NULL;
+        if (refetch_state_info(view, &state_info, &snapshot_attempts)) {
+            goto open_snapshots;
+        }
+        set_error(shm_error_string(shm_result));
+        SVC_DBG("Failed to open database SHM: %s\n", shm_error_string(shm_result));
+        ipc_client_disconnect(SERVICE(view).ipc_client);
+        free(view);
+        shm_platform_cleanup();
+        ipc_client_cleanup();
+        return -1;
+    }
     if (shm_result != SHM_OK) {
         shm_unmap(SERVICE(view).meta_addr, SERVICE(view).meta_size);
         shm_close(SERVICE(view).meta_shm);

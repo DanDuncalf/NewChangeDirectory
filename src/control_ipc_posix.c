@@ -425,7 +425,9 @@ NcdIpcServer *ipc_server_init(void) {
     }
     
     /* Listen for connections */
-    if (listen(server->fd, 5) < 0) {
+    /* Room for agent commands, probes and IPC clients queued while the
+     * service (which serves one connection at a time) is busy. */
+    if (listen(server->fd, SOMAXCONN) < 0) {
         close(server->fd);
         unlink(server->sock_path);
         free(server);
@@ -589,47 +591,24 @@ bool ipc_service_exists(void) {
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, g_sock_path, sizeof(addr.sun_path) - 1);
     
-    /* Retry loop: the poll-based server may have a brief window between
-     * accepting a probe connection and detecting EOF on it, during which
-     * the listen backlog can fill up. A few retries with a small delay
-     * ride out this window reliably. */
-    for (int attempt = 0; attempt < 3; attempt++) {
-        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            return false;
-        }
-        
-        /* Set non-blocking */
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        
-        int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-        int err = errno;
-        close(fd);
-
-        if (result == 0 || err == EINPROGRESS) {
-            return true;
-        }
-
-        /* Only a full backlog (EAGAIN) means a live server worth retrying.
-         * No socket file (ENOENT) or nobody listening (ECONNREFUSED) means
-         * no service: answer at once instead of sleeping. */
-        if (err != EAGAIN) {
-            return false;
-        }
-
-        if (attempt < 2) {
-            struct timespec ts = {0, 20000000};  /* 20 ms */
-            nanosleep(&ts, NULL);
-        }
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return false;
     }
-    
-    return false;
+
+    /* Non-blocking: the probe must not queue behind a busy service. */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    int err = errno;
+    close(fd);
+
+    /* EAGAIN is a full listen backlog: a live service that is busy (e.g. saving
+     * to a slow disk while it serves clients one at a time).  It is running,
+     * and a blocking client connect will wait its turn.  No socket file
+     * (ENOENT) or nobody listening (ECONNREFUSED) means no service. */
+    return result == 0 || err == EINPROGRESS || err == EAGAIN;
 }
 
 /* ================================================================

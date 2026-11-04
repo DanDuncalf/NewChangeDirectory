@@ -9,7 +9,7 @@ ReleaseDate: 2026-11-03
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/YOUR-ORG/YOUR-REPO/releases/download/v1.9.0/NCD-1.9.0-windows-x64.zip
-    InstallerSha256: 6C681BAB26E72B9A6A00597B9F4C702554090E871A96BFA5933340A39C9A85F1
+    InstallerSha256: DB698EFDE33D8B6F07788392044CE863880DF3998185C38FAAAEFE538CA5EB92
     NestedInstallerFiles:
       - RelativeFilePath: bin\ncd.bat
         PortableCommandAlias: ncd
@@ -21,7 +21,7 @@ Installers:
         PortableCommandAlias: NCDService
   - Architecture: arm64
     InstallerUrl: https://github.com/YOUR-ORG/YOUR-REPO/releases/download/v1.9.0/NCD-1.9.0-windows-arm64.zip
-    InstallerSha256: 14E1A52651877D86016FFC6C6E6C2ED5761EF8099E70E3F23AC39225B5E97E1B
+    InstallerSha256: 5E8F7FEEC2DFBD096BCE580B39998FB7B0B2C3B490B81326218C28EF42D6F04C
     NestedInstallerFiles:
       - RelativeFilePath: bin\ncd.bat
         PortableCommandAlias: ncd

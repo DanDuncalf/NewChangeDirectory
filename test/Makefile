@@ -54,375 +54,380 @@ TESTS = test_database test_matcher test_history test_config \
 
 all: $(TESTS)
 
+# Rebuild when a project header changes (NCD_APP_VERSION, structs, ...).
+# Headers are prerequisites only; the recipes compile the .c files ($(filter %.c,$^)).
+HEADERS = $(wildcard ../src/*.h ../../shared/*.h ../../shared/*.inc *.h)
+$(TESTS) service_race_tester test_key_injection test_db_corruption_debug ncd_service_v13 ncd_service_v17: $(HEADERS)
+
 # Database tests
 TEST_DB_SOURCES = test_database.c test_framework.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_database: $(TEST_DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Config tests
 TEST_CONFIG_SOURCES = test_config.c test_framework.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_config: $(TEST_CONFIG_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Matcher tests
 test_matcher: test_matcher.c test_framework.c $(MATCHER_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 1 tests - Database Extended
 DB_EXTENDED_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_database_extended: test_database_extended.c test_framework.c $(DB_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 1 tests - Odd Cases
 test_odd_cases: test_odd_cases.c test_framework.c $(DB_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Fuzz tests (original)
 fuzz_database: fuzz_database.c $(DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 1 tests - Database Load Fuzzer
 fuzz_database_load: fuzz_database_load.c test_framework.c $(DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Benchmarks
 bench_matcher: bench_matcher.c $(MATCHER_SOURCES)
-	$(CC) $(CFLAGS) -O2 -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -O2 -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Database corruption tests
 test_db_corruption: test_db_corruption.c test_framework.c $(DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Bug detection tests (exposes known bugs without fixing them)
 test_bugs: test_bugs.c test_framework.c $(MATCHER_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent mkdir tests (DISABLED - uses internal main.c enums not exposed in headers)
 # AGENT_MKDIR_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 # test_agent_mkdir: test_agent_mkdir.c test_framework.c $(AGENT_MKDIR_SOURCES)
-#	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+#	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent mkdirs tests (integration tests that use the actual executable) (DISABLED)
 # test_mkdirs: test_mkdirs.c test_framework.c $(AGENT_MKDIR_SOURCES)
-#	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+#	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # History tests
 HISTORY_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_history: test_history.c test_framework.c $(HISTORY_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 1 tests - strbuilder
 test_strbuilder: test_strbuilder.c test_framework.c ../../shared/strbuilder.c ../../shared/common.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 1 tests - common
 test_common: test_common.c test_framework.c ../../shared/common.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 1 tests - platform
 test_platform: test_platform.c test_framework.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c ../src/database.c ../src/matcher.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 2 tests - metadata
 METADATA_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_metadata: test_metadata.c test_framework.c $(METADATA_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 2 tests - scanner
 SCANNER_SOURCES = ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_scanner: test_scanner.c test_framework.c $(SCANNER_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - lazy loading
 SERVICE_LAZY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_lazy_load: test_service_lazy_load.c test_framework.c $(SERVICE_LAZY_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - parity
 SERVICE_PARITY_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_parity: test_service_parity.c test_framework.c $(SERVICE_PARITY_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - lifecycle
 SERVICE_LIFECYCLE_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
 test_service_lifecycle: test_service_lifecycle.c test_framework.c $(SERVICE_LIFECYCLE_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - integration
 SERVICE_INTEGRATION_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
 test_service_integration: test_service_integration.c test_framework.c $(SERVICE_INTEGRATION_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - database snapshot loading
 SERVICE_DATABASE_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_database: test_service_database.c test_framework.c $(SERVICE_DATABASE_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - empty database scenario
 SERVICE_EMPTY_DB_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_empty_db: test_service_empty_db.c test_framework.c $(SERVICE_EMPTY_DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - Tier 5 IPC integration
 SERVICE_IPC_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/state_backend_local.c ../src/state_backend_service.c ../src/service_publish.c ../src/shared_state.c ../src/shm_platform_posix.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
 test_service_ipc: test_service_ipc.c test_framework.c $(SERVICE_IPC_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - logging
 SERVICE_LOGGING_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_logging: test_service_logging.c test_framework.c $(SERVICE_LOGGING_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - version compatibility
 SERVICE_VERSION_COMPAT_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
 test_service_version_compat: test_service_version_compat.c test_framework.c $(SERVICE_VERSION_COMPAT_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service tests - legacy shutdown
 LEGACY_SHUTDOWN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) service_test_common.c
 test_legacy_service_shutdown: test_legacy_service_shutdown.c test_framework.c $(LEGACY_SHUTDOWN_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - CLI parsing
 # Uses extracted cli.c module
 CLI_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_cli_parse: test_cli_parse.c test_framework.c $(CLI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent mode
 AGENT_TEST_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_mode: test_agent_mode.c test_framework.c $(AGENT_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent integration (Phase 3 of CODEBASE_CLEANUP_PLAN.md)
 AGENT_INTEGRATION_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_integration: test_agent_integration.c test_framework.c $(AGENT_INTEGRATION_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent CLI extended (comprehensive parse_agent_args + glob_match)
 AGENT_CLI_EXTENDED_SOURCES = ../src/cli.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_agent_cli_extended: test_agent_cli_extended.c test_framework.c $(AGENT_CLI_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent query/tree integration (invokes actual executable)
 AGENT_QUERY_TREE_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
 test_agent_query_tree: test_agent_query_tree.c test_framework.c $(AGENT_QUERY_TREE_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent ls/check integration (invokes actual executable)
 AGENT_LS_CHECK_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
 test_agent_ls_check: test_agent_ls_check.c test_framework.c $(AGENT_LS_CHECK_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Agent complete/mkdir/quit integration (invokes actual executable)
 AGENT_COMPLETE_MKDIR_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES) agent_test_common.c
 test_agent_complete_mkdir_quit: test_agent_complete_mkdir_quit.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # AdditionalAgentFeatures.md tests - mkdir enhancements
 test_agent_mkdir_extended: test_agent_mkdir_extended.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # AdditionalAgentFeatures.md tests - rmdir/rmdirs
 test_agent_rmdir: test_agent_rmdir.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # AdditionalAgentFeatures.md tests - mv/ln
 test_agent_mv: test_agent_mv.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # AdditionalAgentFeatures.md tests - verify/chmod
 test_agent_verify: test_agent_verify.c test_framework.c $(AGENT_COMPLETE_MKDIR_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Slice-by-8 CRC64 functional tests
 test_crc64: test_crc64.c test_framework.c ../src/platform_ncd.c $(SHARED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Load-path integration tests (real binaries, isolated data dir)
 LOAD_INTEGRATION_SOURCES = agent_test_common.c service_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_load_integration: test_load_integration.c test_framework.c $(LOAD_INTEGRATION_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Drive load / merge functional tests
 test_drive_load: test_drive_load.c test_framework.c $(SERVICE_EMPTY_DB_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Rescan / append-only / path index functional tests
 test_rescan_dedup: test_rescan_dedup.c test_framework.c $(SCANNER_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Exclusion index functional tests
 test_exclusion_index: test_exclusion_index.c test_framework.c $(SCANNER_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 3 tests - Result output
 # Uses extracted result.c module
 RESULT_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_result_output: test_result_output.c test_framework.c $(RESULT_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 4 tests - Shared state (original)
 SHARED_STATE_SOURCES = ../src/shared_state.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_shared_state: test_shared_state.c test_framework.c $(SHARED_STATE_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 4 tests - Shared state extended
 SHARED_STATE_EXT_SOURCES = ../src/shared_state.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_shared_state_extended: test_shared_state_extended.c test_framework.c $(SHARED_STATE_EXT_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 4 tests - SHM platform
 SHM_PLATFORM_SOURCES = ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_shm_platform: test_shm_platform.c test_framework.c $(SHM_PLATFORM_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Tier 4 tests - IPC
 IPC_TEST_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_ipc: test_ipc.c test_framework.c $(IPC_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Extended CLI parsing tests (improves coverage)
 CLI_EXTENDED_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_cli_parse_extended: test_cli_parse_extended.c test_framework.c $(CLI_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Extended platform tests (improves coverage)
 PLATFORM_EXTENDED_SOURCES = ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c ../src/database.c ../src/matcher.c
 test_platform_extended: test_platform_extended.c test_framework.c $(PLATFORM_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Extended strbuilder tests (improves coverage)
 test_strbuilder_extended: test_strbuilder_extended.c test_framework.c ../../shared/strbuilder.c ../../shared/common.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Extended common tests (improves coverage)
 test_common_extended: test_common_extended.c test_framework.c ../../shared/common.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Extended integration tests (improves coverage)
 INTEGRATION_EXTENDED_SOURCES = ../src/database.c ../src/matcher.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
 test_integration_extended: test_integration_extended.c test_framework.c $(INTEGRATION_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # UI tests - headless TUI testing with in-memory backend
 UI_TEST_SOURCES = ../src/ui.c ../src/database.c ../src/matcher.c ../src/scanner.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
 test_ui_selector: test_ui_selector.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_ui_history: test_ui_history.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_ui_config: test_ui_config.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_ui_navigator: test_ui_navigator.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 3 - Extended UI tests
 test_ui_extended: test_ui_extended.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_ui_exclusions: test_ui_exclusions.c test_framework.c $(UI_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 3 - Main flow tests (signal handling, result escaping, sorting)
 MAIN_TEST_SOURCES = ../src/result.c ../src/database.c ../src/matcher.c ../src/platform_ncd.c ../../shared/platform.c ../../shared/strbuilder.c ../../shared/common.c
 test_main: test_main.c test_framework.c $(MAIN_TEST_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Key injection tests - unit tests for key parsing and queueing
 KEY_INJECTION_SOURCES = test_key_injection.c test_framework.c $(UI_TEST_SOURCES)
 test_key_injection: $(KEY_INJECTION_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # IPC Test Programs - Common infrastructure
 IPC_TEST_COMMON_SOURCES = ipc_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
 # Phase 1: Basic connectivity tests
 ipc_ping_test: ipc_ping_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 ipc_state_test: ipc_state_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 ipc_shutdown_test: ipc_shutdown_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Phase 2: Metadata and operation tests
 ipc_metadata_test: ipc_metadata_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 ipc_heuristic_test: ipc_heuristic_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 ipc_rescan_test: ipc_rescan_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Phase 3: Persistence and interactive
 ipc_flush_test: ipc_flush_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 ipc_cli: ipc_cli.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Phase 4: Fuzzing and stress tests
 ipc_fuzzer: ipc_fuzzer.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS) -lm
 
 ipc_stress_test: ipc_stress_test.c $(IPC_TEST_COMMON_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS) -lm
 
 # Agent 4 additions - Input Processing track
 AGENT4_SOURCES = ../src/cli.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 
 test_cli_edge_cases: test_cli_edge_cases.c test_framework.c $(AGENT4_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_scanner_extended: test_scanner_extended.c test_framework.c $(AGENT4_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_matcher_extended: test_matcher_extended.c test_framework.c $(AGENT4_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_result_edge_cases: test_result_edge_cases.c test_framework.c ../src/result.c $(AGENT4_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_stress: test_stress.c test_framework.c $(AGENT4_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Agent 2: Service Infrastructure Tests
 # Service stress tests
 SERVICE_STRESS_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_stress: test_service_stress.c test_framework.c $(SERVICE_STRESS_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Service rescan tests
 SERVICE_RESCAN_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_service_rescan: test_service_rescan.c test_framework.c $(SERVICE_RESCAN_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 test_service_init_db: test_service_init_db.c test_framework.c $(SERVICE_RESCAN_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # IPC extended tests
 IPC_EXTENDED_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_ipc_extended: test_ipc_extended.c test_framework.c $(IPC_EXTENDED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # SHM stress tests
 SHM_STRESS_SOURCES = ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
 test_shm_stress: test_shm_stress.c test_framework.c $(SHM_STRESS_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # IPC fuzz tests
 FUZZ_IPC_SOURCES = ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/service_state.c ../src/database.c ../src/scanner.c ../src/matcher.c ../src/platform_ncd.c $(SHARED_SOURCES)
 fuzz_ipc: fuzz_ipc.c test_framework.c $(FUZZ_IPC_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS) -lm
 
 # Database corruption tests with debug flags (includes /test NC tests)
 test_db_corruption_debug: test_db_corruption.c test_framework.c $(DB_SOURCES)
-	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -DDEBUG -o test_db_corruption $(filter %.c,$^) $(LDFLAGS)
 
 test: test_database test_database_extended test_matcher test_history test_strbuilder test_common test_platform test_metadata test_scanner test_service_lazy_load test_service_parity test_service_lifecycle test_service_integration test_service_database test_service_empty_db test_service_logging test_service_version_compat test_legacy_service_shutdown test_cli_parse test_agent_mode test_agent_integration test_result_output test_main test_shared_state test_shm_platform test_ipc test_cli_parse_extended test_platform_extended test_strbuilder_extended test_common_extended test_integration_extended test_ui_selector test_ui_history test_ui_config test_ui_navigator test_ui_extended test_ui_exclusions test_key_injection test_odd_cases test_agent_mkdir_extended test_agent_rmdir test_agent_mv test_agent_verify test_crc64 test_load_integration test_drive_load test_rescan_dedup test_exclusion_index
 	@echo "Running strbuilder tests..."
@@ -628,7 +633,7 @@ ipc-tests: ipc_ping_test ipc_state_test ipc_shutdown_test ipc_metadata_test \
 
 # Standalone threaded service race tester (not part of harness yet)
 service_race_tester: service_race_tester.c ipc_test_common.c ../src/control_ipc_posix.c ../src/control_ipc_common.c ../src/shm_platform_posix.c ../src/platform_ncd.c $(SHARED_SOURCES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Alternative-version service binaries for version compatibility testing
 ncd_service_v13: $(SERVICE_SRCS)

@@ -196,6 +196,8 @@ python test\generate_report.py
 `build.sh` recompiles cached objects when any `src/*.h`, `../shared/*.h` or `../shared/*.inc` is newer,
 and discards the cache when the compiler flags change (test build vs. release). The test harness
 requests a test build with `./build.sh test` (defines `NCD_TEST_BUILD`, needed for TUI key injection).
+The Linux test binaries (`test/Makefile`) depend on `src/*.h`, `../shared/*.h`/`*.inc` and `test/*.h`, so a
+header-only change such as the `NCD_APP_VERSION` bump rebuilds them.
 
 > **When to clean:**
 > - Before running `generate_report.py` after any `src\*.c` or `..\shared\*.c` change
@@ -304,11 +306,13 @@ Agent writes (`mkdir`, `mkdirs`, `mv`, `rmdir`, `rmdirs`, `ln`) go to the servic
 `NCD_META_UPDATE_DB_ADD_PATH`/`DB_REMOVE_PATH` and the client does not touch the disk database: the service
 saves its in-memory database over the files (deferred flush), which would undo a direct disk write. `-d <file>`
 and runs without a service use the disk database. `ipc_service_exists()` answers without sleeping: with no
-pipe it checks the service instance mutex (Windows); on Linux it retries only a full backlog (`EAGAIN`).
+pipe it checks the service instance mutex (Windows); on Linux a full listen backlog (`EAGAIN`) counts as running (the service is busy; the listen backlog is `SOMAXCONN`).
 Windows pipe I/O is overlapped on both ends (`pipe_io()` in `src/control_ipc_win.c`) and the service keeps a
 listening pipe instance open while it serves a client: no `PeekNamedPipe`/`Sleep` polling, which cost a ~15.6 ms
 timer tick per request. The service keeps its path index current across agent adds/removes and builds database
-snapshots directly in shared memory.
+snapshots directly in shared memory. Each publish replaces the snapshot name, so a client whose
+advertised name vanished before it opened it (POSIX `shm_unlink` is immediate) re-reads the state info and
+retries (`refetch_state_info()` in `src/state_backend_service.c`).
 The write/read behaviour is covered in both modes by `Invoke-NcdAgentWriteReadTests`
 (`test/Win/NcdIntegration.psm1`) and `test/ncd_agent_write_read.sh`.
 

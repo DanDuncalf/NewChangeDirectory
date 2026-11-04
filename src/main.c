@@ -224,6 +224,9 @@ static bool ensure_state_initialized(void)
         if (last_sep) *(last_sep + 1) = '\0';
         else service_exe_dir[0] = '\0';
         
+        const char *svc_reason = state_backend_service_error_string();
+        if (!svc_reason || !svc_reason[0]) svc_reason = "unknown";
+
         NcdIpcClient *diag = ipc_client_connect();
         if (diag) {
             NcdIpcVersionInfo svc_ver;
@@ -241,15 +244,17 @@ static bool ensure_state_initialized(void)
                     ncd_printf("NCD: Warning -- NCD service is running but could not be used.\r\n"
                                "     Client  binary: %s\r\n"
                                "     Service binary: %sNCDService.exe\r\n"
+                               "     Reason        : %s\r\n"
                                "     Running in standalone mode with local database.\r\n",
-                               client_exe_path, service_exe_dir);
+                               client_exe_path, service_exe_dir, svc_reason);
                 }
             } else {
                 ncd_printf("NCD: Warning -- NCD service is running but could not be used.\r\n"
                            "     Client  binary: %s\r\n"
                            "     Service binary: %sNCDService.exe\r\n"
+                           "     Reason        : %s\r\n"
                            "     Running in standalone mode with local database.\r\n",
-                           client_exe_path, service_exe_dir);
+                           client_exe_path, service_exe_dir, svc_reason);
             }
             ipc_client_disconnect(diag);
         } else {
